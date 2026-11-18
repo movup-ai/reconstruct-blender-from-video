@@ -1,0 +1,98 @@
+# Blender Agent
+
+Local white-model (白模) production app. It turns the film clips in `D:\Shared\Source` into the client's submission
+packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
+The pose and depth models run on the NVIDIA card (CUDA, `onnxruntime-gpu`) when the PC has one. On a PC without an
+NVIDIA card, `Setup.bat` installs the CPU build (`requirements-cpu.txt`) and the models run on the processor: same
+results, slower. Keep *Clips at once* at 1 there.
+`D:\Shared\Source\3D` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
+
+## Start
+
+Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.1:8765.
+
+- The first start runs `Setup.bat` on its own (Python packages and models, one time, needs internet).
+- Keep the black window open. Closing it stops the app, and unfinished jobs continue at the next start.
+- If the app crashes, the window restarts it after 5 seconds. Details are in `logs\agent.log`.
+- Starting it a second time just opens the browser on the running app.
+
+## Work
+
+1. **Prepare.** The local models find people, joints, camera, cuts, ground and set for each clip. Use *Prepare all clips*,
+   or set **Autopilot → Prepare only**.
+2. **Review.** Open a clip marked *ready for review*. Click each person's role (主角色 red, 第二角色 blue, 第三角色 green,
+   第四角色 yellow, or *Not a person*), check the camera and set, add held objects, and write a short description.
+3. **Confirm & render.** The clip is built in Blender with the client's sample character, rendered and packaged into
+   `Submit_auto\<film>_<clip>\` + `.zip`. The next clip that needs review opens.
+
+**Autopilot → Full auto** does all three steps on its own. If a DeepSeek key is saved, DeepSeek checks the people and
+the set first. You can still open any clip, change it and confirm again.
+
+The start page also has: *Clips at once* (parallel jobs), *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.
+
+## AI suggestions (DeepSeek, optional)
+
+On the start page, under **AI suggestions · DeepSeek**, paste your API key and press **Save key**, then **Test**.
+The key is stored only in `config.json` on this PC and is never shown again. (You can also put it in `deepseek_key.txt`
+next to the launcher, or set the `DEEPSEEK_API_KEY` environment variable.)
+
+With a key, every prepared clip gets one DeepSeek check:
+- **People:** who is a real person (drivers behind glass, posters and reflections become *Not a person*), and which role.
+  A per-film cast memory gives the same character the same colour in every clip.
+- **Environment:** DeepSeek sees each shot's empty background with every wall (W) and block group (B) numbered. It names
+  what each one is, removes wrong ones (sky, ground, smears), and adds missed objects (cars, tables, doors, trees…) as boxes
+  standing on the ground at the right distance. The clip is then rebuilt with these corrections, and the review page lists them.
+- **Camera type, held objects, and a Chinese description** for `meta.jsonl`.
+
+The environment check needs a DeepSeek model that accepts images. **Test** tells you whether yours does. Frames of the
+clips are sent to DeepSeek when AI suggestions are on.
+
+## Objects in the set (like the client sample)
+
+Each clip page has an **Objects in the set** editor. Drag a box on the shot's background, pick the type (door, window,
+cabinet, shelf, counter, sink, table, chair, sofa, bed, fridge, car, van, tree, bush, fence, lamp post, stairs, building
+and more), set floor or wall and the facing direction, then save. Every object is built from `pipeline/props.py` as a
+simple recognisable model (a door has a frame, panel and handle; a car has a body, cabin and wheels), standing where it
+touches the floor and sized from the picture. With a DeepSeek key, DeepSeek fills the list in for every shot.
+
+## How the set is built
+
+Clips are split at hard cuts, and every shot gets its own camera, ground and set. The ground comes from the solved
+camera height and angle, checked against the depth model. Walls and objects stand where they meet the ground, so they
+are vertical and correctly placed. What doesn't touch the visible ground becomes depth blocks. Colours are taken from
+the video (L2 spec). Each clip's work folder has a `blocks_*.jpg` showing what became ground, sky, walls and blocks.
+
+## Working with Claude (hand-built sets, like the client sample)
+
+1. **Prepare** a clip (local models, on the NVIDIA card): people, joints, camera.
+2. **Confirm** the people in the app. This writes `output\<clip>\claude_brief.json` and `Work_auto\CLAUDE_HANDOFF.md`
+   (the list of all clips), and does not render.
+3. Claude writes two files next to the marks in `output\<clip>\`:
+   - `hints.json` - what the picture cannot show: camera height / tilt / travel, and per person "seated", "legs hidden",
+     distance from the camera. Then `python pipeline\run_pipeline.py <video> --stage fit --name <clip>` fits the people again.
+   - `env_claude.json` - the set, object by object (walls, windows, desk, chairs, rocks, trees...), placed in metres or by
+     their box in the picture. `python pipeline\build_env.py <clip>` puts it into the scene and writes
+     `Work_auto\<clip>\env_check.jpg` (film / overlay / set) to compare.
+4. `python pipeline\run_pipeline.py <video> --stage render --name <clip>` renders in Blender and makes the
+   submission folder and zip in `SUBMIT\`.
+5. Corrections from screenshots go into the same two files, then step 3-4 again.
+
+Running `--stage fit` again replaces the set with the automatic one: run `build_env.py` after it.
+
+## Folders
+
+| Folder | Contents |
+|---|---|
+| `agent\` | the app (server, job queue, review logic, local AI) |
+| `pipeline\` | marks, camera, ground, people fitting, set, Blender build, packaging |
+| `web\` | the pages |
+| `assets\` | the client's sample character (from `11月2日试稿blend.blend`) |
+| `models\` | depth model |
+| `output\` | joint marks and reviews per clip |
+| `data\jobs.db` | job queue (survives restarts) |
+| `logs\` | app log |
+| `tests\` | `.venv\Scripts\python -m unittest discover -s tests` |
+| `_archive\` | the earlier apps (白模 Studio, review app) and dev files, kept for reference |
+
+Outputs go to `D:\Blender-agent\Work_auto` (previews, logs) and `D:\Blender-agent\SUBMIT` (submissions). Change the
+folders in `config.json`.

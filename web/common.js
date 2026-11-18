@@ -1,0 +1,79 @@
+// Blender Agent - shared helpers for the pages
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const STAGE = { fit: 'local models', ai: 'local AI', all: 'render' };
+function el(tag, attrs = {}, text) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== '' && v != null) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+async function api(url) {
+  const r = await fetch(url);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? '' : JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(d.error || r.statusText, true); throw new Error(d.error || r.statusText); }
+  return d;
+}
+let toastT = null;
+function toast(msg, bad) {
+  const t = $('toast'); if (!t) return;
+  t.textContent = msg; t.className = 'toast show' + (bad ? ' bad' : '');
+  clearTimeout(toastT); toastT = setTimeout(() => t.className = 'toast', bad ? 6000 : 3000);
+}
+function chip(st) { return `<span class="chip g-${st.group}">${esc(st.label)}</span>`; }
+function fmtTime(s) { s = Math.max(0, Math.round(s)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; }
+function segInit(box, onPick) { box.querySelectorAll('button').forEach(b => b.onclick = () => { segSet(box, b.dataset.v); onPick && onPick(b.dataset.v); }); }
+function segSet(box, v) { box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+function segGet(box) { const b = box.querySelector('button.on'); return b ? b.dataset.v : null; }
+
+// ---- shared top bar: Clips · Submissions · Settings · Help, with a live queue indicator
+function nav(active) {
+  if (!document.querySelector('link[rel=icon]')) document.head.insertAdjacentHTML('beforeend', '<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+  const links = [['/', 'Clips', 'clips'], ['/submissions', 'Submissions', 'submissions'], ['/settings', 'Settings', 'settings'], ['/help', 'Help', 'help']];
+  const bar = el('nav', { class: 'topnav' });
+  bar.innerHTML = `<a class="brand" href="/"><img src="/favicon.svg" alt=""> Blender Agent</a>` +
+    links.map(([h, l, k]) => `<a class="nl${k === active ? ' on' : ''}" href="${h}">${l}</a>`).join('') +
+    `<span class="qind" id="qind" title="Jobs"></span><button class="themebtn" id="themebtn" title="Light / dark theme" aria-label="Switch light or dark theme">◐</button>`;
+  document.body.prepend(bar);
+  $('themebtn').onclick = toggleTheme;
+  const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
+      $('qind').innerHTML = q.running || q.queued ? `<span class="pulse"></span>${q.running} working · ${q.queued} waiting` : '<span class="idle"></span>idle';
+      const base = document.title.replace(/^\(\d+\)\s*/, ''); document.title = (q.running || q.queued ? `(${q.running + q.queued}) ` : '') + base;
+    } catch (e) { $('qind').innerHTML = '<span class="bad">offline</span>'; } };
+  tick(); setInterval(tick, 7000);
+}
+function progressBar(pct, step) {
+  if (pct == null) return '';
+  return `<div class="pbar" title="${esc(step || '')}"><i style="width:${Math.max(2, pct)}%"></i></div><div class="small muted">${esc(step || '')} · ${pct}%</div>`;
+}
+async function openFolder(path) { try { await post('/api/open', { path }); } catch (e) {} }
+
+// ---- app-styled confirmation dialog: await ask('Question?', 'Do it')  -> true / false
+function ask(msg, okLabel) {
+  return new Promise(resolve => {
+    const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true' });
+    bg.innerHTML = `<div class="modal"><p>${esc(msg)}</p><div class="actions" style="justify-content:flex-end">
+      <button class="m-no">Cancel</button><button class="primary m-yes">${esc(okLabel || 'Continue')}</button></div></div>`;
+    const done = v => { bg.remove(); document.removeEventListener('keydown', key); resolve(v); };
+    const key = e => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
+    bg.querySelector('.m-no').onclick = () => done(false); bg.querySelector('.m-yes').onclick = () => done(true);
+    bg.onclick = e => { if (e.target === bg) done(false); };
+    document.addEventListener('keydown', key); document.body.appendChild(bg); bg.querySelector('.m-yes').focus();
+  });
+}
+
+// ---- light / dark theme, remembered in this browser
+(function () {
+  let t = null; try { t = localStorage.getItem('ba-theme'); } catch (e) {}
+  if (t) document.documentElement.dataset.theme = t;
+})();
+function toggleTheme() {
+  const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = t; try { localStorage.setItem('ba-theme', t); } catch (e) {}
+}

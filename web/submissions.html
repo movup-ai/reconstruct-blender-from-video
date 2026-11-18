@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Submissions · Blender Agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topline">
+    <div><h1>Submissions</h1><p class="sub" id="sub">Finished packages, laid out like the client sample 11月2日试稿.</p></div>
+    <div class="right"><button id="openroot">Open SUBMIT folder</button><button class="primary" id="check">&#10003; Check all against the sample</button></div>
+  </div>
+  <div class="card" id="sumcard" style="display:none"><span id="sum"></span></div>
+  <div id="player" class="card" style="display:none;margin-top:14px"><div class="rowsb"><b id="ptitle"></b><button id="pclose">Close</button></div><video id="pvid" controls style="margin-top:8px;max-height:70vh"></video></div>
+  <table class="list" style="margin-top:14px">
+    <thead><tr><th>Package</th><th>Length</th><th>Size</th><th>Made</th><th>Check</th><th></th></tr></thead>
+    <tbody id="rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/common.js"></script>
+<script>
+nav('submissions');
+let LIST = [], CHECK = {}, ROOT = '';
+function render() {
+  $('rows').innerHTML = LIST.length ? LIST.map(p => {
+    const c = CHECK[p.name];
+    const chk = !c ? '<span class="muted small">not checked</span>' : c.ok ? '<span class="good">✓ matches</span>' :
+      `<span class="bad">✕ ${c.problems.length} problem${c.problems.length > 1 ? 's' : ''}</span><ul class="small bad" style="margin:4px 0 0;padding-left:18px">${c.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    return `<tr><td><b>${esc(p.name)}</b><div class="small muted">${p.resolution ? p.resolution.join(' × ') : ''}</div></td>
+      <td>${p.duration ? p.duration.toFixed(1) + ' s' : ''}</td><td>${p.zip_mb ? p.zip_mb + ' MB' : '<span class="bad">no zip</span>'}</td><td class="small">${esc(p.made)}</td><td>${chk}</td>
+      <td style="white-space:nowrap"><button data-play="${esc(p.name)}">&#9654; Play</button> <button data-open="${esc(p.folder)}">Folder</button> ${p.zip ? `<a class="btn" href="/download/${encodeURIComponent(p.name)}">&#8681; Zip</a>` : ''}</td></tr>`; }).join('')
+    : '<tr><td colspan="6" class="empty">No packages yet. Confirm clips on the Clips page; each one lands here when it has rendered.</td></tr>';
+  document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(b.dataset.open));
+  document.querySelectorAll('[data-play]').forEach(b => b.onclick = () => { $('player').style.display = ''; $('ptitle').textContent = b.dataset.play + ' · comparison';
+    $('pvid').src = `/package/${encodeURIComponent(b.dataset.play)}/comparison`; $('pvid').play(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('sub').textContent = `${LIST.length} package(s) in ${ROOT}`;
+}
+async function load() { const s = await api('/api/settings'); ROOT = s.submit_root; LIST = await api('/api/submissions'); render(); }
+$('pclose').onclick = () => { $('pvid').pause(); $('player').style.display = 'none'; };
+$('openroot').onclick = () => openFolder(ROOT);
+$('check').onclick = async () => { $('sumcard').style.display = ''; $('sum').textContent = 'Checking every package (a few seconds each)…';
+  const rows = await api('/api/validate'); CHECK = {}; rows.forEach(r => CHECK[r.package] = r);
+  const ok = rows.filter(r => r.ok).length;
+  $('sum').innerHTML = rows.length ? `<span class="${ok === rows.length ? 'good' : 'warn'}">${ok} of ${rows.length}</span> packages match the sample and the delivery spec.` : 'Nothing to check yet.';
+  render(); };
+load(); setInterval(load, 30000);
+</script>
+</body>
+</html>

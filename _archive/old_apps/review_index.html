@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>White-model review</title>
+<style>
+  :root { --bg:#16181b; --panel:#212429; --panel2:#2a2e34; --line:#363b42; --text:#eceef0; --muted:#9aa1a9;
+          --ok:#5cc27a; --warn:#f0b840; --run:#5aa8f0; --bad:#ef6464; --accent:#e5534b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,"Segoe UI","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; } .sub { color:var(--muted); margin:0 0 18px; }
+  .hero { display:grid; grid-template-columns:1.4fr 1fr; gap:16px; }
+  @media (max-width:860px) { .hero { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .bar { height:12px; border-radius:6px; background:var(--panel2); overflow:hidden; display:flex; margin:10px 0 8px; }
+  .bar span { display:block; height:100%; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:13px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:0; }
+  .steps { margin:0; padding-left:20px; color:var(--muted); font-size:14px; } .steps li { margin:3px 0; } .steps b { color:var(--text); }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; align-items:center; }
+  button { background:var(--panel2); color:var(--text); border:1px solid #474d55; border-radius:8px; padding:9px 14px; font:inherit; cursor:pointer; }
+  button:hover { background:#353a41; } button.primary { background:var(--accent); border-color:#f06a62; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  select { background:var(--panel2); color:var(--text); border:1px solid #474d55; border-radius:8px; padding:7px 8px; font:inherit; }
+  .q { font-size:13px; color:var(--muted); margin-top:8px; min-height:20px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin:22px 0 6px; }
+  .tabs button { padding:6px 12px; border-radius:16px; font-size:13px; } .tabs button.on { background:#3d4450; border-color:#6b7584; }
+  input.search { background:var(--panel2); color:var(--text); border:1px solid #474d55; border-radius:16px; padding:6px 12px; font:inherit; font-size:13px; margin-left:auto; min-width:180px; }
+  h2 { font-size:15px; margin:22px 0 10px; color:var(--muted); font-weight:600; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+  a.clip { display:block; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; color:var(--text); text-decoration:none; }
+  a.clip:hover { border-color:#6b7584; }
+  a.clip img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#000; }
+  a.clip .t { padding:8px 10px; display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  a.clip .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11.5px; background:#3a3f46; color:var(--muted); white-space:nowrap; }
+  .c-done { background:#1f4a2c; color:var(--ok); } .c-ready { background:#4d3d10; color:var(--warn); } .c-conf { background:#1f4a2c; color:#b8e6c4; }
+  .c-run { background:#173857; color:var(--run); } .c-fail { background:#552020; color:var(--bad); }
+  .empty { color:var(--muted); padding:30px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>White-model review</h1>
+  <p class="sub">The local models prepare each clip, you check the key points, and then it renders and packages itself.</p>
+  <div class="hero">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><b>Progress</b><span id="pct" style="color:var(--muted)"></span></div>
+      <div class="bar" id="bar"></div>
+      <div class="legend" id="legend"></div>
+      <div class="actions">
+        <button class="primary" id="prep">&#9654; Prepare all clips</button>
+        <button id="renderall">Render all confirmed</button>
+        <label style="color:var(--muted);font-size:13px">Clips at once <select id="par"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+      </div>
+      <div class="q" id="queue"></div>
+    </div>
+    <div class="card">
+      <b>How it works</b>
+      <ol class="steps">
+        <li><b>Prepare</b> – the local models find the people, camera, ground and set for each clip (about 1–3 min each).</li>
+        <li><b>Review</b> – open a clip marked <span class="chip c-ready">ready for review</span>, check the people and roles, and fix anything wrong.</li>
+        <li><b>Confirm</b> – the clip renders and packages by itself. The next clip opens so you can keep going.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="tabs"><span id="tabs" style="display:contents"></span><input class="search" id="search" placeholder="Search clips…"></div>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+<script>
+const GROUPS = [['ready', 'Needs review', '#f0b840'], ['busy', 'In progress', '#5aa8f0'], ['conf', 'Confirmed', '#9fd8b0'],
+                ['done', 'Done', '#5cc27a'], ['fail', 'Failed', '#ef6464'], ['new', 'Not started', '#4a5059']];
+const groupOf = l => l === 'ready for review' ? 'ready' : l === 'done' ? 'done' : l === 'confirmed' ? 'conf' : l === 'failed' ? 'fail'
+  : /prepar|render|waiting/.test(l) ? 'busy' : 'new';
+const chipCls = g => ({ ready: 'c-ready', done: 'c-done', conf: 'c-conf', busy: 'c-run', fail: 'c-fail' }[g] || '');
+let FILTER = 'all', DATA = null;
+const $ = id => document.getElementById(id);
+function tabs() {
+  const t = $('tabs'); t.innerHTML = ''; const cnt = {};
+  DATA.clips.forEach(c => { const g = groupOf(c.status.label); cnt[g] = (cnt[g] || 0) + 1; });
+  [['all', 'All', DATA.clips.length]].concat(GROUPS.map(g => [g[0], g[1], cnt[g[0]] || 0])).forEach(([k, l, n]) => {
+    const b = document.createElement('button'); b.textContent = `${l} (${n})`; if (k === FILTER) b.className = 'on';
+    b.onclick = () => { FILTER = k; render(); }; t.appendChild(b); });
+  const total = DATA.clips.length; $('bar').innerHTML = ''; $('legend').innerHTML = '';
+  GROUPS.forEach(([k, l, col]) => { const n = cnt[k] || 0; if (!n) return;
+    const sp = document.createElement('span'); sp.style.width = (100 * n / total) + '%'; sp.style.background = col; sp.title = `${l}: ${n}`; $('bar').appendChild(sp);
+    $('legend').insertAdjacentHTML('beforeend', `<span><i style="background:${col}"></i>${l} ${n}</span>`); });
+  $('pct').textContent = `${cnt.done || 0} of ${total} done`;
+  const q = DATA.queue; $('par').value = q.parallel;
+  $('queue').textContent = q.running || q.queued ? `Working on ${q.running} clip(s), ${q.queued} waiting. ` + (q.running_clips.length ? 'Now: ' + q.running_clips.join(', ') : '') : 'Nothing running.';
+}
+function render() {
+  tabs();
+  const term = $('search').value.trim().toLowerCase();
+  const list = $('list'); list.innerHTML = '';
+  const films = {};
+  DATA.clips.filter(c => (FILTER === 'all' || groupOf(c.status.label) === FILTER) && (!term || c.name.toLowerCase().includes(term)))
+    .forEach(c => (films[c.film] = films[c.film] || []).push(c));
+  if (!Object.keys(films).length) { list.innerHTML = '<div class="empty">No clips here.</div>'; return; }
+  for (const [film, cs] of Object.entries(films)) {
+    list.insertAdjacentHTML('beforeend', `<h2>${film} · ${cs.length}</h2>`);
+    const g = document.createElement('div'); g.className = 'grid';
+    cs.forEach(c => { const grp = groupOf(c.status.label);
+      g.insertAdjacentHTML('beforeend', `<a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
+        <div class="t"><span class="n" title="${c.name}">${c.name.replace(/^[^_]+_/, '')}</span><span class="chip ${chipCls(grp)}">${c.status.label}</span></div></a>`); });
+    list.appendChild(g);
+  }
+}
+async function load() { DATA = await (await fetch('/api/clips')).json(); render(); }
+$('search').oninput = render;
+$('prep').onclick = async () => { const r = await (await fetch('/api/prepare_all', { method: 'POST' })).json(); $('queue').textContent = `${r.queued} clip(s) added to the queue.`; load(); };
+$('renderall').onclick = async () => { const r = await (await fetch('/api/render_confirmed', { method: 'POST' })).json(); $('queue').textContent = `${r.queued} confirmed clip(s) added to the queue.`; load(); };
+$('par').onchange = async e => { await fetch('/api/settings', { method: 'POST', body: JSON.stringify({ parallel: +e.target.value }) }); load(); };
+load(); setInterval(load, 6000);
+</script>
+</body>
+</html>

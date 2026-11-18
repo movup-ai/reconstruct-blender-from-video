@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip · Blender Agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="bar2">
+  <div class="hd">
+    <a href="/">&#9664; All clips</a>
+    <h1 id="title">…</h1><span class="film" id="film"></span><span id="state"></span>
+    <a id="editmove" class="btn" style="margin-left:auto;background:#4c8dff;color:#fff;border-radius:7px;padding:4px 12px;text-decoration:none" href="#">Edit movement &#9654;</a><span class="film" id="pos"></span><a id="prevc" href="#">&#8592; Prev</a><a id="nextc" href="#">Next &#8594;</a>
+  </div>
+  <div class="stepper"><a href="#s-people"><b>1</b> People</a><a href="#s-camera"><b>2</b> Camera</a><a href="#s-set"><b>3</b> Set</a><a href="#s-objects"><b>4</b> Objects</a><a href="#s-notes"><b>5</b> Notes</a><a href="#s-marks">Fix joints (optional)</a></div>
+</header>
+<main class="page">
+  <div id="banner" class="banner"></div>
+  <div class="grid2" style="margin-top:14px">
+    <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
+    <div id="prevbox"><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the local models found. <b style="color:#ff6b6b">Red dots</b> are the marks, the coloured skeleton is each 3D person through the solved camera, and thin lines are the set. One block per shot.</p></div>
+  </div>
+  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" controls preload="metadata"></video><p class="cap" id="outcap">Finished comparison video: the target on top, the white model below.</p></div>
+
+  <section class="step" id="s-people">
+    <h2><span class="num">1</span>Who is who?</h2>
+    <p class="hint">Each card is one person the models followed. Click their role. The colour follows the role (主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow). Use <b>Not a person</b> for false detections, such as a driver inside a car or a reflection. If the same character appears in two shots, give both cards the same role. <span class="aitag">✦ marks DeepSeek's suggestion.</span></p>
+    <div class="people" id="ppl"></div>
+  </section>
+
+  <section class="step" id="s-camera">
+    <h2><span class="num">2</span>How does the camera move?</h2>
+    <p class="hint">Already filled in from what the camera solver measured. Change it if it's wrong.</p>
+    <div class="shots" id="shots"></div>
+    <div class="row"><span class="seg" id="camtype"><button data-v="static">Still</button><button data-v="pan">Pans / tilts</button><button data-v="moving">Moves (dolly / track)</button><button data-v="handheld">Handheld</button></span>
+      <label>Lens <input type="number" id="lens" step="0.1" min="10" max="200"> mm</label></div>
+    <div class="row"><label style="flex:1">Note <input type="text" id="camnote" style="flex:1" placeholder="e.g. slow push-in, pans left with the man"></label></div>
+    <div id="camwarn"></div>
+  </section>
+
+  <section class="step" id="s-set">
+    <h2><span class="num">3</span>Set and objects</h2>
+    <p class="hint">The set is made of walls and blocks fitted to the depth model, coloured with the video's own colours (L2). In the picture, the left side is the empty background and the right side is what it became. Add objects that people touch or that hide them.</p>
+    <div class="row">
+      <label><input type="checkbox" id="env_depth" checked> Build the set from the video</label>
+      <label>Colours <select id="env_colour"><option value="grey">Client style: light grey (like the samples)</option><option value="video">Video's own colours</option></select></label>
+      <label id="useai_l" style="display:none"><input type="checkbox" id="env_useai" checked> Use DeepSeek's set corrections</label>
+    </div>
+    <div class="muted small" id="envdet"></div>
+    <div id="envai"></div>
+    <div class="blocks" id="blocks"></div>
+    <table id="props" style="margin-top:10px"><thead><tr><th>Object</th><th>Type</th><th>Frames</th><th>Where / who holds it</th><th></th></tr></thead><tbody></tbody></table>
+    <button id="addprop" style="margin-top:6px">+ Add an object</button>
+  </section>
+
+  <section class="step" id="s-objects">
+    <h2><span class="num">4</span>Objects in the set</h2>
+    <p class="hint">Everything a viewer should recognise: doors, shelves, counters, tables, cars, trees… Each one is built as a simple model of its type, like the client sample. <b>Drag on a picture</b> to add an object, click a box to select it, <kbd>Delete</kbd> removes it. With a DeepSeek key saved, this list is filled in automatically.</p>
+    <div id="objshots"><div class="empty">Loading…</div></div>
+    <div class="row"><button class="primary" id="objsave">Save objects &amp; rebuild the set</button><span class="small muted" id="objmsg"></span></div>
+  </section>
+
+  <section class="step" id="s-notes">
+    <h2><span class="num">5</span>Description and notes</h2>
+    <textarea id="notes" placeholder="What happens in the shot (also used as the description in meta.jsonl), and anything that must match"></textarea>
+  </section>
+
+  <details class="step" id="s-marks">
+    <summary>Fix joint marks <span>(optional: only if a skeleton in the picture above is clearly wrong)</span></summary>
+    <p class="hint" style="margin-top:8px">Every 8th frame. Drag a dot to move it, right-click to mark it hidden, <kbd>S</kbd> swaps left and right, <kbd>D</kbd> deletes a wrong person, <kbd>Enter</kbd> marks the frame OK. Your fixes are saved when you press a button below.</p>
+    <iframe id="marks" title="marks editor"></iframe>
+  </details>
+  <details class="step" id="jobbox" style="display:none"><summary>Technical log <span id="jobstate"></span></summary><pre class="log" id="log"></pre></details>
+</main>
+<footer class="actbar"><div class="ft">
+  <button id="save" title="Save without rendering">Save</button>
+  <button id="rerun" title="Run the local models again with your changes, then look at the new picture">&#8635; Re-check with my changes</button>
+  <button id="askai" title="Let DeepSeek check people, camera, set and description">&#10022; Ask DeepSeek</button>
+  <button id="confirm" class="primary">&#10003; Confirm</button>
+  <label class="small muted" style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> then open the next clip to review</label>
+  <span id="msg"></span>
+</div></footer>
+<div class="toast" id="toast"></div>
+<div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
+  <tr><td><kbd>Tab</kbd> / click</td><td>select a person</td></tr><tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>主角色 · 第二 · 第三 · 第四</td></tr>
+  <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>other person / not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>confirm &amp; render</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
+<script src="/static/common.js"></script>
+<script>
+nav('clips');
+const CID = location.pathname.split('/').pop();
+document.getElementById('editmove').href = '/edit/' + CID;
+const HEX = { red:'#cd3e3c', blue:'#3a68c9', green:'#46aa5a', yellow:'#e1c83c', purple:'#965abe', pink:'#dc6eaa', orange:'#dd8732', cyan:'#50cdeb', brown:'#825532', white:'#f5f5f5', grey:'#969696' };
+const ROLES = [['main', '主角色', 'red'], ['second', '第二角色', 'blue'], ['third', '第三角色', 'green'], ['fourth', '第四角色', 'yellow'], ['extra', 'Other person', 'purple'], ['ignore', 'Not a person', null]];
+const EXTRA_COLS = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'];
+const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'], ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
+let INFO = null, lastState = null, dirty = false;
+const msg = t => $('msg').textContent = t;
+
+function quality(px) {
+  if (px == null) return '';
+  return px < 6 ? `<span class="good">● fits well (${px} px)</span>` : px < 14 ? `<span class="warn">● fits OK (${px} px)</span>` : `<span class="bad">● poor fit (${px} px), check the joints</span>`;
+}
+function fillPeople(rv) {
+  const box = $('ppl'); box.innerHTML = '';
+  if (!INFO.people || !INFO.people.length) { box.innerHTML = `<div class="empty">${INFO.status.marks ? 'Nobody was detected in this clip.' : 'Not prepared yet. Press “Prepare this clip” below.'}</div>`; return; }
+  INFO.people.forEach(p => {
+    const r = (rv && rv.people && rv.people[p.id]) || {};
+    const d = el('div', { class: 'person', tabindex: '0' }); d.dataset.id = p.id;
+    d.addEventListener('focus', () => selectCard(d)); d.addEventListener('click', () => selectCard(d)); d.dataset.role = r.role || 'extra'; d.dataset.colour = r.colour || 'purple';
+    const shots = p.shots && p.shots.length && INFO.camera && (INFO.camera.shots || []).length > 1 ? ' · shot ' + p.shots.join(', ') : '';
+    const ai = p.ai ? `<div class="aitag">✦ AI: ${p.ai.is_person === false ? 'not a person' : esc(ROLES.find(x => x[0] === p.ai.role)?.[1] || p.ai.role)}${p.ai.look ? ' · ' + esc(p.ai.look) : ''}</div>` : '';
+    d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="P${p.id}">
+      <div class="body"><div class="top"><b>Person ${p.id}</b><span class="meta">frames ${p.first}–${p.last}${shots}</span></div>
+      <div class="meta">${quality(p.fit_px)}</div>${ai}
+      <div class="roles">${ROLES.map(([v, l, c]) => `<button data-v="${v}">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
+      <div class="fields"><span class="extra" style="display:none">Colour <select class="col">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select></span>
+        Height <input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"> m
+        <input type="text" class="nm" value="${esc(r.name)}" placeholder="Name (optional)" style="flex:1;min-width:90px"></div></div>`;
+    const paint = () => { d.querySelectorAll('.roles button').forEach(b => b.classList.toggle('on', b.dataset.v === d.dataset.role));
+      d.classList.toggle('ignored', d.dataset.role === 'ignore'); d.querySelector('.extra').style.display = d.dataset.role === 'extra' ? '' : 'none'; };
+    d.querySelectorAll('.roles button').forEach(b => b.onclick = () => { d.dataset.role = b.dataset.v;
+      d.dataset.colour = b.dataset.v === 'extra' ? d.querySelector('.col').value : (ROLES.find(x => x[0] === b.dataset.v)[2] || 'purple'); dirty = true; paint(); });
+    d.querySelector('.col').value = EXTRA_COLS.includes(d.dataset.colour) ? d.dataset.colour : 'purple';
+    d.querySelector('.col').onchange = e => { d.dataset.colour = e.target.value; dirty = true; };
+    d.querySelectorAll('input').forEach(i => i.addEventListener('change', () => dirty = true));
+    box.appendChild(d); paint();
+  });
+}
+function propRow(p = {}) {
+  const tr = $('props').tBodies[0].insertRow();
+  tr.innerHTML = `<td><input type="text" class="pn" value="${esc(p.name)}" placeholder="e.g. shoulder bag"></td>
+    <td><select class="pk">${KINDS.map(([v, l]) => `<option value="${v}" ${v === p.kind ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+    <td><input type="text" class="pf" value="${esc(p.frames)}" placeholder="all" style="width:80px"></td>
+    <td><input type="text" class="pw" value="${esc(p.note)}" placeholder="e.g. in the man's right hand" style="width:100%"></td>
+    <td><button class="rm" title="Remove">✕</button></td>`;
+  tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
+}
+function fillForm(rv) {
+  fillPeople(rv);
+  segSet($('camtype'), rv?.camera?.type || 'static');
+  $('lens').value = rv?.camera?.lens || INFO.defaults.lens; $('camnote').value = rv?.camera?.note || '';
+  const env = rv?.environment || {};
+  $('env_depth').checked = env.depth_set !== false; $('env_colour').value = env.set_colours || 'grey'; $('env_useai').checked = env.use_ai !== false;
+  $('props').tBodies[0].innerHTML = ''; (env.props || []).forEach(propRow);
+  $('notes').value = rv?.notes || '';
+}
+function collect(confirmed) {
+  const people = {};
+  document.querySelectorAll('.person').forEach(d => people[d.dataset.id] = { role: d.dataset.role, colour: d.dataset.colour,
+    height: +d.querySelector('.h').value, name: d.querySelector('.nm').value.trim() });
+  const props = [...$('props').tBodies[0].rows].map(tr => ({ name: tr.querySelector('.pn').value.trim(), kind: tr.querySelector('.pk').value,
+    frames: tr.querySelector('.pf').value.trim(), note: tr.querySelector('.pw').value.trim() })).filter(p => p.name);
+  return { confirmed, people, camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
+           environment: { depth_set: $('env_depth').checked, set_colours: $('env_colour').value, use_ai: $('env_useai').checked, props }, notes: $('notes').value };
+}
+function saveMarks() {
+  return new Promise(res => {
+    const f = $('marks'); if (!f || !f.getAttribute('src') || !f.contentWindow) return res(false);
+    const done = e => { if (e.data && e.data.type === 'marks_saved') { window.removeEventListener('message', done); res(true); } };
+    window.addEventListener('message', done); setTimeout(() => { window.removeEventListener('message', done); res(false); }, 3000);
+    f.contentWindow.postMessage({ type: 'do_save', all: false }, '*');
+  });
+}
+const sendReview = confirmed => post(`/api/clip/${CID}/review`, collect(confirmed));
+$('save').onclick = async () => { await saveMarks(); await sendReview(false); dirty = false; toast('Saved'); };
+$('rerun').onclick = async () => { await saveMarks(); if (INFO.status.marks) await sendReview(false); dirty = false;
+  const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Queued. The picture updates when it’s done.' : 'This clip is already being processed'); refresh(); };
+$('askai').onclick = async () => { const r = await post(`/api/clip/${CID}/run?stage=ai`); toast(r.queued ? 'DeepSeek is looking at this clip…' : 'Already busy'); refresh(); };
+$('confirm').onclick = async () => {
+  const roles = Object.values(collect(true).people).map(p => p.role).filter(r => !['ignore', 'extra'].includes(r));
+  const dup = roles.find((r, i) => roles.indexOf(r) !== i);
+  if (dup && !(await ask(`Two people have the same role (${ROLES.find(x => x[0] === dup)[1]}). That's right if they are the same character, for example before and after a cut. Continue?`))) return;
+  await saveMarks(); const r = await sendReview(true); dirty = false;
+  if ($('gonext').checked && r.next_review) { location.href = '/clip/' + r.next_review; return; }
+  const h = r.handoff;
+  toast(r.queued ? 'Confirmed. It renders in the background.' : 'Confirmed. Hand-off file written for Claude' + (h ? ` (${h.confirmed} of ${h.clips} clips confirmed${h.all_confirmed ? ' — all done' : ''}).` : '.')); refresh(); };
+$('addprop').onclick = () => { propRow(); dirty = true; };
+segInit($('camtype'), () => dirty = true);
+['env_depth', 'env_colour', 'env_useai', 'lens', 'camnote', 'notes'].forEach(id => $(id).addEventListener('change', () => dirty = true));
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+$('s-marks').addEventListener('toggle', () => { if ($('s-marks').open && !$('marks').getAttribute('src')) $('marks').src = '/check/' + CID; });
+
+function envAi() {
+  const e = INFO.env_ai, regs = INFO.regions || {};
+  $('useai_l').style.display = e ? '' : 'none';
+  if (!e) { $('envai').innerHTML = ''; return; }
+  $('envai').innerHTML = Object.entries(e).map(([tag, sh]) => {
+    const r = regs[tag] || { regions: [], added: [] };
+    const items = Object.entries(sh.labels || {}).map(([id, what]) => {
+      const bad = (sh.drop || []).some(d => d.id === id);
+      return `<li><b>${esc(id)}</b> <span class="${bad ? 'tagno' : 'tagok'}">${esc(what)}</span>${bad ? ' <span class="small bad">removed</span>' : ''}</li>`; }).join('');
+    const add = (r.added || []).map(a => `<li class="tagadd">+ ${esc(a.what)} <span class="small muted">${a.size_m.join(' × ')} m at ${a.distance_m} m</span></li>`).join('')
+             || (sh.objects || []).map(o => `<li class="tagadd">+ ${esc(o.what)} <span class="small muted">(added on the next build)</span></li>`).join('');
+    return `<div class="small" style="margin-top:8px"><b>DeepSeek · shot ${esc(tag.replace(/^_/, ''))}</b> <span class="muted">${esc(sh.scene)}</span><ul class="envlist">${items}${add}</ul></div>`;
+  }).join('');
+}
+// ---------------------------------------------------------------- object editor
+let OBJ = null, OSEL = null, ODIRTY = false;
+const FACINGS = [['camera', 'faces camera'], ['left', 'faces left'], ['right', 'faces right'], ['away', 'faces away']];
+const OCOL = ['#ff9f43', '#54a0ff', '#5f27cd', '#1dd1a1', '#ff6b6b', '#feca57', '#48dbfb', '#c8d6e5'];
+async function loadObjects() {
+  try { OBJ = await api(`/api/clip/${CID}/objects`); } catch (e) { $('objshots').innerHTML = '<div class="empty">Could not load the objects.</div>'; return; }
+  ODIRTY = false; OSEL = null; renderObjects();
+}
+function typeOpts(sel) { return Object.keys(OBJ.types).sort().map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t.replace('_', ' ')}</option>`).join(''); }
+function renderObjects() {
+  const box = $('objshots');
+  if (!OBJ.shots.length) { box.innerHTML = '<div class="empty">Prepare the clip first: the objects are drawn on each shot\'s background picture.</div>'; $('objsave').disabled = true; return; }
+  $('objsave').disabled = false;
+  box.innerHTML = '';
+  OBJ.shots.forEach((sh, si) => {
+    const wrap = el('div', { class: 'objshot' });
+    wrap.innerHTML = `<div class="small muted" style="margin:10px 0 4px">${OBJ.shots.length > 1 ? `<b>Shot ${si + 1}</b> · ` : ''}${esc(sh.scene || '')} ${sh.built && sh.built.length ? `· ${sh.built.length} built in the last set` : ''}</div>
+      <div class="objgrid"><div class="objwrap"><img src="${sh.plate}?v=${Date.now() >> 15}" alt="background of the shot"><canvas></canvas></div>
+      <div><table class="list objtable"><thead><tr><th></th><th>Object</th><th>Type</th><th>On</th><th>Facing</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="small muted" style="margin-top:6px">${sh.objects.length ? '' : 'No objects yet: drag on the picture to add one.'}</div></div></div>`;
+    box.appendChild(wrap);
+    const img = wrap.querySelector('img'), cv = wrap.querySelector('canvas');
+    const tb = wrap.querySelector('tbody');
+    sh.objects.forEach((o, oi) => {
+      const tr = tb.insertRow(); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
+      if (sel) tr.className = 'osel';
+      tr.innerHTML = `<td><span class="sw" style="background:${OCOL[oi % OCOL.length]}"></span></td>
+        <td><input type="text" value="${esc(o.what)}" placeholder="name" style="width:120px"></td>
+        <td><select>${typeOpts(o.type)}</select></td>
+        <td><select><option value="">auto</option><option value="floor" ${o.attach === 'floor' ? 'selected' : ''}>floor</option><option value="wall" ${o.attach === 'wall' ? 'selected' : ''}>wall</option></select></td>
+        <td><select>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+        <td><button title="Remove">✕</button></td>`;
+      const [nm] = tr.querySelectorAll('input'); const [ty, on, fa] = tr.querySelectorAll('select');
+      nm.oninput = () => { o.what = nm.value; ODIRTY = true; };
+      ty.onchange = () => { o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); ODIRTY = true; draw(); };
+      on.onchange = () => { o.attach = on.value || null; ODIRTY = true; };
+      fa.onchange = () => { o.facing = fa.value; ODIRTY = true; };
+      tr.querySelector('button').onclick = () => { sh.objects.splice(oi, 1); OSEL = null; ODIRTY = true; renderObjects(); };
+      tr.onclick = e => { if (e.target.tagName === 'TD') { OSEL = [si, oi]; renderObjects(); } };
+    });
+    let drag = null;
+    const scale = () => img.clientWidth / sh.size[0];
+    function draw() {
+      cv.width = img.clientWidth * devicePixelRatio; cv.height = img.clientHeight * devicePixelRatio;
+      const g = cv.getContext('2d'); const k = scale() * devicePixelRatio; g.clearRect(0, 0, cv.width, cv.height);
+      g.font = `${12 * devicePixelRatio}px system-ui`; g.textBaseline = 'bottom';
+      sh.objects.forEach((o, oi) => { const [x0, y0, x1, y1] = o.bbox.map(v => v * k); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
+        g.strokeStyle = OCOL[oi % OCOL.length]; g.lineWidth = (sel ? 3 : 1.6) * devicePixelRatio; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
+        const label = (o.what || o.type).slice(0, 22); const tw = g.measureText(label).width + 8 * devicePixelRatio;
+        g.fillStyle = OCOL[oi % OCOL.length]; g.fillRect(x0, Math.max(0, y0 - 16 * devicePixelRatio), tw, 16 * devicePixelRatio);
+        g.fillStyle = '#111'; g.fillText(label, x0 + 4 * devicePixelRatio, Math.max(16 * devicePixelRatio, y0) - 2 * devicePixelRatio); });
+      if (drag && drag.cur) { const [ax, ay] = drag.a, [bx, by] = drag.cur; g.setLineDash([6, 4]); g.strokeStyle = '#fff'; g.lineWidth = 2;
+        g.strokeRect(Math.min(ax, bx) * k, Math.min(ay, by) * k, Math.abs(bx - ax) * k, Math.abs(by - ay) * k); g.setLineDash([]); }
+    }
+    const pos = e => { const r = cv.getBoundingClientRect(); const s = scale(); return [(e.clientX - r.left) / s, (e.clientY - r.top) / s]; };
+    cv.addEventListener('mousedown', e => { const p = pos(e);
+      const hit = sh.objects.map((o, oi) => [o, oi]).filter(([o]) => p[0] >= o.bbox[0] && p[0] <= o.bbox[2] && p[1] >= o.bbox[1] && p[1] <= o.bbox[3])
+        .sort((a, b) => (a[0].bbox[2] - a[0].bbox[0]) * (a[0].bbox[3] - a[0].bbox[1]) - (b[0].bbox[2] - b[0].bbox[0]) * (b[0].bbox[3] - b[0].bbox[1]))[0];
+      drag = { a: p, hit }; });
+    cv.addEventListener('mousemove', e => { if (drag) { drag.cur = pos(e); draw(); } });
+    window.addEventListener('mouseup', () => { if (!drag) return; const d = drag; drag = null;
+      if (d.cur && Math.abs(d.cur[0] - d.a[0]) > 6 && Math.abs(d.cur[1] - d.a[1]) > 6) {
+        const b = [Math.min(d.a[0], d.cur[0]), Math.min(d.a[1], d.cur[1]), Math.max(d.a[0], d.cur[0]), Math.max(d.a[1], d.cur[1])];
+        sh.objects.push({ what: '', type: 'other', bbox: b, attach: null, facing: 'camera' }); OSEL = [si, sh.objects.length - 1]; ODIRTY = true; renderObjects();
+        const rows = document.querySelectorAll('.objtable'); const sel = rows[si] && rows[si].querySelector('tr.osel select'); if (sel) sel.focus();
+      } else if (d.hit) { OSEL = [si, d.hit[1]]; renderObjects(); } else draw(); });
+    img.onload = draw; if (img.complete) draw();
+    window.addEventListener('resize', draw);
+  });
+}
+document.addEventListener('keydown', e => {
+  if (!OSEL || !OBJ || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { OBJ.shots[OSEL[0]].objects.splice(OSEL[1], 1); OSEL = null; ODIRTY = true; renderObjects(); e.preventDefault(); }
+});
+$('objsave').onclick = async () => {
+  const body = { shots: {} }; OBJ.shots.forEach(sh => body.shots[sh.tag] = { objects: sh.objects });
+  const r = await post(`/api/clip/${CID}/objects`, body); ODIRTY = false;
+  $('objmsg').textContent = `${r.objects} object(s) saved.` + (r.queued ? ' Rebuilding the set…' : '');
+  toast('Objects saved. The set is being rebuilt.'); refresh();
+};
+window.addEventListener('beforeunload', e => { if (ODIRTY) { e.preventDefault(); e.returnValue = ''; } });
+
+function banner() {
+  const b = $('banner'), j = INFO.job, s = INFO.status;
+  if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
+    b.innerHTML = j.state === 'queued' ? `Waiting for a free slot (${STAGE[j.stage]})…` : esc({ fit: 'The local models are working on this clip.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
+      (j.pct != null ? progressBar(j.pct, j.step) : ''); }
+  else if (j && j.state === 'failed') { b.className = 'banner fail';
+    b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
+  else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
+  else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Confirm again.'; }
+  else b.className = 'banner';
+}
+async function load(first) {
+  INFO = await api('/api/clip/' + CID);
+  document.title = INFO.clip.name + ' · Blender Agent';
+  $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('film').textContent = INFO.clip.film;
+  $('state').innerHTML = chip(INFO.status); $('pos').textContent = `clip ${INFO.index + 1} of ${INFO.count}`;
+  $('prevc').style.visibility = INFO.prev ? '' : 'hidden'; $('prevc').href = '/clip/' + INFO.prev;
+  $('nextc').style.visibility = INFO.next ? '' : 'hidden'; $('nextc').href = '/clip/' + INFO.next;
+  if (first) {
+    $('src').src = '/media/video/' + CID + '.mp4';
+    $('srcinfo').textContent = INFO.frames ? `The source clip · ${INFO.size[0]}×${INFO.size[1]} · ${INFO.fps} fps · ${INFO.frames} frames` : 'The source clip';
+    fillForm(INFO.review || INFO.suggested);
+    if (!INFO.review && INFO.suggested) msg(INFO.suggested.source === 'ai' ? 'Filled in by the local AI. Check and confirm.' : 'Filled in with first guesses. Check and confirm.');
+    if (!INFO.status.marks) $('s-marks').style.display = 'none';
+    loadObjects();
+  }
+  const sh = (INFO.camera && INFO.camera.shots) || [];
+  $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${s.shot}: frames ${s.frames[0]}–${s.frames[1]} · turns ${(+s.max_rotation_deg).toFixed(1)}°${s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : ''}</span>`).join('') : '<span>Not measured yet</span>';
+  $('camwarn').innerHTML = (INFO.warnings || []).map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
+  $('envdet').textContent = INFO.set ? 'Built: ' + Object.entries(INFO.set).map(([k, n]) => `${n} ${k}${n > 1 ? 's' : ''}`).join(', ') + (sh.length > 1 ? ` across ${sh.length} shots` : '') : 'Not built yet.';
+  $('blocks').innerHTML = (INFO.blocks || []).map(b => `<img src="/media/blocks/${CID}/${b}?v=${INFO.job ? INFO.job.id : 0}" alt="set">`).join('');
+  $('prev').src = INFO.status.fit ? `/media/preview/${CID}.jpg?v=${INFO.job ? INFO.job.id : 0}` : '';
+  $('prevbox').style.visibility = INFO.status.fit ? 'visible' : 'hidden';
+  if (INFO.outputs.comparison) { $('outbox').style.display = ''; if (!$('cmp').getAttribute('src')) $('cmp').src = '/media/comparison/' + CID + '.mp4'; }
+  if (INFO.job) { $('jobbox').style.display = ''; $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
+    const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
+  banner();
+  const busy = INFO.job && /queued|running/.test(INFO.job.state);
+  $('rerun').disabled = busy; $('confirm').disabled = busy || !INFO.status.fit; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
+  $('askai').title = INFO.ai_ready ? 'Let DeepSeek check people, camera, set and description' : 'Add a DeepSeek key on the start page first';
+  envAi();
+  $('rerun').innerHTML = INFO.status.marks ? '&#8635; Re-check with my changes' : '&#9654; Prepare this clip';
+  const state = INFO.job ? INFO.job.state + INFO.job.id : '';
+  if (lastState && /queued|running/.test(lastState) && INFO.job && !/queued|running/.test(INFO.job.state)) {
+    toast(INFO.job.state === 'done' ? 'Finished' : 'Failed: ' + (INFO.job.error || ''), INFO.job.state !== 'done');
+    if (INFO.job.stage !== 'all' && !dirty) { fillForm(INFO.review || INFO.suggested); }
+    if (INFO.job.stage !== 'all' && !ODIRTY) loadObjects();
+  }
+  lastState = state;
+  return busy;
+}
+let SEL = null;
+function selectCard(d) { document.querySelectorAll('.person').forEach(x => x.classList.toggle('sel', x === d)); SEL = d; }
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); $('save').click(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!$('confirm').disabled) $('confirm').click(); return; }
+  if (e.altKey && e.key === 'ArrowLeft' && INFO && INFO.prev) { location.href = '/clip/' + INFO.prev; return; }
+  if (e.altKey && e.key === 'ArrowRight' && INFO && INFO.next) { location.href = '/clip/' + INFO.next; return; }
+  if (['input', 'textarea', 'select'].includes(tag)) return;
+  if (e.key === '?') { $('kbdhelp').classList.toggle('show'); return; }
+  const map = { '1': 'main', '2': 'second', '3': 'third', '4': 'fourth', '5': 'extra', '0': 'ignore' };
+  if (map[e.key]) {
+    const d = SEL || document.querySelector('.person'); if (!d) return; selectCard(d);
+    const b = d.querySelector(`.roles button[data-v="${map[e.key]}"]`); if (b) b.click();
+    const cards = [...document.querySelectorAll('.person')]; const nx = cards[cards.indexOf(d) + 1];
+    if (nx) { nx.focus(); selectCard(nx); }
+  }
+});
+let timer = null;
+async function refresh() { clearTimeout(timer); let busy = false; try { busy = await load(false); } catch (e) { msg('Connection lost, retrying…'); } timer = setTimeout(refresh, busy ? 3000 : 12000); }
+load(true).then(() => timer = setTimeout(refresh, 3000)).catch(e => { document.querySelector('main').innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "onnxruntime/balanced": {
+    "sec_per_frame": 0.48,
+    "people": 1,
+    "load_s": 33.6
+  },
+  "onnxruntime/lightweight": {
+    "sec_per_frame": 0.049,
+    "people": 1,
+    "load_s": 10.2
+  },
+  "openvino/balanced": {
+    "sec_per_frame": 0.15,
+    "people": 1,
+    "load_s": 1.0
+  },
+  "openvino/lightweight": {
+    "sec_per_frame": 0.027,
+    "people": 1,
+    "load_s": 0.5
+  },
+  "depth/OpenVINOExecutionProvider": 0.284,
+  "depth/CPUExecutionProvider": 0.284
+}

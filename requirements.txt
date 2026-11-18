@@ -1,0 +1,17 @@
+# Blender Agent - Python packages (installed by Setup.bat into .venv)
+# GPU build: pose and depth models run on the NVIDIA card through CUDA (CUDA + cuDNN come from pip).
+# onnxruntime-gpu 1.25.x is the last line built for CUDA 12, which this PC's NVIDIA driver (560.x) supports;
+# 1.27+ needs CUDA 13 and an NVIDIA driver 580 or newer.  The CUDA libraries are held at 12.6 for the same reason.
+# rtmlib is installed separately by Setup.bat with --no-deps, because it would pull in the CPU onnxruntime.
+onnxruntime-gpu[cuda,cudnn]==1.25.1
+nvidia-cuda-runtime-cu12<12.7
+nvidia-cuda-nvrtc-cu12<12.7
+nvidia-cublas-cu12<12.7
+nvidia-cufft-cu12<11.4
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+numpy==2.5.4
+scipy==1.18.1
+tqdm
+requests==2.34.2
+imageio-ffmpeg==0.8.1

@@ -1,0 +1,11 @@
+# Blender Agent - Python packages for a PC without an NVIDIA card (installed by Setup.bat into .venv)
+# CPU build: pose and depth models run on the processor through onnxruntime (slower than the GPU build, same results).
+# rtmlib is installed separately by Setup.bat with --no-deps.
+onnxruntime==1.25.1
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+numpy==2.5.4
+scipy==1.18.1
+tqdm
+requests==2.34.2
+imageio-ffmpeg==0.8.1

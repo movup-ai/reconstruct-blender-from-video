@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>白模 Studio</title>
+<style>
+:root { --bg:#f4f5f7; --card:#fff; --line:#e3e5e9; --ink:#1f2328; --mute:#6b7280; --acc:#2f6fed; --acc2:#e8f0fe;
+        --ok:#1f8a4c; --okbg:#e6f4ec; --warn:#b26a00; --warnbg:#fff4e0; --bad:#c62828; --badbg:#fdecea; --red:#cd3e3c; }
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.45 "Segoe UI","Microsoft YaHei",system-ui,sans-serif; }
+button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--line); background:#fff; padding:7px 14px; color:var(--ink); }
+button:hover { background:#f0f2f5; }
+button.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+button.primary:hover { background:#255ed0; }
+button.ghost { border:none; background:transparent; color:var(--acc); padding:4px 8px; }
+button:disabled { opacity:.45; cursor:default; }
+input[type=text],input[type=password],input[type=number],select,textarea { font:inherit; border:1px solid var(--line); border-radius:8px; padding:7px 10px; background:#fff; width:100%; }
+header { display:flex; align-items:center; gap:14px; padding:12px 22px; background:#fff; border-bottom:1px solid var(--line); }
+header .logo { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,#cd3e3c 0 33%,#3a68c9 33% 66%,#dd8732 66%); }
+header h1 { font-size:18px; margin:0; } header .sub { color:var(--mute); font-size:12.5px; }
+header .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+.badge { font-size:12px; padding:3px 9px; border-radius:20px; background:#eef0f3; color:var(--mute); white-space:nowrap; }
+.badge.ok { background:var(--okbg); color:var(--ok); } .badge.warn { background:var(--warnbg); color:var(--warn); } .badge.bad { background:var(--badbg); color:var(--bad); }
+main { padding:18px 22px 120px; max-width:1400px; margin:0 auto; }
+.folders { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+.card h3 { margin:0 0 6px; font-size:13px; color:var(--mute); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+.pathrow { display:flex; gap:8px; align-items:center; } .pathrow .path { flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.steps { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 0 12px; }
+.steps .step { display:flex; align-items:center; gap:8px; }
+.steps .num { width:22px; height:22px; border-radius:50%; background:var(--acc); color:#fff; font-size:12px; display:grid; place-items:center; font-weight:700; }
+.steps .arrow { color:#b8bcc4; }
+.steps .opt { margin-left:auto; color:var(--mute); font-size:13px; display:flex; gap:14px; align-items:center; }
+table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+th { text-align:left; font-size:12px; color:var(--mute); font-weight:600; padding:9px 12px; background:#fafbfc; border-bottom:1px solid var(--line); }
+td { padding:9px 12px; border-bottom:1px solid #f0f1f3; vertical-align:middle; }
+tr:last-child td { border-bottom:none; } tr:hover td { background:#fafcff; }
+td .name { font-weight:600; } td .film { color:var(--mute); font-size:12px; }
+.chip { display:inline-block; font-size:12px; padding:2px 9px; border-radius:20px; background:#eef0f3; color:var(--mute); margin-right:4px; white-space:nowrap; }
+.chip.ok { background:var(--okbg); color:var(--ok); } .chip.warn { background:var(--warnbg); color:var(--warn); } .chip.blue { background:var(--acc2); color:var(--acc); }
+.empty { text-align:center; padding:60px 20px; color:var(--mute); background:#fff; border:1px dashed var(--line); border-radius:12px; }
+.empty b { color:var(--ink); }
+#jobbar { position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--line); padding:10px 22px; display:none; box-shadow:0 -4px 16px rgba(0,0,0,.05); }
+#jobbar .top { display:flex; gap:12px; align-items:center; }
+#jobbar .title { font-weight:600; } #jobbar .cur { color:var(--mute); font-size:13px; flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.bar { height:6px; background:#eef0f3; border-radius:4px; overflow:hidden; margin-top:8px; } .bar div { height:100%; background:var(--acc); width:0; transition:width .4s; }
+#log { display:none; margin-top:8px; max-height:220px; overflow:auto; background:#16181c; color:#cfd3da; font:12px/1.4 Consolas,monospace; padding:8px 10px; border-radius:8px; white-space:pre-wrap; }
+/* clip panel */
+#panel { position:fixed; inset:0; background:#fff; display:none; flex-direction:column; z-index:10; }
+#panel .phead { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line); }
+#panel .phead .t { font-weight:700; font-size:16px; } #panel .phead .f { color:var(--mute); font-size:12.5px; }
+.tabs { display:flex; gap:4px; margin-left:24px; } .tabs button { border:none; background:transparent; padding:8px 14px; border-radius:8px; color:var(--mute); font-weight:600; }
+.tabs button.on { background:var(--acc2); color:var(--acc); }
+#panel .pbody { flex:1; overflow:hidden; position:relative; }
+.tab { position:absolute; inset:0; display:none; overflow:auto; } .tab.on { display:block; }
+#t-marks iframe { width:100%; height:100%; border:0; display:block; }
+.pad { padding:18px 22px; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.vid { width:100%; background:#000; border-radius:10px; }
+.note { background:var(--warnbg); color:var(--warn); padding:8px 12px; border-radius:8px; margin:8px 0; font-size:13px; }
+.hint { color:var(--mute); font-size:13px; }
+/* AI edit */
+#t-ai { display:none; } #t-ai.on { display:flex; }
+.ai-left { flex:1; display:flex; flex-direction:column; padding:14px; gap:10px; min-width:0; background:#f7f8fa; }
+.views { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.views figure { margin:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.views figcaption { font-size:12px; color:var(--mute); padding:5px 10px; display:flex; justify-content:space-between; }
+.views img { width:100%; display:block; min-height:120px; background:#e9ebee; }
+.ai-right { width:430px; border-left:1px solid var(--line); display:flex; flex-direction:column; }
+#chat { flex:1; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+.msg { padding:9px 12px; border-radius:12px; max-width:92%; white-space:pre-wrap; }
+.msg.u { background:var(--acc); color:#fff; align-self:flex-end; } .msg.a { background:#f1f3f5; align-self:flex-start; }
+.msg .ops { margin-top:6px; font:12px/1.35 Consolas,monospace; color:#555; }
+.msg.err { background:var(--badbg); color:var(--bad); }
+.compose { border-top:1px solid var(--line); padding:10px 12px; }
+.compose textarea { height:76px; resize:vertical; }
+.atts { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; } .atts span { position:relative; } .atts img { height:46px; border-radius:6px; border:1px solid var(--line); }
+.atts b { position:absolute; top:-6px; right:-6px; background:#333; color:#fff; border-radius:50%; width:16px; height:16px; font-size:11px; display:grid; place-items:center; cursor:pointer; }
+.examples { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; } .examples button { font-size:12px; padding:3px 9px; border-radius:20px; }
+/* modal */
+#modal { position:fixed; inset:0; background:rgba(15,20,30,.4); display:none; align-items:center; justify-content:center; z-index:20; }
+#modal .box { background:#fff; border-radius:14px; padding:22px 24px; width:min(560px,92vw); max-height:90vh; overflow:auto; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+#modal h2 { margin:0 0 8px; font-size:18px; } #modal .btns { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
+.form label { display:block; font-size:12.5px; color:var(--mute); margin:12px 0 4px; font-weight:600; }
+.form .row { display:flex; gap:8px; }
+#toast { position:fixed; bottom:84px; left:50%; transform:translateX(-50%); background:#1f2328; color:#fff; padding:9px 16px; border-radius:10px; display:none; z-index:30; }
+.spinner { display:inline-block; width:14px; height:14px; border:2px solid #c9cdd4; border-top-color:var(--acc); border-radius:50%; animation:sp 0.8s linear infinite; vertical-align:-2px; }
+@keyframes sp { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"></div>
+  <div><h1>白模 Studio</h1><div class="sub">Film clips → keypoints → 3D white model → submission zips</div></div>
+  <div class="right">
+    <span id="b-dev" class="badge"></span><span id="b-bl" class="badge"></span>
+    <button onclick="openSettings()">⚙ Settings</button>
+  </div>
+</header>
+<main>
+  <div class="folders">
+    <div class="card"><h3>Clips folder</h3><div class="pathrow"><span class="path" id="p-src">—</span>
+      <button onclick="pick('source_root','Choose the folder with the clips')">Choose…</button><button class="ghost" onclick="openPath(S.settings.source_root)">Open</button></div></div>
+    <div class="card"><h3>Output folder (zips)</h3><div class="pathrow"><span class="path" id="p-out">—</span>
+      <button onclick="pick('submit_root','Choose where the submission zips go')">Choose…</button><button class="ghost" onclick="openPath(S.settings.submit_root)">Open</button></div></div>
+  </div>
+  <div class="steps">
+    <div class="step"><span class="num">1</span><button class="primary" id="btn-scan" onclick="scan()">Scan keypoints</button></div><span class="arrow">→</span>
+    <div class="step"><span class="num">2</span><button class="primary" id="btn-check" onclick="checkNext()" title="Fix the points, then Confirm: the clip is built while you check the next one">Check &amp; confirm</button></div><span class="arrow">→</span>
+    <div class="step"><span class="num">3</span><button class="primary" id="btn-build" onclick="build('all')">Build zips</button></div>
+    <button onclick="build('fit')" title="No Blender: quick look at the 3D people and set first">3D preview only</button>
+    <div class="opt"><span id="selinfo"></span><label><input type="checkbox" id="force"> redo finished clips</label></div>
+  </div>
+  <div id="list"></div>
+</main>
+
+<div id="jobbar"><div class="top"><span class="spinner" id="jspin"></span><span class="title" id="jtitle"></span><span class="cur" id="jcur"></span>
+  <button class="ghost" onclick="toggleLog()">Log</button><button id="jcancel" onclick="api('/api/cancel',{})">Cancel</button><button id="jclose" class="ghost" onclick="closeJob()">✕</button></div>
+  <div class="bar"><div id="jbar"></div></div><div id="log"></div></div>
+
+<div id="panel">
+  <div class="phead">
+    <button onclick="closePanel()">← Clips</button>
+    <div><div class="t" id="pt"></div><div class="f" id="pf"></div></div>
+    <div class="tabs">
+      <button data-t="marks" onclick="tab('marks')">① Keypoints</button>
+      <button data-t="prev" onclick="tab('prev')">② 3D preview</button>
+      <button data-t="res" onclick="tab('res')">③ Result</button>
+      <button data-t="ai" onclick="tab('ai')">✦ AI edit</button>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button id="confirm" class="primary" style="background:#1f8a4c;border-color:#1f8a4c" onclick="confirmClip()" title="Saves the keypoints, builds this clip in the background and opens the next clip">✓ Confirm &amp; continue ▶</button>
+      <button onclick="step(-1)">◀ Prev clip</button><button id="nextclip" onclick="step(1)">Next clip ▶</button></div>
+  </div>
+  <div class="pbody">
+    <div class="tab" id="t-marks"><iframe id="frm"></iframe></div>
+    <div class="tab" id="t-prev"><div class="pad" id="prevbody"></div></div>
+    <div class="tab" id="t-res"><div class="pad" id="resbody"></div></div>
+    <div class="tab" id="t-ai">
+      <div class="ai-left">
+        <div style="display:flex;gap:10px;align-items:center">
+          <b>Frame</b><input type="range" id="fr" min="1" max="1" value="1" style="flex:1" oninput="frLabel()" onchange="loadViews()">
+          <span id="frl" style="min-width:70px"></span>
+          <button onclick="renderStill()" id="btn-still">Render this frame</button>
+        </div>
+        <div class="views">
+          <figure><figcaption><span>Original</span></figcaption><img id="v-orig"></figure>
+          <figure><figcaption><span>White model</span><span id="v-wm-note"></span></figcaption><img id="v-wm"></figure>
+        </div>
+        <div class="hint">Type what to change on the right. You can paste (Ctrl+V) or drop screenshots — draw circles or arrows on them to point at things.
+          Every change can be undone. When it looks right, press <b>Make video + zip</b>.</div>
+        <div style="display:flex;gap:8px"><button onclick="undo()">↶ Undo last change</button><button class="primary" onclick="rerender()">Make video + zip</button></div>
+      </div>
+      <div class="ai-right">
+        <div id="chat"></div>
+        <div class="compose" id="drop">
+          <div class="examples">
+            <button onclick="ex(this)">Red person should hold an orange rake in the right hand</button>
+            <button onclick="ex(this)">Move the blue person 1 m to the left</button>
+            <button onclick="ex(this)">Make the motion smoother</button>
+            <button onclick="ex(this)">Swap the red and blue people</button>
+          </div>
+          <textarea id="prompt" placeholder="Tell the AI what to change…  (Enter = send, Shift+Enter = new line)"></textarea>
+          <div class="atts" id="atts"></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <label class="hint"><input type="file" id="file" accept="image/*" multiple style="display:none" onchange="addFiles(this.files)"><a href="#" onclick="file.click();return false">+ Add screenshot</a></label>
+            <span class="hint" id="aiprov" style="margin-left:auto"></span>
+            <button class="primary" id="send" onclick="send()">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal"><div class="box" id="mbox"></div></div>
+<div id="toast"></div>
+
+<script>
+let S = { settings:{}, clips:[] }, sel = new Set(), cur = null, curTab = 'marks', atts = [], lastJobRunning = false, logOpen = false, jobHidden = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const media = p => '/api/media?p=' + encodeURIComponent(p) + '&t=' + Date.now();
+async function api(url, body) {
+  const r = await fetch(url, body === undefined ? {} : { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status); return j;
+}
+function toast(t, ms=2600) { const e = $('toast'); e.textContent = t; e.style.display = 'block'; clearTimeout(e._t); e._t = setTimeout(() => e.style.display = 'none', ms); }
+function modal(html) { $('mbox').innerHTML = html; $('modal').style.display = 'flex'; }
+function closeModal() { $('modal').style.display = 'none'; }
+function ask(title, text, buttons) {   // buttons: [[label, fn, primary]]
+  modal(`<h2>${title}</h2><div>${text}</div><div class="btns">${buttons.map((b,i)=>`<button ${b[2]?'class="primary"':''} id="mb${i}">${b[0]}</button>`).join('')}</div>`);
+  buttons.forEach((b,i) => $('mb'+i).onclick = () => { closeModal(); b[1] && b[1](); });
+}
+
+async function refresh() {
+  try { S = await api('/api/state'); } catch (e) { return; }
+  const st = S.settings;
+  $('p-src').textContent = st.source_root || 'Not chosen yet'; $('p-src').title = st.source_root || '';
+  $('p-out').textContent = st.submit_root || '—'; $('p-out').title = st.submit_root || '';
+  $('b-dev').textContent = S.device === 'cuda' ? 'NVIDIA GPU' : 'CPU (slower)'; $('b-dev').className = 'badge ' + (S.device === 'cuda' ? 'ok' : 'warn');
+  $('b-bl').textContent = S.blender ? 'Blender ✓' : 'Blender not found'; $('b-bl').className = 'badge ' + (S.blender ? 'ok' : 'bad');
+  for (const id of [...sel]) if (!S.clips.find(c => c.id === id)) sel.delete(id);
+  renderList(); renderJob();
+  if (cur) { const c = S.clips.find(x => x.id === cur); if (c) panelHead(c); }
+}
+function statusChips(c) {
+  let k = !c.marks ? '<span class="chip">not scanned</span>'
+        : c.checked != null ? `<span class="chip ${c.checked >= c.review ? 'ok' : 'blue'}">checked ${c.checked}/${c.review}</span>`
+        : '<span class="chip warn">scanned · not checked</span>';
+  const qi = (S.queue || []).indexOf(c.id), building = S.job && S.job.running && S.job.kind === 'build' && S.job.current === c.id;
+  if (building) return [k, '<span class="chip blue"><span class="spinner" style="width:10px;height:10px"></span> building…</span>'];
+  if (qi >= 0) return [k, `<span class="chip blue">confirmed · waiting #${qi + 1}</span>`];
+  let r = c.zip ? (c.edited ? '<span class="chip warn">edited · re-make zip</span>' : '<span class="chip ok">zip ✓</span>')
+        : c.built ? '<span class="chip blue">3D preview</span>' : '<span class="chip">—</span>';
+  if (c.warnings && c.warnings.length) r += `<span class="chip warn" title="${esc(c.warnings.join('\n'))}">⚠ ${c.warnings.length}</span>`;
+  return [k, r];
+}
+function renderList() {
+  const L = $('list');
+  if (!S.settings.source_root) { L.innerHTML = `<div class="empty"><b>Start by choosing the folder with your clips.</b><br><br><button class="primary" onclick="pick('source_root','Choose the folder with the clips')">Choose clips folder…</button></div>`; return; }
+  if (!S.clips.length) { L.innerHTML = `<div class="empty"><b>No videos found in this folder.</b><br>It looks in sub-folders too (mp4, mov, mkv, avi).</div>`; return; }
+  const all = S.clips.every(c => sel.has(c.id));
+  let h = `<table><tr><th style="width:34px"><input type="checkbox" ${all?'checked':''} onchange="selAll(this.checked)"></th><th>Clip</th><th>Length</th><th>People</th><th>Keypoints</th><th>Result</th><th style="width:210px"></th></tr>`;
+  for (const c of S.clips) {
+    const [k, r] = statusChips(c);
+    h += `<tr><td><input type="checkbox" ${sel.has(c.id)?'checked':''} onchange="tog('${esc(c.id)}',this.checked)"></td>
+      <td><div class="name">${esc(c.id)}</div><div class="film">${esc(c.film)} / ${esc(c.file)}</div></td>
+      <td>${c.seconds != null ? c.seconds + ' s' : '—'}</td><td>${c.people ?? '—'}</td><td>${k}</td><td>${r}</td>
+      <td><button ${c.marks?'':'disabled'} onclick="openClip('${esc(c.id)}','marks')">Check</button>
+          <button onclick="openClip('${esc(c.id)}', '${c.zip?'res':c.built?'prev':'marks'}')">Open</button>
+          ${c.built?`<button class="ghost" onclick="openClip('${esc(c.id)}','ai')">✦ AI edit</button>`:''}</td></tr>`;
+  }
+  L.innerHTML = h + '</table>';
+  const tot = S.clips.reduce((a,c)=>a+(c.seconds||0),0), ss = S.clips.filter(c=>sel.has(c.id));
+  $('selinfo').textContent = `${S.clips.length} clips${tot? ' · ' + Math.round(tot) + ' s':''} · ${ss.length} selected`;
+}
+function tog(id, on) { on ? sel.add(id) : sel.delete(id); renderList(); }
+function selAll(on) { sel = new Set(on ? S.clips.map(c => c.id) : []); renderList(); }
+function chosen() {
+  const ids = [...sel]; if (ids.length) return ids;
+  toast('Select clips with the tick boxes first (top box = all)'); return null;
+}
+async function pick(key, title) {
+  toast('A folder window opened on your PC (it may be behind the browser)', 4000);
+  const r = await api('/api/browse', { kind:'folder', title, start: S.settings[key] || '' });
+  if (r.path) { await api('/api/settings', { [key]: r.path }); sel.clear(); await refresh(); if (key === 'source_root') selAll(true); }
+}
+function openPath(p) { if (p) api('/api/open', { path:p }).catch(e => toast(e.message)); }
+
+async function scan() {
+  const ids = chosen(); if (!ids) return;
+  const done = S.clips.filter(c => ids.includes(c.id) && c.marks).length;
+  const go = force => api('/api/scan', { ids, force }).then(() => { jobHidden = false; refresh(); }).catch(e => toast(e.message, 5000));
+  if (done) ask('Scan keypoints', `${done} of the selected clips are already scanned.`, [['Cancel'], ['Scan again (loses fixes)', () => go(true)], ['Only the new ones', () => go(false), 1]]);
+  else go(false);
+}
+function checkNext() {
+  const pool = S.clips.filter(c => (sel.size ? sel.has(c.id) : true) && c.marks);
+  const c = pool.find(c => c.checked == null || c.checked < c.review) || pool[0];
+  if (!c) return toast('Scan keypoints first');
+  openClip(c.id, 'marks');
+}
+async function build(stage) {
+  const ids = chosen(); if (!ids) return;
+  const force = $('force').checked;
+  const go = () => (!S.blender && stage === 'all') ? ask('Blender not found', 'Install Blender, or set its path in Settings.', [['OK', null, 1]])
+    : api('/api/build', { ids, stage, force }).then(() => { jobHidden = false; refresh(); }).catch(e => toast(e.message, 5000));
+  const unscanned = S.clips.filter(c => ids.includes(c.id) && !c.marks).map(c => c.id);
+  if (unscanned.length && stage === 'all') return ask('Scan keypoints first?', `${unscanned.length} selected clip(s) have no keypoints yet. Scan them first so you can check the keypoints before the zips are made?`,
+    [['Cancel'], ['No, do everything automatically', go], ['Scan first', () => api('/api/scan', { ids: unscanned }).then(() => { jobHidden = false; refresh(); }).catch(e => toast(e.message, 5000)), 1]]);
+  const unchecked = S.clips.filter(c => ids.includes(c.id) && c.checked == null).length;
+  const edited = S.clips.filter(c => ids.includes(c.id) && c.edited).length;
+  let warn = '';
+  if (unchecked) warn += `<p><b>${unchecked}</b> clip(s) have keypoints nobody checked yet. The automatic ones are usually fine for clear shots.</p>`;
+  if (force && edited) warn += `<p class="note">${edited} clip(s) have AI edits — "redo" rebuilds them from the keypoints and drops the edits. Use “Make video + zip” in the clip's AI edit tab instead.</p>`;
+  if (warn) ask(stage === 'all' ? 'Build zips' : '3D preview', warn, [['Cancel'], ...(unchecked ? [['Check first', checkNext]] : []), ['Build anyway', go, 1]]);
+  else go();
+}
+
+function renderJob() {
+  const j = S.job; const bar = $('jobbar');
+  if (!j || (jobHidden && !j.running)) { bar.style.display = 'none'; return; }
+  bar.style.display = 'block';
+  $('jtitle').textContent = j.running ? j.title : (j.ok ? '✓ ' : j.cancelled ? 'Cancelled: ' : '⚠ Finished with problems: ') + j.title;
+  const qn = (S.queue || []).length;
+  $('jcur').textContent = (j.running ? `${j.current ? 'Now: ' + j.current + ' · ' : ''}${j.done}/${j.total} · ${fmtT(j.seconds)}` : (j.log.slice(-1)[0] || '')) + (qn ? ` · ${qn} confirmed clip(s) waiting` : '');
+  $('jbar').style.width = Math.round(100 * (j.running ? Math.max(0.02, (j.done + 0.5) / j.total) : 1)) + '%';
+  $('jbar').style.background = j.running || j.ok ? '' : 'var(--warn)';
+  $('jspin').style.display = j.running ? '' : 'none'; $('jcancel').style.display = j.running ? '' : 'none'; $('jclose').style.display = j.running ? 'none' : '';
+  $('log').textContent = j.log.join('\n'); if (logOpen) $('log').scrollTop = 1e9;
+  if (lastJobRunning && !j.running) jobFinished(j);
+  lastJobRunning = j.running;
+}
+function fmtT(s) { return s < 60 ? s + ' s' : Math.floor(s/60) + ' min ' + (s%60) + ' s'; }
+function toggleLog() { logOpen = !logOpen; $('log').style.display = logOpen ? 'block' : 'none'; $('log').scrollTop = 1e9; }
+function closeJob() { jobHidden = true; renderJob(); }
+function jobFinished(j) {
+  if (!j.ok && !j.cancelled) { logOpen = true; $('log').style.display = 'block'; }
+  if (j.kind === 'scan' && j.ok) {
+    ask('Keypoints are ready', 'Check them now? Move, add or delete points on each frame, then press <b>✓ Confirm &amp; continue</b> — that clip is built in the background while you check the next one.', [['Later'], ['Start checking', checkNext, 1]]);
+  } else if (j.kind === 'pull' && j.ok) {
+    toast('Local AI model ready ✓', 4000);
+  } else if (j.kind === 'build' && j.ok) {
+    if (!(S.queue || []).length) toast('Builds done ✓ — open a clip to see the result', 4000);
+    if (cur && curTab !== 'marks') showTab(curTab, true);
+  }
+}
+
+/* ---------------- clip panel */
+function openClip(id, t) { cur = id; $('panel').style.display = 'flex'; const c = S.clips.find(x => x.id === id); panelHead(c); tab(t || 'marks'); }
+function panelHead(c) {
+  $('pt').textContent = c.id; $('pf').textContent = `${c.film} / ${c.file}${c.seconds!=null?' · '+c.seconds+' s':''}`;
+}
+function closePanel() { if (curTab === 'marks' && !confirmLeave()) return; $('panel').style.display = 'none'; cur = null; $('frm').src = 'about:blank'; refresh(); }
+function confirmLeave() { return true; }
+function step(d) {
+  const i = S.clips.findIndex(c => c.id === cur); const n = S.clips[i + d];
+  if (!n) return toast(d > 0 ? 'This is the last clip' : 'This is the first clip');
+  if (curTab === 'marks' && !n.marks) { cur = n.id; panelHead(n); return tab('marks'); }
+  cur = n.id; panelHead(n); tab(curTab);
+}
+function tab(t) { curTab = t; $('confirm').style.display = t === 'marks' ? '' : 'none'; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  document.querySelectorAll('.tab').forEach(e => e.classList.toggle('on', e.id === 't-' + t)); showTab(t); }
+function showTab(t, force) {
+  const c = S.clips.find(x => x.id === cur); if (!c) return;
+  if (t === 'marks') { const u = '/check/' + encodeURIComponent(c.id); if (force || !$('frm').src.endsWith(u)) $('frm').src = u; }
+  if (t === 'prev') {
+        $('prevbody').innerHTML = !c.built ? `<div class="empty"><b>No 3D preview yet.</b><br>Quick check before rendering (no Blender, about 1 min per clip).<br><br><button class="primary" onclick="buildOne('fit')">Make 3D preview</button> <button onclick="buildOne('all')">Build zip directly</button></div>`
+      : `${(c.warnings||[]).map(w => `<div class="note">⚠ ${esc(w)}</div>`).join('')}
+         <p class="hint">Red dots = keypoints · coloured skeleton = the 3D person seen through the solved camera · thin lines = grey set. If a skeleton is off, fix the keypoints (tab ①), Save, then build again.</p>
+         <img src="${media(c.paths.preview)}" style="width:100%;border-radius:10px;border:1px solid var(--line)">
+         <div style="margin-top:12px;display:flex;gap:8px"><button onclick="buildOne('fit',true)">Redo preview</button><button class="primary" onclick="buildOne('all',true)">Build zip</button></div>`;
+  }
+  if (t === 'res') {
+        $('resbody').innerHTML = !c.zip ? `<div class="empty"><b>No zip yet.</b><br><br><button class="primary" onclick="buildOne('all')">Build zip</button></div>`
+      : `${c.edited ? '<div class="note">The scene was edited after this zip was made. Press “Make video + zip” to update it.</div>' : ''}
+         <div class="two"><div><h3 style="margin:0 0 6px">White model</h3><video class="vid" controls loop src="${media(c.paths.wm)}"></video></div>
+         <div><h3 style="margin:0 0 6px">Comparison (original over white model)</h3><video class="vid" controls loop src="${media(c.paths.cmp)}" style="max-height:62vh;object-fit:contain"></video></div></div>
+         <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+           <button onclick="openPath('${esc(js(c.paths.sub))}')">Open submission folder</button>
+           <button onclick="openPath('${esc(js(c.paths.zip))}')">Show zip</button>
+           <button onclick="openPath('${esc(js(c.paths.blend))}')">Show .blend</button>
+           <button onclick="tab('ai')">✦ Fix something with AI</button>
+           ${c.edited ? '<button class="primary" onclick="rerender()">Make video + zip</button>' : ''}</div>`;
+  }
+  if (t === 'ai') aiInit(c);
+}
+const js = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+function buildOne(stage, force) { jobHidden = false; api('/api/build', { ids:[cur], stage, force: !!force }).then(refresh).catch(e => toast(e.message, 5000)); }
+window.addEventListener('message', e => {
+  if (e.data && e.data.type === 'marks_saved') {
+    if (pendingConfirm && pendingConfirm === cur) { const id = pendingConfirm; pendingConfirm = null; return afterConfirm(id); }
+    refresh();
+    const done = e.data.ok >= e.data.total;
+    toast(done ? 'Saved ✓ — all frames checked' : `Saved ✓ (${e.data.ok}/${e.data.total} frames OK)`);
+    if (done) ask('Clip checked ✓', 'Go to the next clip?', [['Stay'], ['Next clip ▶', () => step(1), 1]]);
+  }
+});
+
+/* ---------------- confirm & continue */
+let pendingConfirm = null;
+function confirmClip() {
+  const c = S.clips.find(x => x.id === cur); if (!c || !c.marks) return toast('Scan keypoints first');
+  pendingConfirm = cur; $('frm').contentWindow.postMessage({ type: 'do_save', all: true }, '*');
+  setTimeout(() => { if (pendingConfirm === c.id) { pendingConfirm = null; toast('Could not save - press Save in the editor', 5000); } }, 6000);
+}
+async function afterConfirm(id) {
+  try { await api('/api/queue', { id }); } catch (e) { return toast(e.message, 5000); }
+  jobHidden = false; await refresh();
+  const i = S.clips.findIndex(c => c.id === id);
+  const next = S.clips.slice(i + 1).concat(S.clips.slice(0, i)).find(c => c.marks && c.id !== id && !(S.queue || []).includes(c.id) &&
+                (sel.size ? sel.has(c.id) : true) && (c.checked == null || c.checked < c.review) && !c.zip);
+  if (next) { toast(`✓ ${id} confirmed — building in the background. Next: ${next.id}`, 3500); cur = next.id; panelHead(next); tab('marks'); }
+  else { toast(`✓ ${id} confirmed — that was the last one. Builds continue in the background.`, 5000); closePanel(); }
+}
+
+/* ---------------- AI edit */
+let aiClip = null;
+function aiInit(c) {
+  if (!c.built) { $('chat').innerHTML = '<div class="msg a">Build this clip first (3D preview or zip) — then you can change it here by typing.</div>'; return; }
+  const n = c.frames || 1; $('fr').max = n;
+  if (aiClip !== c.id) { $('fr').value = Math.ceil(n / 2); $('chat').innerHTML = `<div class="msg a">Hi! Tell me what to change in <b>${esc(c.id)}</b> — people, props, colours, the set or the camera. Screenshots help.</div>`; aiClip = c.id; atts = []; drawAtts(); }
+  const pv = S.settings.ai_provider || 'local', o = S.ollama || {};
+  $('aiprov').textContent = pv === 'local' ? 'Local ' + (S.settings.ollama_model || '') + (o.running ? (o.model_ready ? ' ✓' : ' · not downloaded (Settings)') : (S.settings.deepseek_key_set ? ' · off → DeepSeek' : ' · Ollama not running (Settings)'))
+    : (pv === 'deepseek' ? 'DeepSeek' : 'Claude') + ((pv === 'deepseek' ? S.settings.deepseek_key_set : S.settings.anthropic_key_set) ? '' : ' · no key (Settings)');
+  frLabel(); loadViews();
+}
+function frLabel() { $('frl').textContent = `${$('fr').value} / ${$('fr').max}`; }
+function loadViews() {
+  const f = $('fr').value - 1, id = encodeURIComponent(cur);
+  $('v-orig').src = `/api/frame/${id}?kind=orig&f=${f}&t=${Date.now()}`;
+  fetch(`/api/frame/${id}?kind=wm&f=${f}&t=${Date.now()}`).then(r => {
+    if (r.status === 204) { $('v-wm').removeAttribute('src'); $('v-wm-note').innerHTML = 'not rendered — press “Render this frame”'; return; }
+    return r.blob().then(b => { $('v-wm').src = URL.createObjectURL(b); $('v-wm-note').textContent = ''; });
+  });
+}
+async function renderStill() {
+  const b = $('btn-still'); b.disabled = true; b.innerHTML = '<span class="spinner"></span> Rendering…'; $('v-wm-note').innerHTML = '<span class="spinner"></span> Blender is rendering';
+  try { await api('/api/still/' + encodeURIComponent(cur), { frame: $('fr').value - 1 }); loadViews(); }
+  catch (e) { toast(e.message, 6000); $('v-wm-note').textContent = 'render failed'; }
+  b.disabled = false; b.textContent = 'Render this frame';
+}
+function addMsg(cls, html) { const d = document.createElement('div'); d.className = 'msg ' + cls; d.innerHTML = html; $('chat').appendChild(d); $('chat').scrollTop = 1e9; return d; }
+function ex(b) { $('prompt').value = b.textContent; $('prompt').focus(); }
+function drawAtts() { $('atts').innerHTML = atts.map((u,i) => `<span><img src="${u}"><b onclick="atts.splice(${i},1);drawAtts()">×</b></span>`).join(''); }
+function addFiles(files) { for (const f of files) if (f.type.startsWith('image/')) { const r = new FileReader(); r.onload = () => { atts.push(r.result); drawAtts(); }; r.readAsDataURL(f); } }
+document.addEventListener('paste', e => { if (curTab !== 'ai') return; const fs = [...e.clipboardData.items].filter(i => i.type.startsWith('image/')).map(i => i.getAsFile()); if (fs.length) { addFiles(fs); e.preventDefault(); } });
+$('drop').addEventListener('dragover', e => e.preventDefault()); $('drop').addEventListener('drop', e => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+$('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+async function send() {
+  const p = $('prompt').value.trim(); if (!p) return;
+  addMsg('u', esc(p) + (atts.length ? `<div style="margin-top:6px">${atts.map(u => `<img src="${u}" style="height:40px;border-radius:4px;margin-right:4px">`).join('')}</div>` : ''));
+  const wait = addMsg('a', '<span class="spinner"></span> Thinking…' + ((S.settings.ai_provider||'local') === 'local' && S.device !== 'cuda' ? ' <span class="hint">(local model on CPU can take a few minutes)</span>' : ''));
+  $('prompt').value = ''; const images = atts; atts = []; drawAtts(); $('send').disabled = true;
+  try {
+    const r = await api('/api/ai/' + encodeURIComponent(cur), { prompt: p, images, frame: $('fr').value - 1 });
+    wait.innerHTML = esc(r.reply || (r.applied ? 'Done.' : 'No change made.')) + (r.ops.length ? `<div class="ops">${r.ops.map(esc).join('<br>')}</div>` : '');
+    if (r.applied) { refresh(); renderStill(); }
+  } catch (e) { wait.className = 'msg err'; wait.textContent = e.message; }
+  $('send').disabled = false;
+}
+async function undo() {
+  try { const r = await api('/api/undo/' + encodeURIComponent(cur), {}); addMsg('a', `↶ Undone (${r.left} earlier change${r.left===1?'':'s'} left).`); refresh(); renderStill(); }
+  catch (e) { toast(e.message); }
+}
+function rerender() { api('/api/build', { ids:[cur], stage:'render', force:true }).then(() => { jobHidden = false; refresh(); toast('Rendering the video and zip — you can keep working'); }).catch(e => toast(e.message, 5000)); }
+
+/* ---------------- settings */
+function openSettings() {
+  const s = S.settings;
+  modal(`<h2>Settings</h2><div class="form">
+    <label>Blender (blender.exe)</label><div class="row"><input type="text" id="s-bl" value="${esc(s.blender_exe||'')}" placeholder="automatic: ${esc(S.blender||'not found')}"><button onclick="pickFile()">Choose…</button></div>
+    <label>Work folder (renders, previews, logs)</label><div class="row"><input type="text" id="s-work" value="${esc(s.work_root||'')}"><button onclick="pickInto('s-work')">Choose…</button></div>
+    <label>Character</label><select id="s-style"><option value="sample">Client L3 sample (from the 11_2 .blend: no neck / hands / feet)</option><option value="classic">Earlier mannequin (neck, hands, feet)</option></select>
+    <div class="row"><div style="flex:1"><label>Person height (m)</label><input type="number" step="0.01" id="s-h" value="${s.person_height||1.72}"></div>
+      <div style="flex:1"><label>Lens (mm, 35 mm equivalent)</label><input type="number" step="0.1" id="s-lens" value="${s.lens_mm||34.9}"></div></div>
+    <label>AI for “AI edit”</label><select id="s-prov"><option value="local">Local model on this PC (free, no key, private) — recommended</option><option value="deepseek">DeepSeek (API key)</option><option value="anthropic">Claude (API key)</option></select>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div style="display:flex;gap:8px;align-items:center"><b>Local model</b> ${ollamaChip()}</div>
+      <div class="row" style="margin-top:8px"><select id="s-om" style="flex:1">
+        <option value="qwen3-vl:8b">qwen3-vl:8b — best, NVIDIA 12 GB+ (6 GB download)</option>
+        <option value="qwen3-vl:4b">qwen3-vl:4b — 8 GB card or CPU-only PC (3 GB)</option>
+        <option value="qwen3-vl:2b">qwen3-vl:2b — smallest, weaker (2 GB)</option></select>
+        <button onclick="pullModel()">Download local model</button></div>
+      <p class="hint" style="margin:6px 0 0">Needs Ollama (free) from <b>ollama.com</b> — install it once, then press Download. On a CPU-only PC an edit can take a few minutes; the NVIDIA PC answers in seconds.</p>
+    </div>
+    <label>DeepSeek API key — used when the local model isn't running ${s.deepseek_key_set?'<span class="chip ok">saved</span>':''}</label><input type="password" id="s-dk" placeholder="${s.deepseek_key_set?'leave empty to keep the saved key':'sk-…'}">
+    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">More (models, Claude key)</summary>
+      <div class="row"><div style="flex:1"><label>DeepSeek model</label><input type="text" id="s-dm" value="${esc(s.deepseek_model||'')}"></div><div style="flex:1"><label>Claude model</label><input type="text" id="s-am" value="${esc(s.anthropic_model||'')}"></div></div>
+      <label>Claude API key ${s.anthropic_key_set?'<span class="chip ok">saved</span>':''}</label><input type="password" id="s-ak" placeholder="${s.anthropic_key_set?'leave empty to keep the saved key':'optional'}">
+    </details>
+    <p class="hint">Keys are stored only in config.json in the agent folder on this PC.</p></div>
+    <div class="btns"><button onclick="closeModal()">Cancel</button><button class="primary" onclick="saveSettings()">Save</button></div>`);
+  $('s-style').value = s.character_style || 'sample'; $('s-prov').value = s.ai_provider || 'local';
+  const om = s.ollama_model || 'qwen3-vl:8b'; if (![...$('s-om').options].some(o => o.value === om)) $('s-om').add(new Option(om, om)); $('s-om').value = om;
+}
+function ollamaChip() {
+  const o = S.ollama || {};
+  return !o.installed && !o.running ? '<span class="chip warn">Ollama not installed</span>'
+       : !o.running ? '<span class="chip warn">Ollama installed, not running — start it from the Start menu</span>'
+       : o.model_ready ? '<span class="chip ok">ready ✓</span>' : '<span class="chip warn">model not downloaded yet</span>';
+}
+async function pullModel() {
+  try { await api('/api/pull_model', { model: $('s-om').value }); closeModal(); jobHidden = false; refresh(); toast('Downloading the model — progress is at the bottom', 4000); }
+  catch (e) { toast(e.message, 6000); }
+}
+async function pickFile() { const r = await api('/api/browse', { kind:'file', title:'Choose blender.exe' }); if (r.path) $('s-bl').value = r.path; }
+async function pickInto(id) { const r = await api('/api/browse', { kind:'folder', title:'Choose a folder', start: $(id).value }); if (r.path) $(id).value = r.path; }
+async function saveSettings() {
+  const d = { blender_exe: $('s-bl').value.trim(), work_root: $('s-work').value.trim(), character_style: $('s-style').value,
+    person_height: $('s-h').value, lens_mm: $('s-lens').value, ai_provider: $('s-prov').value,
+    anthropic_key: $('s-ak').value.trim(), deepseek_key: $('s-dk').value.trim(), anthropic_model: $('s-am').value.trim(), deepseek_model: $('s-dm').value.trim(),
+    ollama_model: $('s-om').value };
+  try { await api('/api/settings', d); closeModal(); toast('Saved ✓'); refresh(); } catch (e) { toast(e.message); }
+}
+
+refresh(); setInterval(() => { if ((S.job && S.job.running) || !document.hidden) refresh(); }, 2000);
+</script>
+</body>
+</html>

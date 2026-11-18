@@ -1,0 +1,277 @@
+# -*- coding: utf-8 -*-
+"""Persistent job queue (SQLite), worker pool with timeouts and retries, and the autopilot.
+
+stages:  fit  - local models: marks, camera, ground, 3D people, set, preview      (no Blender)
+         ai   - local vision model fills the review form (ai.json)               (optional)
+         all  - Blender build + render + videos + meta + zip  (needs a confirmed review)
+A job that was running when the app stopped is queued again on the next start."""
+import logging
+import os
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+
+from . import config
+from .clips import folders, status, read_json
+from . import review
+
+log = logging.getLogger("agent.jobs")
+STAGES = ("fit", "ai", "all")
+PRIORITY = {"all": 0, "fit": 2, "ai": 3}                   # renders of confirmed clips first, AI last
+
+
+class JobStore:
+    def __init__(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self.db.row_factory = sqlite3.Row
+        self.lock = threading.Lock()
+        with self.lock:
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.execute("""CREATE TABLE IF NOT EXISTS jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, clip TEXT NOT NULL, stage TEXT NOT NULL, state TEXT NOT NULL,
+                priority INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created REAL, started REAL, ended REAL,
+                error TEXT, log TEXT)""")
+            self.db.execute("CREATE INDEX IF NOT EXISTS jobs_clip ON jobs(clip, id)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, id)")
+
+    def recover(self):
+        """jobs that were running when the app stopped go back to the queue"""
+        with self.lock:
+            n = self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE state='running'").rowcount
+        return n
+
+    def enqueue(self, clip, stage, force=False):
+        if stage not in STAGES:
+            raise ValueError("bad stage %r" % stage)
+        with self.lock:
+            busy = self.db.execute("SELECT id, stage FROM jobs WHERE clip=? AND state IN ('queued','running')", (clip,)).fetchone()
+            if busy:
+                if not force or busy["stage"] == stage:
+                    return None
+                self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE id=? AND state='queued'", (time.time(), busy["id"]))
+            cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES (?,?,?,?,?)",
+                                  (clip, stage, "queued", PRIORITY[stage], time.time()))
+            return cur.lastrowid
+
+    def take(self):
+        with self.lock:
+            ai_busy = self.db.execute("SELECT 1 FROM jobs WHERE state='running' AND stage='ai'").fetchone()
+            q = "SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") + " ORDER BY priority, id LIMIT 1"
+            row = self.db.execute(q).fetchone()                  # one AI job at a time
+            if not row:
+                return None
+            self.db.execute("UPDATE jobs SET state='running', started=?, attempts=attempts+1 WHERE id=?", (time.time(), row["id"]))
+            return dict(row, state="running", attempts=row["attempts"] + 1)
+
+    def finish(self, jid, ok, error=None, log_path=None):
+        with self.lock:
+            self.db.execute("UPDATE jobs SET state=?, ended=?, error=?, log=COALESCE(?, log) WHERE id=?",
+                            ("done" if ok else "failed", time.time(), (error or "")[:2000] or None, log_path, jid))
+
+    def requeue(self, jid):
+        with self.lock:
+            self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE id=?", (jid,))
+
+    def cancel_queued(self, clip=None):
+        with self.lock:
+            q = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'" + (" AND clip=?" if clip else "")
+            return self.db.execute(q, (time.time(), clip) if clip else (time.time(),)).rowcount
+
+    def latest(self):
+        """{clip: latest job (not cancelled)}"""
+        with self.lock:
+            rows = self.db.execute("""SELECT j.* FROM jobs j JOIN (SELECT clip, MAX(id) m FROM jobs WHERE state!='cancelled'
+                                      GROUP BY clip) x ON j.id = x.m""").fetchall()
+        return {r["clip"]: dict(r) for r in rows}
+
+    def latest_for(self, clip):
+        with self.lock:
+            r = self.db.execute("SELECT * FROM jobs WHERE clip=? AND state!='cancelled' ORDER BY id DESC LIMIT 1", (clip,)).fetchone()
+        return dict(r) if r else None
+
+    def counts(self):
+        with self.lock:
+            return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
+
+    def running(self):
+        with self.lock:
+            return [dict(r) for r in self.db.execute("SELECT * FROM jobs WHERE state='running' ORDER BY started")]
+
+
+def kill_tree(proc):
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+    else:
+        proc.kill()
+
+
+class Runner:
+    """worker pool; the number of busy workers follows the 'parallel' setting live"""
+    MAX_WORKERS = 8
+
+    def __init__(self, app):
+        self.app = app
+        self.store = app.store
+        self.cond = threading.Condition()
+        self.busy = 0
+        self.procs = {}
+        self.stop = threading.Event()
+
+    def start(self):
+        n = self.store.recover()
+        if n:
+            log.info("resumed %d job(s) that were running when the app stopped", n)
+        for i in range(self.MAX_WORKERS):
+            threading.Thread(target=self._worker, name="worker-%d" % i, daemon=True).start()
+        threading.Thread(target=self._autopilot, name="autopilot", daemon=True).start()
+
+    def wake(self):
+        with self.cond:
+            self.cond.notify_all()
+
+    def shutdown(self):
+        self.stop.set()
+        for p in list(self.procs.values()):
+            kill_tree(p)
+        self.wake()
+
+    # ---------------------------------------------------------------- workers
+    def _worker(self):
+        while not self.stop.is_set():
+            with self.cond:
+                while not self.stop.is_set() and self.busy >= self.app.c["parallel"]:
+                    self.cond.wait(5)
+                if self.stop.is_set():
+                    return
+                job = self.store.take()
+                if job is None:
+                    self.cond.wait(3)
+                    continue
+                self.busy += 1
+            try:
+                self._run(job)
+            except Exception as e:                           # never let a worker die
+                log.exception("job %s crashed", job["id"])
+                self.store.finish(job["id"], False, "internal error: %s" % e)
+            finally:
+                with self.cond:
+                    self.busy -= 1
+                    self.cond.notify_all()
+
+    def _cmd(self, job, cl):
+        py = sys.executable
+        if job["stage"] == "ai":
+            return [py, "-m", "agent.ai", cl.id]
+        cmd = [py, os.path.join(config.PIPELINE, "run_pipeline.py"), cl.video, "--device", "cuda", "--stage", job["stage"]]
+        if job["stage"] == "all":
+            cmd += ["--force", "--require-confirm"]
+        return cmd
+
+    def _run(self, job):
+        c = self.app.c
+        try:
+            cl = self.app.lib.get(job["clip"])
+        except KeyError:
+            self.store.finish(job["id"], False, "clip no longer in the source folder")
+            return
+        f = folders(c, cl)
+        if job["stage"] == "ai" and not self.app.ai_ready():
+            self.store.finish(job["id"], False, "AI suggestions are off (no DeepSeek key or switched off)")
+            return
+        os.makedirs(f["work"], exist_ok=True)
+        logp = os.path.join(f["work"], "job_%s.log" % job["stage"])
+        timeout = 60 * c.get({"fit": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        cmd = self._cmd(job, cl)
+        log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])
+        t0 = time.time()
+        with open(logp, "w", encoding="utf-8", errors="replace") as lf:
+            lf.write("# %s  %s  attempt %d\n$ %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), job["stage"], job["attempts"], " ".join(cmd)))
+            lf.flush()
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=config.ROOT, creationflags=flags)
+            self.procs[job["id"]] = proc
+            try:
+                rc = proc.wait(timeout=timeout)
+                err = None
+            except subprocess.TimeoutExpired:
+                kill_tree(proc)
+                rc, err = -1, "timed out after %d min" % (timeout // 60)
+            finally:
+                self.procs.pop(job["id"], None)
+        txt = open(logp, encoding="utf-8", errors="replace").read()
+        ok = rc == 0 and err is None and "Traceback" not in txt and (job["stage"] == "ai" or " 0 failed" in txt)
+        if not ok and err is None:
+            err = last_error(txt) or "exit code %s" % rc
+        if self.stop.is_set():
+            self.store.requeue(job["id"])                      # app closing: do it again next start
+            return
+        if not ok and job["attempts"] < c.get("max_attempts", 2):
+            log.warning("job %d failed (%s) - trying again", job["id"], err)
+            self.store.requeue(job["id"])
+            return
+        self.store.finish(job["id"], ok, err, logp)
+        log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
+        if ok:
+            self.after(cl, job["stage"])
+
+    # ---------------------------------------------------------------- what happens next
+    def after(self, cl, stage):
+        """chain the next step for autopilot / AI"""
+        c = self.app.c
+        f = folders(c, cl)
+        if stage == "fit" and self.app.ai_ready() and not os.path.exists(f["ai"]):
+            self.store.enqueue(cl.id, "ai")                       # AI looks once per clip
+        elif stage == "ai" and os.path.exists(os.path.join(f["marks"], "env_ai.json")):
+            self.store.enqueue(cl.id, "fit")                      # rebuild the set with the AI's corrections
+        elif stage in ("fit", "ai") and c["autopilot"] == "full":
+            self.auto_confirm(cl)
+        self.wake()
+
+    def auto_confirm(self, cl):
+        c = self.app.c
+        f = folders(c, cl)
+        if read_json(f["review"]):                            # a person already looked at it: keep their choices
+            rv = read_json(f["review"])
+            if not rv.get("confirmed"):
+                return
+        else:
+            review.write(f["review"], review.suggested(c, cl, confirmed=True, auto=True))
+        self.store.enqueue(cl.id, "all")
+
+    def _autopilot(self):
+        """keeps the queue fed while autopilot is on"""
+        while not self.stop.wait(20):
+            c = self.app.c
+            if c["autopilot"] == "off":
+                continue
+            try:
+                latest = self.store.latest()
+                for cl in self.app.lib.clips:
+                    j = latest.get(cl.id)
+                    if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
+                        continue                               # busy, or failed for good: leave for a person
+                    st = status(c, cl, j)
+                    if not st["fit"]:
+                        self.store.enqueue(cl.id, "fit")
+                    elif c["autopilot"] == "full" and not st["done"]:
+                        if self.app.ai_ready() and not st["ai"] and not st["reviewed"]:
+                            self.store.enqueue(cl.id, "ai")
+                        elif not st["reviewed"] or st["confirmed"]:
+                            self.auto_confirm(cl)
+                self.wake()
+            except Exception:
+                log.exception("autopilot pass failed")
+
+
+def last_error(txt):
+    lines = [l for l in txt.strip().splitlines() if l.strip()]
+    for i in range(len(lines) - 1, -1, -1):
+        if "Error" in lines[i] or "error" in lines[i] or "FAILED" in lines[i]:
+            return lines[i].strip()[:300]
+    return lines[-1][:300] if lines else ""

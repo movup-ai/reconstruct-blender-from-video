@@ -1,0 +1,1 @@
+{"version":"0.0.1","configurations":[{"name":"blender-agent","runtimeExecutable":"F:/Projects/3d-da-project/.venv/Scripts/python.exe","runtimeArgs":["-m","agent","--no-browser"],"env":{"PYTHONIOENCODING":"utf-8","PYTHONPATH":"F:/Projects/3d-da-project"},"port":8765}]}

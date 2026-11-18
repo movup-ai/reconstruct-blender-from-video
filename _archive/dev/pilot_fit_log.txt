@@ -1,0 +1,44 @@
+1 clips
+=== 夏天的故事_1-1  (F:\Blender task\Source\夏天的故事Conte.d'été.1996.BluRay成片31\夏天的故事Conte.d'été.1996.BluRay成片31\1\1-1.mp4)
+  no marks yet - running automark
+1 video(s) to process
+loading pose models (first run downloads them, ~100-200 MB) ...
+pose backend: openvino (cpu)
+load C:\Users\Administrator\.cache\rtmlib\hub\checkpoints\yolox_m_8xb8-300e_humanart-c2c7a14a.onnx with openvino backend
+load C:\Users\Administrator\.cache\rtmlib\hub\checkpoints\rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.onnx with openvino backend
+[1/1] F:\Blender task\Source\夏天的故事Conte.d'été.1996.BluRay成片31\夏天的故事Conte.d'été.1996.BluRay成片31\1\1-1.mp4
+1-1: 133 frames 1478x1080, picture rows 0-1080
+  frame 1/133  people 2  (0.8s)
+  frame 21/133  people 2  (14.9s)
+  frame 41/133  people 2  (28.7s)
+  frame 61/133  people 3  (44.8s)
+  frame 81/133  people 3  (62.3s)
+  frame 101/133  people 1  (79.3s)
+  frame 121/133  people 1  (95.9s)
+  frame 133/133  people 1  (105.9s)
+  done: 4 people, 107s  ->  F:\Blender task agent\output\夏天的故事Conte.d'été.1996.BluRay成片31\夏天的故事Conte.d'été.1996.BluRay成片31\1\1-1
+  marks: F:\Blender task agent\output\夏天的故事Conte.d'été.1996.BluRay成片31\夏天的故事Conte.d'été.1996.BluRay成片31\1\1-1\pose.json  (not checked by a person)
+  camera ...
+  ground: {"samples": 118, "pitch_deg": -4.657516573700509, "roll_deg": -2.3516645891341894, "camera_height": 1.2361610866808452, "rms": 0.25412803557967967}
+  people ...
+    person 1: 46 frames
+      frame 87  error 11.0 px
+      frame 127  error 9.5 px
+    person 2: 87 frames
+      frame 0  error 1.3 px
+      frame 40  error 2.1 px
+      frame 80  error 2.7 px
+    person 3: 65 frames
+      frame 0  error 5.7 px
+      frame 40  error 44.6 px
+    person 4: 41 frames
+      frame 44  error 11.5 px
+      frame 84  error 1.2 px
+  set ...
+F:\Blender task agent\pipeline\scene_depth.py:81: RuntimeWarning: All-NaN slice encountered
+  plate = np.nanmedian(stack, axis=0)
+    plate frame 0: 98 anchors, 28344 faces
+  done in 179s   WARNINGS: camera lost at frames [87] (cut or fast move) - check this clip
+
+report: F:\Blender task\Work_auto\report_20261114_031748.csv
+1 ok, 0 skipped, 0 failed

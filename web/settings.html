@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Blender Agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>Settings</h1>
+  <p class="sub">Changes are saved straight away and used by the next job.</p>
+
+  <section class="step">
+    <h2>Processing</h2>
+    <div class="form" style="margin-top:12px">
+      <label class="k">Autopilot</label>
+      <div><span class="seg" id="autopilot"><button data-v="off">Off</button><button data-v="prepare">Prepare only</button><button data-v="full">Full auto</button></span></div>
+      <div class="help">Off: nothing starts by itself. Prepare only: every clip is prepared, then waits for you. Full auto: prepared, checked by DeepSeek (if a key is saved), confirmed and rendered.</div>
+      <label class="k" for="parallel">Clips at once</label>
+      <div><select id="parallel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
+      <div class="help">3 suits a PC with an NVIDIA card (RTX 4070, 12 GB). Use 1 on a PC without one, where the models run on the processor. Lower it if the PC gets slow or the card runs out of memory.</div>
+      <label class="k">Set style</label>
+      <div><span class="seg" id="set_detail"><button data-v="clean">Clean</button><button data-v="detailed">Detailed</button></span></div>
+      <div class="help">Clean: buildings as whole facades, simple masses for trees and cars, easy to read (recommended). Detailed: every depth block, closer to the picture but busy.</div>
+      <label class="k" for="max_attempts">Tries per job</label>
+      <div><select id="max_attempts"><option>1</option><option>2</option><option>3</option></select></div>
+      <div class="help">A failed job is tried again automatically this many times in total.</div>
+    </div>
+  </section>
+
+  <section class="step">
+    <h2>Folders</h2>
+    <div class="form" style="margin-top:12px" id="folders"></div>
+    <div class="row"><button class="primary" id="savefolders">Save folders</button><button id="rescan">&#8635; Rescan Source folder</button><span class="small muted" id="fmsg"></span></div>
+  </section>
+
+  <section class="step">
+    <h2>AI suggestions · DeepSeek</h2>
+    <p class="hint">DeepSeek checks who is who and what the set really is (walls, cars, trees…), removes wrong parts and adds missed objects. Clip frames are sent to DeepSeek. The key is stored only on this PC and is never shown again.</p>
+    <div class="form">
+      <label class="k">Use AI suggestions</label><div><label><input type="checkbox" id="ai_enabled"> on</label></div>
+      <label class="k" for="ds_key">API key</label>
+      <div class="row" style="margin:0"><input type="password" id="ds_key" autocomplete="off" spellcheck="false" placeholder="Paste your DeepSeek API key" style="flex:1;min-width:200px"><button id="ds_save">Save key</button><button id="ds_test">Test</button></div>
+      <div class="help" id="ds_state"></div>
+      <label class="k" for="deepseek_model">Model</label><div><input type="text" id="deepseek_model" style="max-width:260px"></div>
+      <div class="help">The environment check needs a model that accepts images. Test tells you.</div>
+      <label class="k">Send frames</label><div><label><input type="checkbox" id="ai_send_images"> send frames and person close-ups (needed for the environment check)</label></div>
+    </div>
+  </section>
+
+  <section class="step">
+    <h2>Delivery format</h2>
+    <p class="hint">Fixed to match the client sample 11月2日试稿 and the delivery spec.</p>
+    <ul class="checks">
+      <li>Package: <code>&lt;name&gt;/comparison · meta · model_3d · target · white_model</code> + <code>&lt;name&gt;.zip</code></li>
+      <li>White model: 3840 wide, the source's aspect ratio, 24 fps, H.264, ~30 Mb/s, Rec.709</li>
+      <li>Comparison: target above white model (3840 × 2·height); audio AAC stereo 48 kHz 320 kb/s</li>
+      <li>3D file: <code>model_3d/&lt;name&gt;blend.blend</code> with the client's sample character</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <div class="rowsb"><h2>System check</h2><span id="hok"></span></div>
+    <ul class="checks" id="checks"><li class="muted">Checking…</li></ul>
+    <div class="row"><button id="openlogs">Open the logs folder</button><span class="small muted" id="ver"></span></div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/static/common.js"></script>
+<script>
+nav('settings');
+const FOLDERS = [['source_root', 'Source videos', 'The film clips. Add videos on the Clips page, or copy them here and press Rescan.'],
+                 ['submit_root', 'Submissions (SUBMIT)', 'Finished packages and zips, laid out like the client sample.'],
+                 ['work_root', 'Work files', 'Previews, logs and in-between files. Safe to clear when everything is delivered.'],
+                 ['blender_exe', 'Blender (optional)', 'Leave empty to find Blender automatically.']];
+let S = null;
+async function load() {
+  S = await api('/api/settings');
+  segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
+  $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
+    <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
+  document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(S[b.dataset.open]));
+  $('ai_enabled').checked = !!S.ai_enabled; $('ai_send_images').checked = S.ai_send_images !== false; $('deepseek_model').value = S.deepseek_model || '';
+  $('ds_state').innerHTML = S.deepseek_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="ds_del">remove</a>' : '<span class="muted">○ no key yet: AI suggestions are off, everything else works</span>';
+  const del = $('ds_del'); if (del) del.onclick = async e => { e.preventDefault(); if (!(await ask('Remove the saved DeepSeek key?'))) return; await post('/api/settings', { deepseek_key: '' }); toast('Key removed'); load(); };
+}
+async function set(obj, msg) { try { await post('/api/settings', obj); toast(msg || 'Saved'); load(); } catch (e) { load(); } }
+segInit($('autopilot'), async v => { if (v === 'full' && !(await ask('Full auto renders every clip without waiting for you. Turn it on?'))) { load(); return; } set({ autopilot: v }, 'Autopilot: ' + v); });
+segInit($('set_detail'), v => set({ set_detail: v }, 'Set style: ' + v + ' (used for the next builds)'));
+$('parallel').onchange = e => set({ parallel: +e.target.value }, 'Clips at once: ' + e.target.value);
+$('max_attempts').onchange = e => set({ max_attempts: +e.target.value });
+$('ai_enabled').onchange = e => set({ ai_enabled: e.target.checked }, 'AI suggestions ' + (e.target.checked ? 'on' : 'off'));
+$('ai_send_images').onchange = e => set({ ai_send_images: e.target.checked });
+$('deepseek_model').onchange = e => set({ deepseek_model: e.target.value.trim() || 'deepseek-chat' });
+$('ds_save').onclick = async () => { const k = $('ds_key').value.trim(); if (!k) { toast('Paste the key first', true); return; }
+  await set({ deepseek_key: k, ai_enabled: true }, 'Key saved'); $('ds_key').value = ''; };
+$('ds_test').onclick = async () => { $('ds_state').innerHTML = '<span class="muted">Testing… (up to a minute)</span>';
+  const r = await post('/api/ai_test'); $('ds_state').innerHTML = `<span class="${r.ok ? (r.images ? 'good' : 'warn') : 'bad'}">● ${esc(r.detail)}</span>`; };
+$('savefolders').onclick = async () => { const o = {}; FOLDERS.forEach(([k]) => o[k] = $('f_' + k).value.trim()); if (!o.blender_exe) delete o.blender_exe;
+  await set(o, 'Folders saved'); health(); };
+$('rescan').onclick = async () => { const r = await post('/api/rescan'); $('fmsg').textContent = `${r.clips} clips found, ${r.new} new`; };
+$('openlogs').onclick = () => openFolder('logs');
+async function health() {
+  const h = await api('/api/health'); $('ver').textContent = `${h.app} ${h.version} · running for ${fmtTime(h.uptime_s)}`;
+  $('hok').innerHTML = h.ok ? '<span class="good">● ready</span>' : '<span class="bad">● needs attention</span>';
+  $('checks').innerHTML = h.checks.map(c => `<li><span class="${c.ok ? 'good' : c.optional ? 'muted' : 'bad'}">${c.ok ? '✓' : c.optional ? '○' : '✕'}</span> <b>${esc(c.name)}</b> <span class="muted small">${esc(c.detail)}</span></li>`).join('');
+}
+load(); health();
+</script>
+</body>
+</html>

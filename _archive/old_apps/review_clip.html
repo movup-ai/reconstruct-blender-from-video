@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clip review</title>
+<style>
+  :root { --bg:#16181b; --panel:#212429; --panel2:#2a2e34; --line:#363b42; --text:#eceef0; --muted:#9aa1a9;
+          --ok:#5cc27a; --warn:#f0b840; --run:#5aa8f0; --bad:#ef6464; --accent:#e5534b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,"Segoe UI","Microsoft YaHei",sans-serif; }
+  header { position:sticky; top:0; z-index:5; background:rgba(22,24,27,.96); border-bottom:1px solid var(--line); }
+  .hd { max-width:1280px; margin:0 auto; padding:10px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .hd a { color:#9cc8ff; text-decoration:none; font-size:14px; } .hd a:hover { text-decoration:underline; }
+  .hd h1 { font-size:18px; margin:0; } .hd .film { color:var(--muted); font-size:13px; }
+  .chip { display:inline-block; padding:1px 9px; border-radius:10px; font-size:12px; background:#3a3f46; color:var(--muted); white-space:nowrap; }
+  .c-done { background:#1f4a2c; color:var(--ok); } .c-ready { background:#4d3d10; color:var(--warn); } .c-conf { background:#1f4a2c; color:#b8e6c4; }
+  .c-run { background:#173857; color:var(--run); } .c-fail { background:#552020; color:var(--bad); }
+  .stepper { display:flex; gap:4px; max-width:1280px; margin:0 auto; padding:0 16px 10px; flex-wrap:wrap; }
+  .stepper a { flex:1; min-width:120px; text-align:center; font-size:12.5px; color:var(--muted); padding:5px 6px; border-radius:6px; background:var(--panel); text-decoration:none; border:1px solid var(--line); }
+  .stepper a b { color:var(--text); }
+  main { max-width:1280px; margin:0 auto; padding:14px 16px 130px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; } @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:16px; scroll-margin-top:110px; }
+  section h2 { font-size:16px; margin:0 0 2px; } section h2 .num { display:inline-block; width:24px; height:24px; border-radius:12px; background:var(--accent); color:#fff; text-align:center; font-size:13px; line-height:24px; margin-right:8px; }
+  .hint { margin:0 0 12px; color:var(--muted); font-size:13.5px; }
+  video, img.prev { width:100%; border-radius:8px; background:#000; display:block; }
+  .cap { color:var(--muted); font-size:12.5px; margin:6px 0 0; }
+  .people { display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:12px; }
+  .person { display:flex; gap:12px; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px; transition:opacity .15s; }
+  .person.ignored { opacity:.45; }
+  .person img { width:96px; height:128px; object-fit:cover; border-radius:6px; background:#000; flex:none; }
+  .person .body { flex:1; min-width:0; }
+  .person .top { display:flex; justify-content:space-between; gap:6px; align-items:baseline; }
+  .person .meta { color:var(--muted); font-size:12.5px; }
+  .roles { display:flex; flex-wrap:wrap; gap:5px; margin:8px 0; }
+  .roles button { padding:4px 9px; border-radius:14px; font-size:12.5px; border:2px solid transparent; background:#3a3f46; color:var(--text); cursor:pointer; }
+  .roles button .dot { display:inline-block; width:10px; height:10px; border-radius:5px; margin-right:5px; vertical-align:0; }
+  .roles button.on { border-color:#fff; background:#4a515b; font-weight:600; }
+  .fields { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:13px; color:var(--muted); }
+  input[type=text], input[type=number], select, textarea { background:#1b1e22; color:var(--text); border:1px solid #474d55; border-radius:6px; padding:5px 8px; font:inherit; font-size:14px; }
+  input[type=number] { width:74px; } textarea { width:100%; min-height:80px; }
+  .q-good { color:var(--ok); } .q-ok { color:var(--warn); } .q-bad { color:var(--bad); }
+  .seg { display:inline-flex; border:1px solid #474d55; border-radius:8px; overflow:hidden; }
+  .seg button { border:0; border-right:1px solid #474d55; border-radius:0; background:var(--panel2); padding:7px 12px; }
+  .seg button:last-child { border-right:0; } .seg button.on { background:#4a6fa5; color:#fff; font-weight:600; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin:10px 0; }
+  .row label { display:flex; gap:6px; align-items:center; font-size:14px; }
+  .det { color:var(--muted); font-size:13px; } .warn { color:var(--warn); font-size:13px; }
+  .shots { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0 2px; }
+  .shots span { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:4px 10px; font-size:12.5px; }
+  .blocks img { width:100%; border-radius:8px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; } th { text-align:left; color:var(--muted); font-weight:500; font-size:12.5px; padding:4px 6px; }
+  td { padding:4px 6px; }
+  button { background:var(--panel2); color:var(--text); border:1px solid #474d55; border-radius:8px; padding:8px 14px; font:inherit; font-size:14px; cursor:pointer; }
+  button:hover { filter:brightness(1.15); } button.primary { background:var(--accent); border-color:#f06a62; font-weight:600; font-size:15px; padding:10px 18px; }
+  button:disabled { opacity:.45; cursor:default; filter:none; }
+  details { margin-top:16px; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 16px; }
+  details summary { cursor:pointer; font-weight:600; } details summary span { color:var(--muted); font-weight:400; font-size:13px; }
+  #marks { width:100%; height:660px; border:1px solid var(--line); border-radius:8px; background:#111; margin-top:10px; }
+  footer { position:fixed; left:0; right:0; bottom:0; z-index:6; background:rgba(33,36,41,.98); border-top:1px solid var(--line); }
+  .ft { max-width:1280px; margin:0 auto; padding:10px 16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #msg { margin-left:auto; color:var(--muted); font-size:14px; }
+  pre#log { background:#0e0f11; color:#cfd3d7; padding:8px; border-radius:6px; max-height:240px; overflow:auto; font-size:12px; white-space:pre-wrap; margin:8px 0 0; }
+  .banner { border-radius:10px; padding:10px 14px; margin-top:14px; font-size:14px; display:none; }
+  .banner.run { display:block; background:#173857; color:#cfe4fb; } .banner.done { display:block; background:#1f4a2c; color:#c9efd5; } .banner.fail { display:block; background:#552020; color:#ffd2d2; }
+  .empty { color:var(--muted); padding:24px; text-align:center; }
+  kbd { background:#3a3f46; border:1px solid #555; border-radius:3px; padding:0 4px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="hd">
+    <a href="/">&#9664; All clips</a>
+    <h1 id="title">…</h1><span class="film" id="film"></span><span class="chip" id="state"></span>
+    <span style="margin-left:auto" class="film" id="pos"></span><a id="prevc" href="#">&#8592; Prev</a><a id="nextc" href="#">Next &#8594;</a>
+  </div>
+  <div class="stepper"><a href="#s-people"><b>1</b> People</a><a href="#s-camera"><b>2</b> Camera</a><a href="#s-set"><b>3</b> Set &amp; objects</a><a href="#s-notes"><b>4</b> Notes</a><a href="#s-marks">Fix joints (optional)</a></div>
+</header>
+<main>
+  <div id="banner" class="banner"></div>
+  <div class="grid2" style="margin-top:14px">
+    <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
+    <div id="prevbox"><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the local models found. <b style="color:#ff6b6b">Red dots</b> are the marks, the coloured skeleton is each 3D person seen through the solved camera, and thin lines are the set. One block per shot.</p></div>
+  </div>
+  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" controls preload="metadata"></video><p class="cap">Finished comparison video: the target on top, the white model below.</p></div>
+
+  <section id="s-people">
+    <h2><span class="num">1</span>Who is who?</h2>
+    <p class="hint">Each card is one person the models followed. Click their role. The colour follows the role (主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow). Use <b>Not a person</b> for false detections, such as a driver inside a car or a reflection. If the same character appears in two shots, give both cards the same role.</p>
+    <div class="people" id="ppl"></div>
+  </section>
+
+  <section id="s-camera">
+    <h2><span class="num">2</span>How does the camera move?</h2>
+    <p class="hint">Already filled in from what the camera solver measured. Change it if it's wrong.</p>
+    <div class="shots" id="shots"></div>
+    <div class="row"><span class="seg" id="camtype">
+      <button data-v="static">Still</button><button data-v="pan">Pans / tilts</button><button data-v="moving">Moves (dolly / track)</button><button data-v="handheld">Handheld</button></span>
+      <label>Lens <input type="number" id="lens" step="0.1" min="10" max="200"> mm</label></div>
+    <div class="row"><label style="flex:1">Note <input type="text" id="camnote" style="flex:1" placeholder="e.g. slow push-in, pans left with the man"></label></div>
+    <div id="camwarn"></div>
+  </section>
+
+  <section id="s-set">
+    <h2><span class="num">3</span>Set and objects</h2>
+    <p class="hint">The set is made of walls and blocks fitted to the depth model, coloured with the video's own colours (L2 spec). In the picture, the left side is the empty background and the right side is what it became. Add objects that people touch or that hide them (bags, cars, doors, tables).</p>
+    <div class="row">
+      <label><input type="checkbox" id="env_depth" checked> Build the set from the video</label>
+      <label>Colours <select id="env_colour"><option value="video">Video's own colours (L2)</option><option value="grey">Plain grey</option></select></label>
+    </div>
+    <div class="det" id="envdet"></div>
+    <div class="blocks" id="blocks"></div>
+    <table id="props" style="margin-top:10px"><thead><tr><th>Object</th><th>Type</th><th>Frames</th><th>Where / who holds it</th><th></th></tr></thead><tbody></tbody></table>
+    <button id="addprop" style="margin-top:6px">+ Add an object</button>
+  </section>
+
+  <section id="s-notes">
+    <h2><span class="num">4</span>Anything else?</h2>
+    <textarea id="notes" placeholder="Optional: who is who, what happens, anything that must match"></textarea>
+  </section>
+
+  <details id="s-marks">
+    <summary>Fix joint marks <span>(optional: only if a skeleton in the picture above is clearly wrong)</span></summary>
+    <p class="hint" style="margin-top:8px">Every 8th frame. Drag a dot to move it, right-click to mark it hidden, <kbd>S</kbd> swaps left and right, <kbd>D</kbd> deletes a wrong person, <kbd>Enter</kbd> marks the frame OK. Your fixes are saved when you press a button below.</p>
+    <iframe id="marks" title="marks editor"></iframe>
+  </details>
+
+  <details id="jobbox" style="display:none"><summary>Technical log <span id="jobstate"></span></summary><pre id="log"></pre></details>
+</main>
+<footer><div class="ft">
+  <button id="save" title="Save without rendering">Save</button>
+  <button id="rerun" title="Run the local models again with your changes, then look at the new picture">&#8635; Re-check with my changes</button>
+  <button id="confirm" class="primary">&#10003; Confirm &amp; render</button>
+  <label style="font-size:13px;color:var(--muted);display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> then open the next clip to review</label>
+  <span id="msg"></span>
+</div></footer>
+<script>
+const CID = +location.pathname.split('/').pop();
+const HEX = { red:'#cd3e3c', blue:'#3a68c9', green:'#46aa5a', yellow:'#e1c83c', purple:'#965abe', pink:'#dc6eaa', orange:'#dd8732', cyan:'#50cdeb', brown:'#825532', white:'#f5f5f5', grey:'#969696' };
+const ROLES = [['main', '主角色', 'red'], ['second', '第二角色', 'blue'], ['third', '第三角色', 'green'], ['fourth', '第四角色', 'yellow'],
+               ['extra', 'Other person', 'purple'], ['ignore', 'Not a person', null]];
+const $ = id => document.getElementById(id);
+let INFO = null, lastJob = null, dirty = false;
+const groupCls = l => l === 'ready for review' ? 'c-ready' : l === 'done' ? 'c-done' : l === 'confirmed' ? 'c-conf' : l === 'failed' ? 'c-fail' : /prepar|render|waiting/.test(l) ? 'c-run' : '';
+const msg = t => $('msg').textContent = t;
+const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+function quality(px) {
+  if (px == null) return '';
+  return px < 6 ? `<span class="q-good">● fits well (${px} px)</span>` : px < 14 ? `<span class="q-ok">● fits OK (${px} px)</span>` : `<span class="q-bad">● poor fit (${px} px) – check the joints</span>`;
+}
+function fillPeople(rv) {
+  const box = $('ppl'); box.innerHTML = '';
+  if (!INFO.people || !INFO.people.length) { box.innerHTML = `<div class="empty">${INFO.status.marks ? 'Nobody was detected in this clip.' : 'The local models have not prepared this clip yet. Use “Re-check” below or “Prepare all clips” on the start page.'}</div>`; return; }
+  INFO.people.forEach((p, i) => {
+    const r = (rv && rv.people && rv.people[p.id]) || {};
+    const role = r.role || (p.frames < 10 ? 'ignore' : ['main', 'second', 'third', 'fourth'][i] || 'extra');
+    const d = document.createElement('div'); d.className = 'person'; d.dataset.id = p.id; d.dataset.role = role;
+    d.dataset.colour = r.colour || (ROLES.find(x => x[0] === role) || [])[2] || 'purple';
+    const shots = p.shots && p.shots.length && (INFO.shots || []).length > 1 ? ' · shot ' + p.shots.join(', ') : '';
+    d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="P${p.id}">
+      <div class="body"><div class="top"><b>Person ${p.id}</b><span class="meta">frames ${p.first}–${p.last}${shots}</span></div>
+      <div class="meta">${quality(p.fit && p.fit.median_error_px)}</div>
+      <div class="roles">${ROLES.map(([v, l, c]) => `<button data-v="${v}" title="${c ? 'colour ' + c : 'not modelled'}">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
+      <div class="fields"><span class="extra" style="display:none">Colour <select class="col">${['purple', 'pink', 'orange', 'cyan', 'brown', 'white'].map(c => `<option>${c}</option>`).join('')}</select></span>
+        Height <input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.default_height}"> m
+        <input type="text" class="nm" value="${esc(r.name)}" placeholder="Name (optional)" style="flex:1;min-width:90px"></div></div>`;
+    const paint = () => {
+      d.querySelectorAll('.roles button').forEach(b => b.classList.toggle('on', b.dataset.v === d.dataset.role));
+      d.classList.toggle('ignored', d.dataset.role === 'ignore');
+      d.querySelector('.extra').style.display = d.dataset.role === 'extra' ? '' : 'none';
+    };
+    d.querySelectorAll('.roles button').forEach(b => b.onclick = () => {
+      d.dataset.role = b.dataset.v; const def = ROLES.find(x => x[0] === b.dataset.v)[2];
+      d.dataset.colour = b.dataset.v === 'extra' ? d.querySelector('.col').value : (def || 'purple'); dirty = true; paint(); });
+    d.querySelector('.col').value = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'].includes(d.dataset.colour) ? d.dataset.colour : 'purple';
+    d.querySelector('.col').onchange = e => { d.dataset.colour = e.target.value; dirty = true; };
+    box.appendChild(d); paint();
+  });
+}
+const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'],
+               ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
+function propRow(p = {}) {
+  const tr = $('props').tBodies[0].insertRow();
+  tr.innerHTML = `<td><input type="text" class="pn" value="${esc(p.name)}" placeholder="e.g. shoulder bag"></td>
+    <td><select class="pk">${KINDS.map(([v, l]) => `<option value="${v}" ${v === p.kind ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+    <td><input type="text" class="pf" value="${esc(p.frames)}" placeholder="all" style="width:80px"></td>
+    <td><input type="text" class="pw" value="${esc(p.note)}" placeholder="e.g. in the man's right hand" style="width:100%"></td>
+    <td><button class="rm" title="Remove">✕</button></td>`;
+  tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
+}
+function camType() { const b = $('camtype').querySelector('.on'); return b ? b.dataset.v : 'static'; }
+function setCamType(v) { $('camtype').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+$('camtype').querySelectorAll('button').forEach(b => b.onclick = () => { setCamType(b.dataset.v); dirty = true; });
+function collect(confirmed) {
+  const people = {};
+  document.querySelectorAll('.person').forEach(d => { people[d.dataset.id] = { role: d.dataset.role, colour: d.dataset.colour,
+    height: +d.querySelector('.h').value, name: d.querySelector('.nm').value.trim() }; });
+  const props = [...$('props').tBodies[0].rows].map(tr => ({ name: tr.querySelector('.pn').value.trim(), kind: tr.querySelector('.pk').value,
+    frames: tr.querySelector('.pf').value.trim(), note: tr.querySelector('.pw').value.trim() })).filter(p => p.name);
+  return { clip: INFO.name, video: INFO.video, confirmed, people,
+    camera: { type: camType(), lens: +$('lens').value || null, note: $('camnote').value.trim() },
+    environment: { ground: true, depth_set: $('env_depth').checked, set_colours: $('env_colour').value, props }, notes: $('notes').value };
+}
+function saveMarks() {
+  return new Promise(res => {
+    const f = $('marks'); if (!f || !f.contentWindow || !INFO.status.marks || !f.src) return res(false);
+    const done = e => { if (e.data && e.data.type === 'marks_saved') { window.removeEventListener('message', done); res(true); } };
+    window.addEventListener('message', done); setTimeout(() => { window.removeEventListener('message', done); res(false); }, 3000);
+    f.contentWindow.postMessage({ type: 'do_save', all: false }, '*');
+  });
+}
+async function postReview(confirmed) { return (await fetch('/api/review/' + CID, { method: 'POST', body: JSON.stringify(collect(confirmed)) })).json(); }
+$('save').onclick = async () => { await saveMarks(); await postReview(false); dirty = false; msg('Saved ' + new Date().toLocaleTimeString()); };
+$('rerun').onclick = async () => { await saveMarks(); await postReview(false); dirty = false;
+  const r = await (await fetch(`/api/run/${CID}?stage=fit`, { method: 'POST' })).json();
+  msg(r.queued ? 'Re-checking with your changes. The picture updates when it’s done.' : 'This clip is already being processed.'); refresh(); };
+$('confirm').onclick = async () => {
+  const roles = Object.values(collect(true).people).map(p => p.role).filter(r => !['ignore', 'extra'].includes(r));
+  const dup = roles.find((r, i) => roles.indexOf(r) !== i);
+  if (dup && !confirm(`Two people have the same role (${ROLES.find(x => x[0] === dup)[1]}). That's right if they are the same character, for example before and after a cut. Continue?`)) return;
+  await saveMarks(); const r = await postReview(true); dirty = false;
+  if ($('gonext').checked && INFO.next_review != null) { location.href = '/clip/' + INFO.next_review; return; }
+  msg(r.queued ? 'Confirmed. It renders in the background, and the status is shown at the top.' : 'Confirmed.'); refresh(); };
+$('addprop').onclick = () => { propRow(); dirty = true; };
+['env_depth', 'env_colour', 'lens', 'camnote', 'notes'].forEach(id => $(id).addEventListener('change', () => dirty = true));
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+function guessCam(c) {
+  if (!c) return 'static';
+  if ((c.warnings || []).some(w => /MOVE|travel|parallax/i.test(w))) return 'moving';
+  return +c.max_rotation_deg < 0.6 ? 'static' : 'pan';
+}
+function banner() {
+  const b = $('banner'), j = INFO.job, s = INFO.status;
+  if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
+    b.textContent = j.stage === 'all' ? (j.state === 'running' ? 'Rendering and packaging this clip… you can review other clips meanwhile.' : 'Waiting for a free slot to render…')
+      : (j.state === 'running' ? 'The local models are working on this clip…' : 'Waiting for a free slot…'); }
+  else if (j && j.state === 'failed') { b.className = 'banner fail'; b.textContent = 'The last job failed. Open the technical log at the bottom of the page for details.'; }
+  else if (s.done) { b.className = 'banner done'; b.textContent = 'Finished: the comparison video is below, and the zip is in Submit_auto.'; }
+  else b.className = 'banner';
+}
+async function load(first) {
+  INFO = await (await fetch('/api/clip/' + CID)).json();
+  document.title = INFO.name + ' · review';
+  $('title').textContent = INFO.name.replace(/^[^_]+_/, ''); $('film').textContent = INFO.film;
+  $('state').textContent = INFO.status.label; $('state').className = 'chip ' + groupCls(INFO.status.label);
+  $('pos').textContent = `clip ${CID + 1} of ${INFO.n}`;
+  $('prevc').href = '/clip/' + Math.max(0, CID - 1); $('nextc').href = '/clip/' + Math.min(INFO.n - 1, CID + 1);
+  if (first) {
+    $('src').src = '/media/video/' + CID + '.mp4';
+    $('srcinfo').textContent = INFO.frames ? `The source clip · ${INFO.size[0]}×${INFO.size[1]} · ${INFO.fps} fps · ${INFO.frames} frames` : 'The source clip';
+    const rv = INFO.review;
+    fillPeople(rv);
+    setCamType(rv?.camera?.type || guessCam(INFO.camera));
+    $('lens').value = rv?.camera?.lens || INFO.default_lens; $('camnote').value = rv?.camera?.note || '';
+    const env = rv?.environment || {};
+    $('env_depth').checked = env.depth_set !== false; $('env_colour').value = env.set_colours || 'video';
+    (env.props || []).forEach(propRow);
+    $('notes').value = rv?.notes || '';
+    if (INFO.status.marks) $('s-marks').addEventListener('toggle', () => { if ($('s-marks').open && !$('marks').src) $('marks').src = '/check/' + CID; });
+    else $('s-marks').style.display = 'none';
+  }
+  const sh = INFO.shots || (INFO.camera && INFO.camera.shots) || [];
+  $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${s.shot}: frames ${s.frames[0]}–${s.frames[1]} · turns ${(+s.max_rotation_deg).toFixed(1)}°${s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : ''}</span>`).join('')
+    : (INFO.camera ? `<span>Turns ${(+INFO.camera.max_rotation_deg).toFixed(1)}° over the clip</span>` : '<span>Not measured yet</span>');
+  $('camwarn').innerHTML = ((INFO.camera && INFO.camera.warnings) || []).map(w => `<div class="warn">⚠ ${esc(w)}</div>`).join('');
+  $('envdet').textContent = INFO.set ? 'Built: ' + INFO.set.map(s => `${s.faces} ${s.name}${s.faces > 1 ? 's' : ''}`).join(', ') + (sh.length > 1 ? ` across ${sh.length} shots` : '') : 'Not built yet.';
+  $('blocks').innerHTML = (INFO.blocks || []).map(b => `<img src="/media/blocks/${CID}/${b}?t=${Date.now() >> 14}" alt="set ${b}">`).join('');
+  $('prev').src = INFO.status.fit ? '/media/preview/' + CID + '.jpg?t=' + (Date.now() >> 12) : '';
+  $('prevbox').style.visibility = INFO.status.fit ? 'visible' : 'hidden';
+  if (INFO.outputs.comparison) { $('outbox').style.display = ''; if (!$('cmp').src) $('cmp').src = '/media/comparison/' + CID + '.mp4'; }
+  if (INFO.job) { $('jobbox').style.display = ''; $('jobstate').textContent = '· ' + INFO.job.state;
+    const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
+  banner();
+  const busy = INFO.job && /queued|running/.test(INFO.job.state);
+  $('rerun').disabled = busy; $('confirm').disabled = busy || !INFO.status.fit;
+  $('confirm').title = !INFO.status.fit ? 'Prepare the clip first (Re-check)' : '';
+  if (!INFO.status.marks) $('rerun').innerHTML = '&#9654; Prepare this clip';
+  if (lastJob && /queued|running/.test(lastJob) && INFO.job && !/queued|running/.test(INFO.job.state)) { msg('Finished: ' + INFO.job.state + '.'); if (INFO.job.stage === 'fit') location.reload(); }
+  lastJob = INFO.job && INFO.job.state;
+  return busy;
+}
+let timer = null;
+async function refresh() { clearTimeout(timer); const busy = await load(false); timer = setTimeout(refresh, busy ? 3000 : 12000); }
+load(true).then(() => { timer = setTimeout(refresh, 3000); });
+</script>
+</body>
+</html>

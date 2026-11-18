@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help · Blender Agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap faq" style="max-width:860px">
+  <h1>Help</h1>
+  <p class="sub">Blender Agent turns film clips into white-model (白模) submissions like the client sample 11月2日试稿. Everything runs on this PC.</p>
+
+  <section class="step">
+    <h2>The workflow</h2>
+    <ol>
+      <li><b>Add videos</b> on the Clips page (drag them in), or copy them into the Source folder and press <i>Rescan</i>.</li>
+      <li><b>Prepare</b>: the local models find people, joints, camera, cuts, ground and set. Use <i>Prepare all clips</i>, or set Autopilot to <i>Prepare only</i>. Takes about 1–3 minutes per clip.</li>
+      <li><b>Review</b>: open a clip marked <span class="chip g-ready">ready for review</span>, give each person a role, check the camera and set, and add held objects.</li>
+      <li><b>Confirm &amp; render</b>: Blender builds the scene with the client's sample character, renders, and packages it into the SUBMIT folder. The next clip to review opens.</li>
+      <li><b>Deliver</b>: on the Submissions page, press <i>Check all against the sample</i>, then send the zips.</li>
+    </ol>
+    <p>Autopilot <b>Full auto</b> does steps 2–4 by itself. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
+  </section>
+
+  <section class="step">
+    <h2>Keyboard shortcuts on a clip page</h2>
+    <table class="list">
+      <tr><td><kbd>Tab</kbd> / click a card</td><td>select a person</td></tr>
+      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>主角色 red · 第二角色 blue · 第三角色 green · 第四角色 yellow</td></tr>
+      <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>other person / not a person</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>confirm &amp; render</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd></td><td>previous / next clip</td></tr>
+      <tr><td><kbd>?</kbd></td><td>show the shortcuts</td></tr>
+    </table>
+  </section>
+
+  <section class="step">
+    <h2>Questions</h2>
+    <h3>When can I add videos?</h3>
+    <p>Any time, even while clips are rendering. With Autopilot on, new videos are prepared straight away; otherwise press <i>Prepare all clips</i>.</p>
+    <h3>Where are the results?</h3>
+    <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Previews and logs are in the Work folder.</p>
+    <h3>What do the colours mean?</h3>
+    <p>主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow, other people purple. Objects: touched/held orange, far interactive pink, special purple, foreground brown, light white. The set uses the video's own colours (L2 spec).</p>
+    <h3>A clip shows "failed"</h3>
+    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> on the Clips page tries all failed clips again.</p>
+    <h3>How do I get recognisable objects (doors, shelves, cars…) like the client sample?</h3>
+    <p>On a clip page, section <b>4 Objects in the set</b>: drag a box around an object on the background picture, pick its type (door, cabinet, shelf, counter, table, chair, car, tree, lamp post…), say whether it stands on the floor or hangs on a wall, and which way it faces. Press <i>Save objects &amp; rebuild the set</i>. Each object is built as a simple model of its type, placed where it touches the floor, at the right size. With a DeepSeek key saved, the list is filled in for you and you only correct it.</p>
+    <h3>The set looks wrong</h3>
+    <p>On the clip page, look at the set picture (green = ground, blue = sky, red lines = where walls stand). Fix people's joints if needed and press <i>Re-check</i>, or let DeepSeek check the set (Settings → AI suggestions).</p>
+    <h3>Can I close the window?</h3>
+    <p>Yes. Unfinished jobs continue the next time you start Blender Agent. If it ever crashes, the launcher restarts it after 5 seconds.</p>
+    <h3>Is anything sent over the internet?</h3>
+    <p>Only when DeepSeek AI suggestions are on: then frames of the clips go to DeepSeek. Everything else stays on this PC.</p>
+  </section>
+</div>
+<script src="/static/common.js"></script>
+<script>nav('help');</script>
+</body>
+</html>
