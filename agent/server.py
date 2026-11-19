@@ -451,6 +451,13 @@ def save_objects(c, cl, body):
     return n
 
 
+def download_name(fn):
+    """Content-Disposition for a download saved as <fn> (non-ASCII names in the RFC 5987 form)"""
+    from urllib.parse import quote
+    ascii_ = fn.encode("ascii", "replace").decode("ascii").replace("?", "_").replace('"', "_")
+    return "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_, quote(fn))
+
+
 def char_file(c):
     """the character definition the fit and Blender use for config character_style"""
     return {"base21": "base_character_v21.json", "sample": "sample_character.json"}.get(c.get("character_style", "master"), "human_master.json")
@@ -514,7 +521,7 @@ def make_handler(app):
             with open(os.path.join(config.WEB, name), encoding="utf-8") as fh:
                 return self.send(200, fh.read(), "text/html; charset=utf-8")
 
-        def file(self, p, ctype=None):
+        def file(self, p, ctype=None, filename=None):
             if not p or not os.path.isfile(p):
                 raise HttpError(404, "file not found")
             ctype = ctype or mimetypes.guess_type(p)[0] or "application/octet-stream"
@@ -533,6 +540,8 @@ def make_handler(app):
                 a, b = 0, size - 1
                 self.send_response(200)
             self.send_header("Content-Type", ctype)
+            if filename:                                       # the name the browser saves it under
+                self.send_header("Content-Disposition", download_name(filename))
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(b - a + 1))
             self.send_header("Cache-Control", "no-store")
@@ -674,7 +683,8 @@ def make_handler(app):
                 zp = os.path.join(c["submit_root"], name + ".zip")
                 if not name or not os.path.isfile(zp):
                     raise HttpError(404, "no zip for %s" % name)
-                return self.file(zp, "application/zip")
+                # v2.1: the delivered zip carries the package name (SUBMIT\<clip>.zip is named after the clip)
+                return self.file(zp, "application/zip", (pkg.package_name(name) or name) + ".zip")
             if parts[0] == "package" and len(parts) == 3 and parts[2] in ("comparison", "white_model", "target"):
                 name = os.path.basename(parts[1])
                 m = sorted(glob.glob(os.path.join(c["submit_root"], name, parts[2], "*.mp4")))

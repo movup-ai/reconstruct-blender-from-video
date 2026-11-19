@@ -166,6 +166,11 @@ class TestSubmissionsPage(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    def test_download_name(self):
+        self.assertEqual(server.download_name("the_hidden_blade-3.zip"),
+                         "attachment; filename=\"the_hidden_blade-3.zip\"; filename*=UTF-8''the_hidden_blade-3.zip")
+        self.assertIn("filename*=UTF-8''%E9%9A%90", server.download_name("隐剑.zip"))   # non-ASCII kept in the UTF-8 form
+
     def test_character_file_follows_style(self):
         self.assertEqual(server.char_file({"character_style": "master"}), "human_master.json")
         self.assertEqual(server.char_file({"character_style": "base21"}), "base_character_v21.json")

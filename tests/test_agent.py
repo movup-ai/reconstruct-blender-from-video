@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -390,6 +391,20 @@ class TestApi(unittest.TestCase):
         finally:
             self.app.runner.pause()
             self.post("/api/cancel_queued")
+
+    def test_zip_downloads_under_its_package_name(self):
+        import package as pkg
+        os.makedirs(self.app.c["submit_root"], exist_ok=True)
+        zp = os.path.join(self.app.c["submit_root"], "clipX.zip")
+        with open(zp, "wb") as fh:
+            fh.write(b"PK\x05\x06" + b"\0" * 18)
+        try:
+            with unittest.mock.patch.object(pkg, "package_names", return_value={"clipX": "film-7"}):
+                code, body, h = self.get("/download/clipX")
+            self.assertEqual(code, 200)
+            self.assertIn('filename="film-7.zip"', h["Content-Disposition"])
+        finally:
+            os.remove(zp)
 
     def test_media(self):
         self.assertEqual(self.get("/media/clipthumb/%s.jpg" % self.cid)[0], 200)

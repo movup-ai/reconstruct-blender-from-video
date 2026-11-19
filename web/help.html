@@ -9,24 +9,29 @@
 <body>
 <div class="wrap faq" style="max-width:860px">
   <h1>Help</h1>
-  <p class="sub">Blender Agent turns film clips into white-model (白模) submissions like the client sample 11月2日试稿. Everything runs on this PC.</p>
+  <p class="sub">Blender Agent turns film clips into white-model (白模) packages in the client's v2.1 format. Everything runs on this PC.</p>
 
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Choose source folder</b> on the Clips page: any folder on this PC. The videos stay there; joints, work files and packages go to the project's <code>output</code>, <code>Work_auto</code> and <code>SUBMIT</code> folders. Type an English title once: videos without a v2.1 package name get <code>title-1</code>, <code>title-2</code>… in file-name order. Choosing a folder does not start anything. (You can also drag videos in, or copy them into the folder and press <i>Rescan</i>.)</li>
-      <li><b>Start</b>: nothing runs until you press <i>Start</i> on the Clips page (also after restarting the app). Then the local models find people, joints, lens, camera, cuts, ground and set. The Clips page shows each video's step and progress. About 4–5 minutes per clip on this PC.</li>
-      <li><b>Review</b> a clip marked <span class="chip g-ready">ready for review</span>:
-        <b>1 Who is who</b> (a card saying <i>Not a person?</i> looks like a statue, picture or false detection: one click, then <i>Re-check</i>),
-        <b>2 Joints</b> (the editor opens on the flagged frames first), <b>3 Objects</b> (drag boxes on the background: door, jar, tree…). Then press <b>✓ Mark reviewed</b> (finish later, with others) or <b>▶ Finish now</b>. Camera, set, held objects and the description are filled in automatically; change them under <i>More</i> only if they are wrong.</li>
-      <li><b>Finish</b>: <i>Finish all reviewed</i> on the Clips page (or <i>Finish</i> on a clip) runs the final fit, set, Blender, videos and the v2.1 zip into SUBMIT. A clip whose roles, joints, objects and notes have not changed since its last Finish is skipped, so nothing renders twice.</li>
-      <li><b>Deliver</b>: on the Submissions page, press <i>Check all against the sample</i>, then send the zips.</li>
+      <li><b>Choose a source folder</b>: step 1 on the Clips page, <i>Choose folder…</i>. Any folder on this PC; the videos stay there. Type an English title once: videos without a v2.1 package name get <code>title-1</code>, <code>title-2</code>… in file-name order. Choosing a folder does not start anything.</li>
+      <li><b>Start</b>: step 2. Nothing runs until you press <i>Start</i>, also after restarting the app. The local models then find people, joints, lens, camera, cuts, ground and set; the Clips page shows each video's step and progress. About 3–5 minutes per video on this PC. <i>Pause</i> lets the running video finish and starts nothing new.</li>
+      <li><b>Review</b> each clip marked <span class="chip g-ready">ready for review</span> (step 3, <i>Review next clip</i>):
+        <ul>
+          <li><b>1 Who is who</b>: give each person a role. A card saying <i>Not a person?</i> looks like a statue, a picture or a false detection: one click, then <i>Re-check</i>.</li>
+          <li><b>2 Joints</b>: the editor opens on the frames where the 3D person moved suddenly. Drag wrong dots into place.</li>
+          <li><b>3 Objects</b>: drag a box around each thing a viewer should recognise (door, shelf, tree…).</li>
+        </ul>
+        Then press <b>✓ Mark reviewed</b> (finish later, together with others) or <b>▶ Finish now</b>. Camera, set, held objects and the description are filled in automatically; change them under <i>More</i> only if they are wrong.</li>
+      <li><b>Finish</b>: <i>Finish all reviewed</i> on the Clips page (or <i>Finish now</i> on a clip) runs the final fit, set, Blender, videos and the v2.1 zip into SUBMIT. A clip with no changes since its last Finish is skipped, so nothing renders twice.</li>
+      <li><b>Deliver</b>: on the Submissions page, press <i>Check packages</i>. Then download each zip with its <i>Zip</i> button: it is saved under its package name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. For a whole batch with the manifest, run <code>pipeline\deliver.py</code>; it writes the correctly named zips to <code>DELIVERY\UPLOAD</code>.</li>
     </ol>
-    <p>Settings → Autopilot <b>Full auto</b> does steps 2–4 by itself after Start, without your review. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
+    <p>Settings → Autopilot <b>Full auto</b> does steps 3–4 by itself after Start, <span class="warn">without your review</span>. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
   </section>
 
   <section class="step">
-    <h2>Keyboard shortcuts on a clip page</h2>
+    <h2>Keyboard shortcuts</h2>
+    <h3>Clip page</h3>
     <table class="list">
       <tr><td><kbd>Tab</kbd> / click a card</td><td>select a person</td></tr>
       <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>主角色 red · 第二角色 blue · 第三角色 green · 第四角色 yellow</td></tr>
@@ -36,24 +41,40 @@
       <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd></td><td>previous / next clip</td></tr>
       <tr><td><kbd>?</kbd></td><td>show the shortcuts</td></tr>
     </table>
+    <h3>Joint editor (step 2)</h3>
+    <table class="list">
+      <tr><td>drag a dot</td><td>move a joint · mouse wheel zooms, dragging empty space moves the view</td></tr>
+      <tr><td><kbd>F</kbd></td><td>next flagged frame (orange line)</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>this frame is OK, go to the next</td></tr>
+      <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>previous / next frame</td></tr>
+      <tr><td><kbd>H</kbd> or right-click a dot</td><td>joint hidden / visible</td></tr>
+      <tr><td><kbd>S</kbd></td><td>swap left and right of the selected person</td></tr>
+      <tr><td><kbd>D</kbd> / <kbd>A</kbd></td><td>delete a wrong person / add a missed person</td></tr>
+      <tr><td><kbd>C</kbd></td><td>copy the people of the previous frame</td></tr>
+      <tr><td><kbd>R</kbd></td><td>reset the view</td></tr>
+    </table>
   </section>
 
   <section class="step">
     <h2>Questions</h2>
+    <h3>A clip says "no package name"</h3>
+    <p>It cannot be finished without a v2.1 package name. On the Clips page, press <i>Choose folder…</i>, choose the same folder again and type its English title: only videos without a name get one, existing names never change.</p>
+    <h3>A clip says "changed since Finish"</h3>
+    <p>Its roles, joints, objects or description changed after its last Finish, so its package is out of date. <i>Finish all reviewed</i> makes it again.</p>
     <h3>When can I add videos?</h3>
-    <p>Any time, even while clips are rendering. Copy them into the source folder and click <i>look for new videos</i> on the Clips page, then press <i>Start</i>.</p>
+    <p>Any time, even while others are being prepared. Copy them into the source folder, click <i>look for new videos</i> in step 1 on the Clips page, then press <i>Start</i>.</p>
     <h3>Where are the results?</h3>
-    <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Previews and logs are in the Work folder.</p>
+    <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Preparation results, previews and logs are in the Work folder (Settings).</p>
     <h3>What do the colours mean?</h3>
-    <p>主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow, other people purple. Objects: touched/held orange, far interactive pink, special purple, foreground brown, light white. The set uses the video's own colours (L2 spec).</p>
+    <p>People: 主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow, other people purple. The set is light grey like the client samples; <i>More → Set</i> can switch it to the video's own colours. The colours in <i>More → Held objects</i> (touched or held orange, far interactive pink, special purple, foreground brown, light source white) are for objects people hold or touch, not for the objects of step 3.</p>
     <h3>A clip shows "failed"</h3>
-    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> on the Clips page tries all failed clips again.</p>
-    <h3>How do I get recognisable objects (doors, shelves, cars…) like the client sample?</h3>
-    <p>On a clip page, section <b>4 Objects in the set</b>: drag a box around an object on the background picture, pick its type (door, cabinet, shelf, counter, table, chair, car, tree, lamp post…), say whether it stands on the floor or hangs on a wall, and which way it faces. Press <i>Save objects &amp; rebuild the set</i>. Each object is built as a simple model of its type, placed where it touches the floor, at the right size. With a DeepSeek key saved, the list is filled in for you and you only correct it.</p>
+    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> in step 2 on the Clips page tries all failed clips again.</p>
+    <h3>How do I get recognisable objects (doors, shelves, cars…)?</h3>
+    <p>On a clip page, step <b>3 Objects</b>: drag a box around an object on the background picture, pick its type (door, cabinet, shelf, counter, table, chair, car, tree, lamp post…), whether it stands on the floor or hangs on a wall, and which way it faces. <i>Save</i> keeps your boxes; <i>Re-check</i> builds them into the set, each as a simple model of its type at the right size. With a DeepSeek key saved, the list is filled in for you and you only correct it.</p>
     <h3>The set looks wrong</h3>
-    <p>On the clip page, look at the set picture (green = ground, blue = sky, red lines = where walls stand). Fix people's joints if needed and press <i>Re-check</i>, or let DeepSeek check the set (Settings → AI suggestions).</p>
+    <p>On the clip page, open <i>More → Set</i> and look at the set picture (green = ground, blue = sky, red lines = where walls stand). Fix people's joints if needed and press <i>Re-check</i>, or let DeepSeek check the set (Settings → AI suggestions).</p>
     <h3>Can I close the window?</h3>
-    <p>Yes. Unfinished jobs continue the next time you start Blender Agent. If it ever crashes, the launcher restarts it after 5 seconds.</p>
+    <p>Yes. Unfinished jobs wait in the queue; press <i>Start</i> after you open Blender Agent again. If it ever crashes, the launcher restarts it after 5 seconds, also paused.</p>
     <h3>Is anything sent over the internet?</h3>
     <p>Only when DeepSeek AI suggestions are on: then frames of the clips go to DeepSeek. Everything else stays on this PC.</p>
   </section>
