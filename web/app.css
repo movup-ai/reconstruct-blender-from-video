@@ -186,3 +186,7 @@ details.step .sub h3 { font-size:14.5px; margin:0 0 8px; }
 }
 :root[data-theme="light"] { --warn:#8a5a00; --bad:#b42323; --ok:#1f7a3a; }   /* 4.5:1 on white */
 details.step { scroll-margin-top:140px; }   /* the sticky header does not cover a section the step links jump to */
+@media (max-width:560px) {   /* phone: room for Quit next to the theme switch */
+  .topnav .nl { padding:6px 6px; font-size:13.5px; } .topnav .themebtn { margin-left:4px; padding:4px 7px; font-size:13.5px; }
+  .topnav .brand img { width:20px; height:20px; }
+}

@@ -319,7 +319,7 @@ async function load(first) {
   INFO = await api('/api/clip/' + CID);
   document.title = INFO.clip.name + ' · Blender Agent';
   $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('film').textContent = INFO.clip.film;
-  $('state').innerHTML = chip(INFO.status); $('pos').textContent = `clip ${INFO.index + 1} of ${INFO.count}`;
+  $('state').innerHTML = chip(INFO.paused && /^waiting to/.test(INFO.status.label) ? Object.assign({}, INFO.status, { label: 'waiting for Start' }) : INFO.status); $('pos').textContent = `clip ${INFO.index + 1} of ${INFO.count}`;
   $('prevc').style.visibility = INFO.prev ? '' : 'hidden'; $('prevc').href = '/clip/' + INFO.prev;
   $('nextc').style.visibility = INFO.next ? '' : 'hidden'; $('nextc').href = '/clip/' + INFO.next;
   if (first) {

@@ -176,7 +176,8 @@ class App:
         scan = folder_scan(self.c, path, title)
         if scan["unnamed"] and not scan["slug"]:
             raise HttpError(400, "type an English title for this folder (letters and numbers), e.g. the hidden blade")
-        self.runner.pause()
+        if not scan["current"]:                               # another folder: nothing of it runs before Start
+            self.runner.pause()
         old = set(self.lib.by_id)
         self.c = config.save({"source_root": scan["path"]})
         self.lib.c = self.c

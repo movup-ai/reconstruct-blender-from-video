@@ -10,7 +10,6 @@
 <div class="wrap">
   <div class="topline">
     <div><h1>Clips</h1><p class="sub">Choose a folder of videos, prepare them, review each clip, then finish. Everything runs on this PC.</p></div>
-    <div class="right"><button id="quit" title="Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.">Quit</button></div>
   </div>
   <div class="banner fail" id="healthbanner" style="display:none"></div>
 
@@ -32,15 +31,15 @@
     <section class="fstep" id="st3">
       <div class="fh"><span class="num">3</span><b>Review and finish</b></div>
       <p class="fdesc" id="revdesc"></p>
-      <div class="actions"><a class="btn" id="nextreview" href="#">Review next clip</a><button id="renderall" title="Final fit, set, Blender, videos and the v2.1 zip for every reviewed clip. Clips unchanged since their last Finish are skipped.">Finish all reviewed</button></div>
+      <p class="fdesc warn" id="noname" style="display:none"></p>
+      <div class="actions"><a class="btn" id="nextreview" href="#">Review next clip</a><button id="nameall" style="display:none" title="Give the videos of this folder their v2.1 package names">Name them…</button><button id="renderall" title="Final fit, set, Blender, videos and the v2.1 zip for every reviewed clip. Clips unchanged since their last Finish are skipped.">Finish all reviewed</button></div>
     </section>
   </div>
-  <div class="bar" id="bar"></div>
-  <div class="legend" id="legend"></div>
+  <div class="bar" id="bar" role="img"></div>
 
-  <div class="tabs"><span id="tabs" class="contents"></span><input class="search" id="search" placeholder="Search clips…" aria-label="Search clips"></div>
+  <div class="tabs" id="tabsrow"><span id="tabs" class="contents"></span><input class="search" id="search" placeholder="Search clips…" aria-label="Search clips"></div>
   <div id="list"><div class="empty">Loading…</div></div>
-  <p class="small muted" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a></p>
+  <p class="small muted" id="csv" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a></p>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/common.js"></script>
@@ -52,6 +51,8 @@ let FILTER = 'all', DATA = null;
 
 function render() {
   const cs = DATA.clips, q = DATA.queue, cnt = {};
+  if (q.paused) cs.forEach(c => { if (c.status.label === 'waiting to prepare' || c.status.label === 'waiting to finish')   // nothing runs until Start
+    c.status = Object.assign({}, c.status, { label: 'waiting for Start' }); });
   cs.forEach(c => cnt[c.status.group] = (cnt[c.status.group] || 0) + 1);
   // ---- filter tabs: only groups that have clips
   const t = $('tabs'); t.innerHTML = '';
@@ -59,11 +60,11 @@ function render() {
   [['all', 'All', cs.length]].concat(GROUPS.map(g => [g[0], g[1], cnt[g[0]] || 0])).filter(x => x[0] === 'all' || x[2]).forEach(([k, l, n]) => {
     const b = el('button', { class: k === FILTER ? 'on' : '', 'aria-pressed': k === FILTER ? 'true' : 'false' }, `${l} (${n})`);
     b.onclick = () => { FILTER = k; render(); }; t.appendChild(b); });
-  const total = cs.length || 1; $('bar').innerHTML = ''; $('legend').innerHTML = '';
-  $('bar').style.display = cs.length ? '' : 'none';
+  const total = cs.length || 1; $('bar').innerHTML = '';
+  ['bar', 'tabsrow', 'csv'].forEach(id => $(id).style.display = cs.length ? '' : 'none');
+  $('bar').setAttribute('aria-label', GROUPS.filter(g => cnt[g[0]]).map(g => `${g[1]}: ${cnt[g[0]]}`).join(', '));
   GROUPS.forEach(([k, l, col]) => { const n = cnt[k] || 0; if (!n) return;
-    $('bar').appendChild(el('span', { style: `width:${100 * n / total}%;background:${col}`, title: `${l}: ${n}` }));
-    $('legend').insertAdjacentHTML('beforeend', `<span><i style="background:${col}"></i>${l} ${n}</span>`); });
+    $('bar').appendChild(el('span', { style: `width:${100 * n / total}%;background:${col}`, title: `${l}: ${n}` })); });
 
   // ---- step 1: folder
   const src = DATA.source;
@@ -77,7 +78,7 @@ function render() {
   // ---- step 2: prepare
   const todo = cs.filter(c => !c.status.fit && !(c.status.job && /queued|running/.test(c.status.job.state))).length;
   const failed = cnt.fail || 0;
-  $('startbtn').innerHTML = q.paused ? (todo ? `&#9654; Start · prepare ${todo} video(s)` : '&#9654; Start') : '&#10074;&#10074; Pause';
+  $('startbtn').innerHTML = !q.paused ? '&#10074;&#10074; Pause' : '&#9654; Start' + (todo ? ` · prepare ${todo} video(s)` : '') + (q.queued ? ` · ${q.queued} waiting` : '');
   $('startbtn').title = q.paused ? 'Prepare every video that is not prepared yet, and run the waiting jobs' : 'The running job finishes; nothing new starts until you press Start again.';
   $('startbtn').disabled = q.paused && !todo && !q.queued;
   $('queue').innerHTML = q.paused && !q.running ? (q.queued ? `Paused · <b>${q.queued}</b> job(s) waiting.` : (todo ? '' : (cs.length ? 'Every video is prepared.' : ''))) :
@@ -92,20 +93,27 @@ function render() {
     const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); load(); };
 
   // ---- step 3: review and finish
-  const ready = cs.filter(c => c.status.group === 'ready'), nrev = cs.filter(c => c.status.confirmed && !c.status.done && c.status.fit).length;
-  $('revdesc').innerHTML = cs.length ? `<b>${ready.length}</b> need review · <b>${nrev}</b> reviewed, not finished · <b>${cnt.done || 0}</b> finished` : 'Clips appear here once they are prepared.';
+  const ready = cs.filter(c => c.status.group === 'ready');
+  const rev = cs.filter(c => c.status.confirmed && !c.status.done && c.status.fit), nrev = rev.filter(c => c.package).length;
+  const unnamed = cs.filter(c => !c.package).length, revUnnamed = rev.length - nrev;
+  $('revdesc').innerHTML = cs.length ? `<b>${ready.length}</b> ${ready.length === 1 ? 'needs' : 'need'} review · <b>${rev.length}</b> reviewed, not finished · <b>${cnt.done || 0}</b> finished` : 'Clips appear here once they are prepared.';
+  $('noname').style.display = unnamed ? '' : 'none';
+  $('noname').textContent = revUnnamed ? `${revUnnamed} reviewed clip(s) cannot be finished: no v2.1 package name.` :
+    unnamed ? `${unnamed} video(s) have no v2.1 package name yet; they need one before they can be finished.` : '';
+  $('nameall').style.display = unnamed ? '' : 'none';
   $('nextreview').style.display = ready.length ? '' : 'none';
   if (ready.length) $('nextreview').href = '/clip/' + ready[0].id;
   $('renderall').innerHTML = `&#9654; Finish all reviewed${nrev ? ` (${nrev})` : ''}`;
   $('renderall').disabled = !nrev;
 
   // ---- one highlighted action: the next thing to do
-  const step = !src.exists || !cs.length ? 1 : (todo || q.queued) && q.paused ? 2 : ready.length ? 3 : nrev ? 4 : !q.paused ? 2 : 0;
+  const step = !src.exists || !cs.length ? 1 : (todo || q.queued) && q.paused ? 2 : ready.length ? 3 : nrev ? 4 : revUnnamed ? 5 : !q.paused ? 2 : 0;
+  $('nameall').className = step === 5 ? 'primary' : '';
   $('pickfolder').className = step === 1 ? 'primary' : '';
   $('startbtn').className = step === 2 && q.paused ? 'primary' : '';
   $('nextreview').className = 'btn' + (step === 3 ? ' primary' : '');
   $('renderall').className = step === 4 ? 'primary' : '';
-  ['st1', 'st2', 'st3'].forEach((id, i) => $(id).classList.toggle('active', step === i + 1 || (step === 4 && i === 2)));
+  ['st1', 'st2', 'st3'].forEach((id, i) => $(id).classList.toggle('active', step === i + 1 || (step >= 4 && i === 2)));
 
   // ---- clip list
   const prog = {}; q.now.forEach(j => prog[j.clip] = j);
@@ -138,6 +146,13 @@ $('startbtn').onclick = async () => {
 $('renderall').onclick = async () => { const r = await post('/api/finish_reviewed');
   toast(`${r.queued} clip(s) queued to finish` + (r.unchanged ? ` · ${r.unchanged} unchanged since their last Finish, skipped` : '') +
         (r.no_name ? ` · ${r.no_name} without a package name` : '') + (r.busy ? ` · ${r.busy} already working` : ''), !!r.no_name); load(); };
+$('nameall').onclick = async () => {
+  try { PICK = await api('/api/folder?path=' + encodeURIComponent(DATA.source.path)); } catch (e) { toast(e.message, true); return; }
+  folderDialog();
+};
+// Quit lives in the top menu bar, next to the theme switch, not in front of the steps
+const quitBtn = el('button', { class: 'themebtn', id: 'quit', title: 'Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.' }, 'Quit');
+document.querySelector('nav.topnav').appendChild(quitBtn);
 $('quit').onclick = async () => { if (!(await ask('Stop Blender Agent? Unfinished jobs wait in the queue for the next Start.', 'Quit'))) return; await post('/api/quit');
   document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };
 
@@ -152,11 +167,11 @@ $('pickfolder').onclick = async () => {
 };
 function folderDialog() {
   const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'fdtitle' });
-  bg.innerHTML = `<div class="modal wide"><h3 id="fdtitle" style="margin:0 0 6px">Use this folder?</h3><code>${esc(PICK.path)}</code>
-    <p class="small muted">The videos stay where they are. Nothing starts until you press Start.</p>
+  bg.innerHTML = `<div class="modal wide"><h3 id="fdtitle" style="margin:0 0 6px">${PICK.current ? 'Package names for this folder' : 'Use this folder?'}</h3><code>${esc(PICK.path)}</code>
+    <p class="small muted">${PICK.current ? 'Videos without a v2.1 package name get one; existing names never change.' : 'The videos stay where they are. Nothing starts until you press Start.'}</p>
     <label style="display:flex;gap:8px;align-items:center">English title <input type="text" id="ftitle" style="flex:1" placeholder="e.g. the hidden blade" value="${esc(PICK.title)}"></label>
     <p class="small muted" id="fhint"></p><div class="ftable" id="ftable"></div>
-    <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes">Use this folder</button></div></div>`;
+    <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes">${PICK.current ? 'Save the names' : 'Use this folder'}</button></div></div>`;
   document.body.appendChild(bg);
   const close = () => bg.remove();
   bg.querySelector('.m-no').onclick = close; bg.onclick = e => { if (e.target === bg) close(); };
@@ -176,7 +191,8 @@ function folderDialog() {
     PICK = await api(`/api/folder?path=${encodeURIComponent(PICK.path)}&title=${encodeURIComponent($('ftitle').value)}`); fill(); }, 300); };
   bg.querySelector('.m-yes').onclick = async () => {
     const r = await post('/api/use_folder', { path: PICK.path, title: $('ftitle').value }); close();
-    toast(`${r.clips} video(s)` + (r.named ? ` · ${r.named} new package name(s)` : '') + '. Press Start to prepare them.'); FILTER = 'all'; load(); };
+    const wasCurrent = PICK.current;
+    toast(wasCurrent ? `${r.named} new package name(s) saved` : `${r.clips} video(s)` + (r.named ? ` · ${r.named} new package name(s)` : '') + '. Press Start to prepare them.'); FILTER = 'all'; load(); };
   fill(); $('ftitle').focus();
 }
 
