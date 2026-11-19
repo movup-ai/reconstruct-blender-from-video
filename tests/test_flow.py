@@ -204,7 +204,7 @@ class TestEditorColours(unittest.TestCase):
     def test_role_colours_and_joined_tracks(self):
         rv = {"people": {"1": {"role": "main", "colour": "red"}, "2": {"role": "ignore", "colour": "purple"}}}
         out = server.editor_colours(rv, {"3": 1})
-        self.assertEqual(out["1"], {"hex": "#ff4d4d", "role": "主角色"})
+        self.assertEqual(out["1"], {"hex": "#ff4d4d", "role": "Main"})
         self.assertEqual(out["2"]["hex"], server.DRAW_HEX["grey"], "not a person: grey")
         self.assertEqual(out["3"], out["1"], "a joined track keeps the colour of the track it joined")
         self.assertEqual(server.editor_colours(None), {})

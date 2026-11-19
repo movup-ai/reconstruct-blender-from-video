@@ -152,11 +152,6 @@ $('nameall').onclick = async () => {
   try { PICK = await api('/api/folder?path=' + encodeURIComponent(DATA.source.path)); } catch (e) { toast(e.message, true); return; }
   folderDialog();
 };
-// Quit lives in the top menu bar, not in front of the steps
-const quitBtn = el('button', { class: 'quitbtn', id: 'quit', title: 'Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.' }, 'Quit');
-document.querySelector('nav.topnav').appendChild(quitBtn);
-$('quit').onclick = async () => { if (!(await ask('Stop Blender Agent? Unfinished jobs wait in the queue for the next Start.', 'Quit'))) return; await post('/api/quit');
-  document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };
 
 $('opensrc').onclick = e => { e.preventDefault(); openFolder(DATA.source.path); };
 // ---- package names for the videos of SOURCE (Name them…)

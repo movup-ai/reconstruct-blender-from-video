@@ -9,11 +9,11 @@
 <body>
 <header class="bar2">
   <div class="hd">
-    <a href="/">&#9664; All clips</a>
-    <h1 id="title">…</h1><span class="film" id="film"></span><span id="state"></span>
-    <span class="film" id="pos" style="margin-left:auto"></span><a id="prevc" href="#" aria-label="Previous clip">&#8592; Prev</a><a id="nextc" href="#" aria-label="Next clip">Next &#8594;</a>
+    <a class="back" href="/">&#8592; All clips</a>
+    <div class="ttl"><h1 id="title">…</h1><span id="state"></span><span id="pkgname"></span><span class="film" id="film"></span></div>
+    <nav class="pager" aria-label="Clips"><a id="prevc" href="#">&#8249; Previous</a><span id="pos"></span><a id="nextc" href="#">Next &#8250;</a></nav>
   </div>
-  <div class="stepper" id="stepper"><a href="#s-people"><b>1</b> Who is who</a><a href="#s-marks"><b>2</b> Joints</a><a href="#s-objects"><b>3</b> Objects</a><a href="#s-more">More</a><span class="film" id="pkgname" style="margin-left:auto"></span></div>
+  <nav class="stepper" id="stepper" aria-label="Sections"><a href="#s-people"><b>1</b> Who is who</a><a href="#s-marks"><b>2</b> Joints</a><a href="#s-objects"><b>3</b> Objects</a><a href="#s-more">More</a></nav>
 </header>
 <main class="page">
   <div id="banner" class="banner"></div>
@@ -93,23 +93,24 @@
 </div></footer>
 <div class="toast" id="toast"></div>
 <div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
-  <tr><td><kbd>Tab</kbd> / click</td><td>select a person</td></tr><tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>主角色 · 第二 · 第三 · 第四</td></tr>
-  <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>other person / not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
+  <tr><td><kbd>Tab</kbd> / click</td><td>select a person</td></tr><tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Main · Second · Third · Fourth</td></tr>
+  <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Other / Not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
   <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
 <script src="/static/common.js"></script>
 <script>
 nav('clips');
 const CID = location.pathname.split('/').pop();
 const HEX = { red:'#cd3e3c', blue:'#3a68c9', green:'#46aa5a', yellow:'#e1c83c', purple:'#965abe', pink:'#dc6eaa', orange:'#dd8732', cyan:'#50cdeb', brown:'#825532', white:'#f5f5f5', grey:'#969696' };
-const ROLES = [['main', '主角色', 'red'], ['second', '第二角色', 'blue'], ['third', '第三角色', 'green'], ['fourth', '第四角色', 'yellow'], ['extra', 'Other person', 'purple'], ['ignore', 'Not a person', null]];
+const ROLES = [['main', 'Main', 'red'], ['second', 'Second', 'blue'], ['third', 'Third', 'green'], ['fourth', 'Fourth', 'yellow'], ['extra', 'Other', 'purple'], ['ignore', 'Not a person', null]];
 const EXTRA_COLS = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'];
 const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'], ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
 let INFO = null, lastState = null, dirty = false;
 const msg = t => $('msg').textContent = t;
 
-function quality(px) {
+function quality(px) {                                // how well the 3D person lines up with the video
   if (px == null) return '';
-  return px < 6 ? `<span class="good">● fits well (${px} px)</span>` : px < 14 ? `<span class="warn">● fits OK (${px} px)</span>` : `<span class="bad">● poor fit (${px} px), check the joints</span>`;
+  const [cls, word] = px < 6 ? ['good', 'good'] : px < 14 ? ['warn', 'fair'] : ['bad', 'poor: check the joints'];
+  return `Match with the video: <span class="${cls}">${word}</span> <span class="faint">(${px} px)</span>`;
 }
 function fillPeople(rv) {
   const box = $('ppl'); box.innerHTML = '';
@@ -120,20 +121,23 @@ function fillPeople(rv) {
     d.addEventListener('focus', () => selectCard(d)); d.addEventListener('click', () => selectCard(d)); d.dataset.role = r.role || 'extra'; d.dataset.colour = r.colour || 'purple';
     const shots = p.shots && p.shots.length && INFO.camera && (INFO.camera.shots || []).length > 1 ? ' · shot ' + p.shots.join(', ') : '';
     const ai = p.ai ? `<div class="aitag">✦ AI: ${p.ai.is_person === false ? 'not a person' : esc(ROLES.find(x => x[0] === p.ai.role)?.[1] || p.ai.role)}${p.ai.look ? ' · ' + esc(p.ai.look) : ''}</div>` : '';
-    d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="P${p.id}">
+    d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="Person ${p.id}">
       <div class="body"><div class="top"><b>Person ${p.id}</b><span class="meta">frames ${p.first}–${p.last}${shots}</span></div>
       <div class="meta">${quality(p.fit_px)}</div>${ai}
-      ${p.flags && p.flags.length ? `<div class="flags warn">⚠ ${p.flags.map(esc).join(' · ')}</div>` : ''}
-      ${p.not_person ? `<div class="suggest">Not a person? <span class="small">${esc(p.not_person)}</span><button class="np">Mark not a person</button></div>` : ''}
-      <div class="roles">${ROLES.map(([v, l, c]) => `<button data-v="${v}">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
-      <div class="fields"><span class="extra" style="display:none">Colour <select class="col">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select></span>
-        Height <input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"> m
-        <input type="text" class="nm" value="${esc(r.name)}" placeholder="Name (optional)" style="flex:1;min-width:90px"></div></div>`;
+      ${p.flags && p.flags.length ? `<ul class="flags">${p.flags.map(f => `<li>${esc(f.charAt(0).toUpperCase() + f.slice(1))}</li>`).join('')}</ul>` : ''}
+      ${p.not_person ? `<div class="suggest"><span><b>Not a person?</b> ${esc(p.not_person.charAt(0).toUpperCase() + p.not_person.slice(1))}</span><button class="np">Mark not a person</button></div>` : ''}
+      <div class="lbl">Role</div>
+      <div class="roles" role="group" aria-label="Role of person ${p.id}">${ROLES.map(([v, l, c]) => `<button data-v="${v}" aria-pressed="false">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
+      <div class="kv">
+        <label class="extra" style="display:none">Colour</label><select class="col extra" style="display:none" aria-label="Colour">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select>
+        <label for="h${p.id}">Height</label><span><input type="number" id="h${p.id}" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"> m</span>
+        <label for="n${p.id}">Name</label><input type="text" id="n${p.id}" class="nm" value="${esc(r.name)}" placeholder="optional">
+      </div></div>`;
     const np = d.querySelector('.np');
     if (np) np.onclick = e => { e.stopPropagation(); d.querySelector('.roles button[data-v="ignore"]').click(); toast('Marked. Press Re-check to fit the clip again without it.'); };
-    const paint = () => { d.querySelectorAll('.roles button').forEach(b => b.classList.toggle('on', b.dataset.v === d.dataset.role));
+    const paint = () => { d.querySelectorAll('.roles button').forEach(b => { b.classList.toggle('on', b.dataset.v === d.dataset.role); b.setAttribute('aria-pressed', b.dataset.v === d.dataset.role); });
       if (d.querySelector('.suggest')) d.querySelector('.suggest').style.display = d.dataset.role === 'ignore' ? 'none' : '';
-      d.classList.toggle('ignored', d.dataset.role === 'ignore'); d.querySelector('.extra').style.display = d.dataset.role === 'extra' ? '' : 'none'; };
+      d.classList.toggle('ignored', d.dataset.role === 'ignore'); d.querySelectorAll('.extra').forEach(x => x.style.display = d.dataset.role === 'extra' ? '' : 'none'); };
     d.querySelectorAll('.roles button').forEach(b => b.onclick = () => { d.dataset.role = b.dataset.v;
       d.dataset.colour = b.dataset.v === 'extra' ? d.querySelector('.col').value : (ROLES.find(x => x[0] === b.dataset.v)[2] || 'purple'); dirty = true; paint(); });
     d.querySelector('.col').value = EXTRA_COLS.includes(d.dataset.colour) ? d.dataset.colour : 'purple';
@@ -227,13 +231,13 @@ function envAi() {
 }
 // ---------------------------------------------------------------- object editor
 let OBJ = null, OSEL = null, ODIRTY = false;
-const FACINGS = [['camera', 'faces camera'], ['left', 'faces left'], ['right', 'faces right'], ['away', 'faces away']];
+const FACINGS = [['camera', 'the camera'], ['left', 'left'], ['right', 'right'], ['away', 'away']];
 const OCOL = ['#ff9f43', '#54a0ff', '#5f27cd', '#1dd1a1', '#ff6b6b', '#feca57', '#48dbfb', '#c8d6e5'];
 async function loadObjects() {
   try { OBJ = await api(`/api/clip/${CID}/objects`); } catch (e) { $('objshots').innerHTML = '<div class="empty">Could not load the objects.</div>'; return; }
   ODIRTY = false; OSEL = null; renderObjects();
 }
-function typeOpts(sel) { return Object.keys(OBJ.types).sort().map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t.replace('_', ' ')}</option>`).join(''); }
+function typeOpts(sel) { return Object.keys(OBJ.types).sort().map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t.replace(/_/g, ' ')}</option>`).join(''); }
 function renderObjects() {
   const box = $('objshots');
   if (!OBJ.shots.length) { box.innerHTML = '<div class="empty">The background pictures appear once the clip is prepared.</div>'; return; }
@@ -242,27 +246,30 @@ function renderObjects() {
     const wrap = el('div', { class: 'objshot' });
     wrap.innerHTML = `<div class="small muted" style="margin:10px 0 4px">${OBJ.shots.length > 1 ? `<b>Shot ${si + 1}</b> · ` : ''}${esc(sh.scene || '')} ${sh.built && sh.built.length ? `· ${sh.built.length} built in the last set` : ''}</div>
       <div class="objgrid"><div class="objwrap"><img src="${sh.plate}?v=${Date.now() >> 15}" alt="background of the shot"><canvas></canvas></div>
-      <div><table class="list objtable"><thead><tr><th></th><th>Object</th><th>Type</th><th>On</th><th>Facing</th><th></th></tr></thead><tbody></tbody></table>
-      <div class="small muted" style="margin-top:6px">${sh.objects.length ? '' : 'No objects yet: drag on the picture to add one.'}</div></div></div>`;
+      <div><div class="objlist"></div>
+      ${sh.objects.length ? '' : '<div class="objempty">No objects yet. Drag a box on the picture to add one.</div>'}</div></div>`;
     box.appendChild(wrap);
     const img = wrap.querySelector('img'), cv = wrap.querySelector('canvas');
-    const tb = wrap.querySelector('tbody');
-    sh.objects.forEach((o, oi) => {
-      const tr = tb.insertRow(); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
-      if (sel) tr.className = 'osel';
-      tr.innerHTML = `<td><span class="sw" style="background:${OCOL[oi % OCOL.length]}"></span></td>
-        <td><input type="text" value="${esc(o.what)}" placeholder="name" style="width:120px"></td>
-        <td><select>${typeOpts(o.type)}</select></td>
-        <td><select><option value="">auto</option><option value="floor" ${o.attach === 'floor' ? 'selected' : ''}>floor</option><option value="wall" ${o.attach === 'wall' ? 'selected' : ''}>wall</option></select></td>
-        <td><select>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-        <td><button title="Remove">✕</button></td>`;
+    const tb = wrap.querySelector('.objlist');
+    sh.objects.forEach((o, oi) => {                 // one object = two lines: name and remove, then type / placed on / facing
+      const tr = el('div', { class: 'objrow' }); tb.appendChild(tr); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
+      if (sel) tr.classList.add('osel');
+      const id = `o${si}_${oi}`;
+      tr.innerHTML = `<div class="objtop"><span class="sw" style="background:${OCOL[oi % OCOL.length]}"></span>
+          <input type="text" value="${esc(o.what)}" placeholder="Name, e.g. office chair" aria-label="Object name">
+          <button class="objrm" title="Remove this object" aria-label="Remove this object">&#10005;</button></div>
+        <div class="objprops">
+          <label>Type<select id="${id}t">${typeOpts(o.type)}</select></label>
+          <label>Placed on<select id="${id}o"><option value="">auto</option><option value="floor" ${o.attach === 'floor' ? 'selected' : ''}>floor</option><option value="wall" ${o.attach === 'wall' ? 'selected' : ''}>wall</option></select></label>
+          <label>Facing<select id="${id}f">${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>`;
       const [nm] = tr.querySelectorAll('input'); const [ty, on, fa] = tr.querySelectorAll('select');
       nm.oninput = () => { o.what = nm.value; ODIRTY = true; };
       ty.onchange = () => { o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); ODIRTY = true; draw(); };
       on.onchange = () => { o.attach = on.value || null; ODIRTY = true; };
       fa.onchange = () => { o.facing = fa.value; ODIRTY = true; };
       tr.querySelector('button').onclick = () => { sh.objects.splice(oi, 1); OSEL = null; ODIRTY = true; renderObjects(); };
-      tr.onclick = e => { if (e.target.tagName === 'TD') { OSEL = [si, oi]; renderObjects(); } };
+      tr.onclick = e => { if (!e.target.closest('input, select, button')) { OSEL = [si, oi]; renderObjects(); } };
     });
     let drag = null;
     const scale = () => img.clientWidth / sh.size[0];
@@ -288,7 +295,7 @@ function renderObjects() {
       if (d.cur && Math.abs(d.cur[0] - d.a[0]) > 6 && Math.abs(d.cur[1] - d.a[1]) > 6) {
         const b = [Math.min(d.a[0], d.cur[0]), Math.min(d.a[1], d.cur[1]), Math.max(d.a[0], d.cur[0]), Math.max(d.a[1], d.cur[1])];
         sh.objects.push({ what: '', type: 'other', bbox: b, attach: null, facing: 'camera' }); OSEL = [si, sh.objects.length - 1]; ODIRTY = true; renderObjects();
-        const rows = document.querySelectorAll('.objtable'); const sel = rows[si] && rows[si].querySelector('tr.osel select'); if (sel) sel.focus();
+        const rows = document.querySelectorAll('.objlist'); const sel = rows[si] && rows[si].querySelector('.objrow.osel select'); if (sel) sel.focus();
       } else if (d.hit) { OSEL = [si, d.hit[1]]; renderObjects(); } else draw(); });
     img.onload = draw; if (img.complete) draw();
     window.addEventListener('resize', draw);
@@ -318,10 +325,10 @@ function banner() {
 async function load(first) {
   INFO = await api('/api/clip/' + CID);
   document.title = INFO.clip.name + ' · Blender Agent';
-  $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('film').textContent = INFO.clip.film;
-  $('state').innerHTML = chip(INFO.paused && /^waiting to/.test(INFO.status.label) ? Object.assign({}, INFO.status, { label: 'waiting for Start' }) : INFO.status); $('pos').textContent = `clip ${INFO.index + 1} of ${INFO.count}`;
-  $('prevc').style.visibility = INFO.prev ? '' : 'hidden'; $('prevc').href = '/clip/' + INFO.prev;
-  $('nextc').style.visibility = INFO.next ? '' : 'hidden'; $('nextc').href = '/clip/' + INFO.next;
+  $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('title').title = INFO.clip.name; $('film').textContent = INFO.clip.film;
+  $('state').innerHTML = chip(INFO.paused && /^waiting to/.test(INFO.status.label) ? Object.assign({}, INFO.status, { label: 'waiting for Start' }) : INFO.status); $('pos').textContent = `${INFO.index + 1} of ${INFO.count}`;
+  [['prevc', INFO.prev], ['nextc', INFO.next]].forEach(([id, to]) => { const a = $(id);   // an end of the list greys out, it does not leave a hole
+    if (to) { a.href = '/clip/' + to; a.removeAttribute('aria-disabled'); a.classList.remove('off'); } else { a.removeAttribute('href'); a.setAttribute('aria-disabled', 'true'); a.classList.add('off'); } });
   if (first) {
     $('src').src = '/media/video/' + CID + '.mp4';
     $('srcinfo').textContent = INFO.frames ? `The source clip · ${INFO.size[0]}×${INFO.size[1]} · ${INFO.fps} fps · ${INFO.frames} frames` : 'The source clip';
@@ -345,7 +352,7 @@ async function load(first) {
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit || !INFO.package;
   $('finish').title = !INFO.package ? 'No v2.1 package name: press Name them… on the Clips page and type a title' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
-  $('pkgname').innerHTML = INFO.package ? 'v2.1 package · <b>' + esc(INFO.package) + '</b>' : '<span class="warn">no v2.1 package name</span>';
+  $('pkgname').innerHTML = INFO.package ? `<span class="pkchip" title="v2.1 package name">${esc(INFO.package)}</span>` : '<span class="pkchip none">No package name</span>';
   if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
   $('askai').style.display = INFO.ai_ready ? '' : 'none';
   const prepared = !!INFO.status.fit;                 // not prepared: one empty state instead of empty sections

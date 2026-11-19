@@ -36,13 +36,18 @@ function segGet(box) { const b = box.querySelector('button.on'); return b ? b.da
 function nav(active) {
   if (!document.querySelector('link[rel=icon]')) document.head.insertAdjacentHTML('beforeend', '<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
   const links = [['/', 'Clips', 'clips'], ['/submissions', 'Submissions', 'submissions'], ['/settings', 'Settings', 'settings'], ['/help', 'Help', 'help']];
-  const bar = el('nav', { class: 'topnav' });
-  bar.innerHTML = `<a class="brand" href="/"><img src="/favicon.svg" alt=""> Blender Agent</a>` +
-    links.map(([h, l, k]) => `<a class="nl${k === active ? ' on' : ''}" href="${h}">${l}</a>`).join('') +
-    `<span class="qind" id="qind" title="Jobs"></span>`;
+  const bar = el('nav', { class: 'topnav' });            // full-width bar; its contents line up with the page column
+  bar.innerHTML = `<div class="navin"><a class="brand" href="/"><img src="/favicon.svg" alt=""> Blender Agent</a>` +
+    links.map(([h, l, k]) => `<a class="nl${k === active ? ' on' : ''}" href="${h}"${k === active ? ' aria-current="page"' : ''}>${l}</a>`).join('') +
+    `<span class="qind" id="qind" title="Jobs"></span>` +
+    `<button class="quitbtn" id="quit" title="Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.">Quit</button></div>`;
   document.body.prepend(bar);
+  $('quit').onclick = async () => { if (!(await ask('Stop Blender Agent? Unfinished jobs wait in the queue for the next Start.', 'Quit'))) return;
+    await post('/api/quit');
+    document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };
   const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
-      $('qind').innerHTML = q.running || q.queued ? `<span class="pulse"></span>${q.running} working · ${q.queued} waiting` : '<span class="idle"></span>idle';
+      $('qind').innerHTML = q.running ? `<span class="pulse"></span>${q.running} working${q.queued ? ` · ${q.queued} waiting` : ''}` :
+        q.queued ? `<span class="idle"></span>${q.paused ? 'Paused · ' : ''}${q.queued} waiting` : '<span class="idle"></span>Idle';
       const base = document.title.replace(/^\(\d+\)\s*/, ''); document.title = (q.running || q.queued ? `(${q.running + q.queued}) ` : '') + base;
     } catch (e) { $('qind').innerHTML = '<span class="bad">offline</span>'; } };
   tick(); setInterval(tick, 7000);

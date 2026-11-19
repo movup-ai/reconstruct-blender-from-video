@@ -455,7 +455,7 @@ def save_objects(c, cl, body):
 # role -> the colour the joint editor draws a person in (the review page's role colours, brighter on video)
 DRAW_HEX = {"red": "#ff4d4d", "blue": "#4d8dff", "green": "#3ddc6b", "yellow": "#ffd23f", "purple": "#c07bff", "pink": "#ff7ac8",
             "orange": "#ff9b3d", "cyan": "#4fe0ff", "brown": "#c8925a", "white": "#f5f5f5", "grey": "#9a9a9a"}
-ROLE_NAME = {"main": "主角色", "second": "第二角色", "third": "第三角色", "fourth": "第四角色", "extra": "other", "ignore": "not a person"}
+ROLE_NAME = {"main": "Main", "second": "Second", "third": "Third", "fourth": "Fourth", "extra": "Other", "ignore": "Not a person"}
 
 
 def editor_colours(rv, stitched=None):

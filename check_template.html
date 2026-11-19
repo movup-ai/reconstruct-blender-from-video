@@ -41,6 +41,17 @@
   #people div:hover { background: var(--sunk); }
   #people div.sel { background: var(--accent-tint); box-shadow: inset 0 0 0 1px #b9d6d8; }
   #people i { width: 12px; height: 12px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+  #people div { padding-left: 4px; }
+  #people div.off { color: #8a949c; cursor: default; }
+  #people div.off i { opacity: .35; }
+  #people .eye { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 6px;
+                 background: transparent; color: var(--slate); cursor: pointer; }
+  #people .eye:hover { background: var(--sunk); color: var(--ink); }
+  #people div.off .eye { color: #8a949c; }
+  .solo { margin-top: 6px; width: 100%; min-height: 30px; padding: 0 10px; background: var(--paper); color: var(--ink); border: 1px solid var(--seam-strong);
+          border-radius: 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .solo:hover { background: var(--sunk); }
+  .solo:disabled { color: #8a949c; background: var(--sunk); border-color: var(--seam); cursor: default; }
   #thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   #thumbs button { padding: 2px 7px; border-radius: 5px; background: var(--sunk); color: var(--ink); border: 0; cursor: pointer; font: inherit; font-size: 12px; }
   #thumbs button:hover { background: #e2e7ea; }
@@ -92,7 +103,8 @@
   <div id="side">
     <h3>People in this frame</h3>
     <div id="people"></div>
-    <div class="legend"><span>solid = right side</span><span>dashed = left side</span><span>○ = hidden</span></div>
+    <button id="solo" class="solo" title="V">Show only the selected person</button>
+    <div class="legend"><span>solid = right side</span><span>dashed = left side</span><span>○ = joint not visible in the video</span></div>
     <h3 style="margin-top:14px">Key frames <span id="progress" style="color:var(--slate);font-weight:400"></span></h3>
     <div id="thumbs"></div>
     <div class="legend"><span><i style="background:#e2f3e9;box-shadow:inset 0 0 0 1px #1d7a46"></i>OK</span><span><i style="background:#e4ecf8;box-shadow:inset 0 0 0 1px #2d63b7"></i>fixed</span><span><i style="background:#eef1f3;box-shadow:inset 0 -3px 0 #d98a0b"></i>flagged</span></div>
@@ -100,8 +112,9 @@
     <details class="keys"><summary>Keys</summary>
       <p>Drag a dot to move it · wheel = zoom · drag empty space = move the view</p>
       <p><kbd>Enter</kbd> frame OK, next · <kbd>F</kbd> next flagged · <kbd>←</kbd> <kbd>→</kbd> frames</p>
-      <p>Right-click a dot or <kbd>H</kbd> = hidden / visible</p>
+      <p>Right-click a dot or <kbd>H</kbd> = this joint is / is not visible in the video</p>
       <p>Click a dot to select a person: <kbd>S</kbd> swap L/R · <kbd>D</kbd> delete · <kbd>A</kbd> add · <kbd>C</kbd> copy the key frame before</p>
+      <p>The eye beside a person stops showing them on the picture, in every frame; their joints stay as they are · <kbd>V</kbd> only the selected person / everyone</p>
       <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>R</kbd> reset view · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
     </details>
   </div>
@@ -118,6 +131,22 @@ const N_ = PAGE.kp_names.length;
 const clone = o => JSON.parse(JSON.stringify(o));
 const ORIG = PAGE.frames.map(fr => JSON.stringify(fr.people));   // the detector's dots, to tell what was fixed
 let cur = 0, sel = null, view = null, drag = null, hover = null, dirty = false;
+// people hidden on the picture (display only, every frame, never saved): with overlapping people, hide one to work on the other
+const HIDDEN = new Set();
+const shown = p => !HIDDEN.has(p.id);
+const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-7 0-11-7-11-7a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.2 3.2M14.1 14.1a3 3 0 1 1-4.2-4.2"/><path d="M1 1l22 22"/></svg>';
+function setHidden(id, hide) {
+  if (hide) HIDDEN.add(id); else HIDDEN.delete(id);
+  if (hide && sel === id) sel = null;              // a hidden person cannot stay selected
+  hover = null; draw();
+}
+function soloToggle() {                            // V: only the selected person / everyone again
+  if (HIDDEN.size) { HIDDEN.clear(); hover = null; draw(); say('Showing everyone'); return; }
+  const p = selPerson(); if (!p) return say('Click one of the person\'s dots first, then V shows only that person.', true);
+  PAGE.frames.forEach(fr => fr.people.forEach(q => { if (q.id !== p.id) HIDDEN.add(q.id); }));
+  hover = null; draw(); say(`Showing only P${p.id} (V = everyone)`);
+}
 const checked = new Set(), UNDO = [];
 if (window.APP_CHECKED) {                      // opened from the app: start from the last saved fixes
   for (const [f, ppl] of Object.entries(APP_CHECKED.frames || {})) {
@@ -194,7 +223,7 @@ function draw() {
   const im = imgs[cur]; ctx.imageSmoothingEnabled = view.s < 2;
   ctx.drawImage(im, view.ox, view.oy, im.width * view.s, im.height * view.s);
   const r = Math.max(3, Math.min(9, 2.2 * view.s)) * devicePixelRatio ** 0.5, lw = devicePixelRatio ** 0.5;
-  const order = people().slice().sort((a, b) => (a.id === sel) - (b.id === sel));     // the selected person on top
+  const order = people().filter(shown).sort((a, b) => (a.id === sel) - (b.id === sel));     // the selected person on top; hidden ones not drawn
   for (const p of order) {
     const k = p.kps, isSel = p.id === sel, col = colour(p.id);
     ctx.globalAlpha = sel != null && !isSel ? 0.55 : 1;
@@ -236,12 +265,18 @@ function ui() {
   $('nextflag').style.display = anyFlag ? '' : 'none'; $('nextflag').disabled = !nf;
   const pl = $('people'); pl.innerHTML = '';
   for (const p of people()) {
-    const d = document.createElement('div');
-    d.innerHTML = `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' · ' + roleOf(p.id) : ''}</span><span style="margin-left:auto;color:var(--slate)">${p.kps.filter(q => q[2] > 0).length}/17</span>`;
-    d.title = 'Select (then S, D…)';
-    if (p.id === sel) d.className = 'sel'; d.onclick = () => { sel = sel === p.id ? null : p.id; draw(); }; pl.appendChild(d);
+    const d = document.createElement('div'), hid = HIDDEN.has(p.id);
+    d.innerHTML = `<button class="eye" aria-pressed="${!hid}" title="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture" aria-label="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture">${hid ? EYE_OFF : EYE}</button>` +
+      `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' · ' + roleOf(p.id) : ''}</span><span style="margin-left:auto;color:var(--slate)">${hid ? 'not shown' : p.kps.filter(q => q[2] > 0).length + '/17'}</span>`;
+    d.title = hid ? 'Not shown on the picture' : 'Select (then S, D…)';
+    d.className = (p.id === sel ? 'sel ' : '') + (hid ? 'off' : '');
+    d.onclick = () => { if (hid) return; sel = sel === p.id ? null : p.id; draw(); };
+    d.querySelector('.eye').onclick = e => { e.stopPropagation(); setHidden(p.id, !hid); };
+    pl.appendChild(d);
   }
   if (!people().length) pl.textContent = 'Nobody detected in this frame.';
+  const solo = $('solo'); solo.style.display = people().length > 1 || HIDDEN.size ? '' : 'none';
+  solo.textContent = HIDDEN.size ? 'Show everyone' : 'Show only the selected person'; solo.disabled = !HIDDEN.size && sel == null;
   const th = $('thumbs'); th.innerHTML = '';
   PAGE.frames.forEach((fr, i) => {
     const s = document.createElement('button'); s.textContent = fr.f;
@@ -254,7 +289,7 @@ function ui() {
 }
 function nearest(sx, sy, maxd) {
   let best = null, bd = maxd;
-  for (const p of people()) for (let i = 0; i < N_; i++) {
+  for (const p of people().filter(shown)) for (let i = 0; i < N_; i++) {           // hidden people cannot be grabbed
     const [x, y] = toScreen(p.kps[i][0], p.kps[i][1]); const d = Math.hypot(x - sx, y - sy) - (p.id === sel ? 3 : 0);   // the selected person wins ties
     if (d < bd) { bd = d; best = { p, i }; }
   }
@@ -359,6 +394,7 @@ $('del').onclick = delPerson;
 $('add').onclick = addPerson;
 $('copy').onclick = copyPrev;
 $('reset').onclick = () => { fitView(); draw(); };
+$('solo').onclick = soloToggle;
 $('save').onclick = save;
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || document.querySelector('.dlgbg')) return;
@@ -372,6 +408,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'h' && hover) toggleHidden(hover);
   else if (k === 'f') { const i = nextFlagged(cur); if (i >= 0) go(i); }
   else if (k === 'escape') { sel = null; draw(); }
+  else if (k === 'v') soloToggle();
 });
 window.addEventListener('message', async e => {     // the clip page's buttons save the editor first
   if (!e.data || e.data.type !== 'do_save') return;

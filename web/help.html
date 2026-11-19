@@ -7,9 +7,9 @@
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<div class="wrap faq" style="max-width:860px">
+<div class="wrap faq">
   <h1>Help</h1>
-  <p class="sub">Blender Agent turns film clips into white-model (白模) packages in the client's v2.1 format. Everything runs on this PC.</p>
+  <p class="sub">Blender Agent turns film clips into white-model packages in the client's v2.1 format. Everything runs on this PC.</p>
 
   <section class="step">
     <h2>The workflow</h2>
@@ -34,8 +34,8 @@
     <h3>Clip page</h3>
     <table class="list">
       <tr><td><kbd>Tab</kbd> / click a card</td><td>select a person</td></tr>
-      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>主角色 red · 第二角色 blue · 第三角色 green · 第四角色 yellow</td></tr>
-      <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>other person / not a person</td></tr>
+      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>role: Main (red) · Second (blue) · Third (green) · Fourth (yellow)</td></tr>
+      <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Other (purple) / Not a person</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr>
       <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd></td><td>previous / next clip</td></tr>
@@ -47,7 +47,9 @@
       <tr><td><kbd>F</kbd></td><td>next flagged frame (orange line)</td></tr>
       <tr><td><kbd>Enter</kbd></td><td>this frame is OK (the fit trusts it), go to the next. Only frames you fix or mark OK are used as corrections.</td></tr>
       <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>previous / next frame</td></tr>
-      <tr><td><kbd>H</kbd> or right-click a dot</td><td>joint hidden / visible</td></tr>
+      <tr><td><kbd>H</kbd> or right-click a dot</td><td>this joint is / is not visible in the video</td></tr>
+      <tr><td>the eye beside a person</td><td>stop showing that person on the picture (every frame; their joints are not changed), for people standing in front of each other</td></tr>
+      <tr><td><kbd>V</kbd></td><td>show only the selected person / everyone again</td></tr>
       <tr><td><kbd>S</kbd></td><td>swap left and right of the selected person</td></tr>
       <tr><td><kbd>D</kbd> / <kbd>A</kbd></td><td>delete a wrong person / add a missed person</td></tr>
       <tr><td><kbd>C</kbd></td><td>copy the dots of the previous key frame</td></tr>
@@ -67,7 +69,7 @@
     <h3>Where are the results?</h3>
     <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Preparation results, previews and logs are in the Work folder (Settings).</p>
     <h3>What do the colours mean?</h3>
-    <p>People: 主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow, other people purple. The set is light grey like the client samples; <i>More → Set</i> can switch it to the video's own colours. The colours in <i>More → Held objects</i> (touched or held orange, far interactive pink, special purple, foreground brown, light source white) are for objects people hold or touch, not for the objects of step 3.</p>
+    <p>People: Main red, Second blue, Third green, Fourth yellow, Other purple. The set is light grey like the client samples; <i>More → Set</i> can switch it to the video's own colours. The colours in <i>More → Held objects</i> (touched or held orange, far interactive pink, special purple, foreground brown, light source white) are for objects people hold or touch, not for the objects of step 3.</p>
     <h3>A clip shows "failed"</h3>
     <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> in step 1 on the Clips page tries all failed clips again.</p>
     <h3>How do I get recognisable objects (doors, shelves, cars…)?</h3>
