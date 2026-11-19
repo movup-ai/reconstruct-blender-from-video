@@ -540,18 +540,27 @@ def run_clip(video, c, args):
             from scene_depth import build_set
             meshes, sinfo = build_set(sf, y0, world, chars, boxes, c, fake=c.get("_fake_depth", False))
         log("    set %.1fs" % (time.time() - tp0))
+        # people whose feet are never in the picture stay on the solved floor: the depth terrain under a half-body
+        # person is whatever is behind or below the frame (a wall base, a pedestal) and lifted one by a metre
+        def feet_seen(ch):
+            fs_, K_ = people.get(ch.get("track_id"), ([], []))
+            return not len(fs_) or quality.track_stats(fs_, K_)["feet_seen"] >= quality.LIMITS["feet_seen"]
+        grounded = {k: ch for k, ch in chars.items() if feet_seen(ch)}
+        if len(grounded) < len(chars) and (sinfo.get("terrain_xyz") or sinfo.get("plane")):
+            log("    feet not in the picture: %s kept on the solved floor (not moved onto the set's terrain)" %
+                ", ".join(sorted(set(chars) - set(grounded))))
         if sinfo.get("terrain_xyz"):                       # uneven ground: feet on the terrain under them
             from scipy.spatial import cKDTree
             T = np.array(sinfo.pop("terrain_xyz"), float)
             tree = cKDTree(T[:, :2])
-            for ch in chars.values():
+            for ch in grounded.values():
                 for r in ch["root"]:
                     dd, ii = tree.query([r[0], r[1]], k=min(8, len(T)))
                     if np.min(dd) < 3.0:
                         r[2] = round(float(np.median(T[np.atleast_1d(ii), 2])), 4)
         if sinfo.get("plane"):                             # sloping ground: feet on the slope
             pn = sinfo["plane"][:3]; pd = sinfo["plane"][3]
-            for ch in chars.values():
+            for ch in grounded.values():
                 for r in ch["root"]:
                     r[2] = round((pd - pn[0] * r[0] - pn[1] * r[1]) / pn[2], 4)
         palette.update(sinfo.get("palette", {}))
