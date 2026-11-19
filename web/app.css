@@ -282,12 +282,16 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
 .clipcard:hover .rm, .clipcard .rm:focus-visible { opacity:1; }
 .clipcard .rm:hover { background:var(--bad); border-color:var(--bad); color:#fff; }
 .clipcard .rm:disabled { opacity:.45; background:rgba(255,255,255,.92); color:var(--faint); }
-.removed { margin-top:18px; font-size:13.5px; color:var(--slate); }
-.removed summary { cursor:pointer; }
-.removed ul { list-style:none; padding:0; margin:8px 0 0; }
-.removed li { display:flex; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--seam); }
-.removed li span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
-.removed li button { min-height:28px; padding:0 10px; font-size:12.5px; }
+/* removed videos: greyed cards with Add back */
+.removed { margin-top:26px; padding-top:6px; border-top:1px solid var(--seam); }
+.removed h2 { margin-top:16px; }
+.clipcard.off .clip { display:block; background:var(--paper); border:1px dashed var(--seam-strong); border-radius:10px; overflow:hidden; }
+.clipcard.off img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; filter:grayscale(1); opacity:.55; }
+.clipcard.off .noimg { aspect-ratio:16/9; background:var(--sunk); }
+.clipcard.off .t { padding:9px 11px 2px; display:flex; justify-content:space-between; align-items:center; gap:6px; color:var(--slate); }
+.clipcard.off .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clipcard.off .addback { padding:6px 11px 11px; }
+.clipcard.off .addback button { width:100%; }
 .sub code { background:var(--sunk); padding:1px 6px; border-radius:4px; }
 .faq > .sub, .faq > section { max-width:860px; }   /* help reads as a column on the shared left edge */
 .pkchip, .chip { white-space:nowrap; }
@@ -301,3 +305,31 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
   .person { flex-direction:column; } .person img { width:100%; height:180px; }
   .roles { grid-template-columns:repeat(2,1fr); }
 }
+
+/* Submissions: finished packages; numbers and dates on one line, check problems on their own line, cards on a phone */
+.deliverhint { margin:-6px 0 4px; font-size:13.5px; color:var(--slate); }
+.emptycard { margin-top:18px; padding:28px; border:1px dashed var(--seam-strong); border-radius:var(--r-lg); background:var(--paper); text-align:center; color:var(--slate); }
+.emptycard b { color:var(--ink); font-size:15px; } .emptycard p { margin:6px 0 0; }
+table.subs { margin-top:14px; }
+table.subs th.r, table.subs td.r { text-align:right; white-space:nowrap; }
+table.subs .nowrap { white-space:nowrap; }
+table.subs td.pkg { min-width:0; }
+table.subs td.pkg b { font-weight:600; }
+table.subs .acts { display:flex; gap:6px; justify-content:flex-end; flex-wrap:nowrap; }
+table.subs tr.hasprob td { border-bottom:0; }
+table.subs tr.probs td { padding-top:0; }
+table.subs tr.probs ul { margin:0; padding:8px 12px 8px 28px; background:var(--bad-tint); border-radius:var(--r-sm); color:#7a221c; font-size:13px; }
+table.subs tr.probs li { margin:2px 0; }
+.vh { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+@media (max-width:760px) {   /* phone: each package is a card */
+  table.subs thead { display:none; }
+  table.subs, table.subs tbody, table.subs tr, table.subs td { display:block; width:100%; }
+  table.subs tr { border:1px solid var(--seam); border-radius:var(--r); background:var(--paper); margin-bottom:10px; padding:10px 12px; }
+  table.subs tr.hasprob { border-bottom-left-radius:0; border-bottom-right-radius:0; margin-bottom:0; border-bottom:0; }
+  table.subs tr.probs { border-top:0; border-top-left-radius:0; border-top-right-radius:0; margin-bottom:10px; padding-top:0; }
+  table.subs td { border:0; padding:3px 0; text-align:left !important; }
+  table.subs td[data-k]::before { content:attr(data-k); display:inline-block; width:64px; color:var(--slate); font-size:12.5px; }
+  table.subs .acts { justify-content:flex-start; flex-wrap:wrap; margin-top:6px; }
+  table.subs tr:hover td { background:transparent; }
+}
+@media (max-width:760px) { .deliverhint { margin-top:10px; } }

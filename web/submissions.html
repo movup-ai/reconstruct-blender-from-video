@@ -12,41 +12,80 @@
     <div><h1>Submissions</h1><p class="sub" id="sub">Finished v2.1 packages.</p></div>
     <div class="right"><button id="openroot">Open SUBMIT folder</button><button id="check" title="Check every package against the v2.1 delivery spec: files, names, video sizes, audio">&#10003; Check packages</button></div>
   </div>
-  <div class="card" id="sumcard" style="display:none"><span id="sum"></span></div>
-  <div id="player" class="card" style="display:none;margin-top:14px"><div class="rowsb"><b id="ptitle"></b><button id="pclose">Close</button></div><video id="pvid" controls style="margin-top:8px;max-height:70vh"></video></div>
-  <table class="list" style="margin-top:14px">
-    <thead><tr><th>Package</th><th>Length</th><th>Size</th><th>Made</th><th>Check</th><th></th></tr></thead>
-    <tbody id="rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+  <p class="deliverhint" id="hint" style="display:none">To deliver a package, use its <b>Zip</b> button: the file downloads under its package name, which the client's checker requires.</p>
+  <div class="banner" id="sumcard" role="status"></div>
+  <div id="player" class="card" style="display:none;margin-top:14px"><div class="rowsb"><b id="ptitle"></b><button id="pclose">Close</button></div><video id="pvid" controls style="margin-top:10px;max-height:70vh"></video></div>
+
+  <div id="emptybox" class="emptycard" style="display:none">
+    <b>No packages yet.</b>
+    <p>Review clips on the <a href="/">Clips page</a> and press <i>Finish all reviewed</i>. Each package appears here when it is finished.</p>
+  </div>
+  <table class="list subs" id="table" style="display:none">
+    <thead><tr><th>Package</th><th class="r">Length</th><th class="r">Size</th><th>Made</th><th>Check</th><th><span class="vh">Actions</span></th></tr></thead>
+    <tbody id="rows"></tbody>
   </table>
+  <div id="incomplete" style="display:none">
+    <h2>Incomplete</h2>
+    <p class="hint">These folders in SUBMIT have no zip: a Finish is still running, or it stopped part way. Press <i>Finish now</i> on the clip to make the package.</p>
+    <table class="list subs"><tbody id="irows"></tbody></table>
+  </div>
 </div>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/common.js"></script>
 <script>
 nav('submissions');
-let LIST = [], CHECK = {}, ROOT = '';
-function render() {
-  $('rows').innerHTML = LIST.length ? LIST.map(p => {
-    const c = CHECK[p.name];
-    const chk = !c ? '<span class="muted small">not checked</span>' : c.ok ? '<span class="good">✓ matches</span>' :
-      `<span class="bad">✕ ${c.problems.length} problem${c.problems.length > 1 ? 's' : ''}</span><ul class="small bad" style="margin:4px 0 0;padding-left:18px">${c.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
-    return `<tr><td><b>${esc(p.package || p.name)}</b><div class="small muted">${[p.package ? esc(p.name) : '<span class="warn">no v2.1 package name</span>', p.resolution ? p.resolution.join(' × ') : ''].filter(Boolean).join(' · ')}</div></td>
-      <td>${p.duration ? p.duration.toFixed(1) + ' s' : ''}</td><td>${p.zip_mb ? p.zip_mb + ' MB' : '<span class="bad">no zip</span>'}</td><td class="small">${esc(p.made)}</td><td>${chk}</td>
-      <td style="white-space:nowrap"><button data-play="${esc(p.name)}">&#9654; Play</button> <button data-open="${esc(p.folder)}">Folder</button> ${p.zip ? `<a class="btn" href="/download/${encodeURIComponent(p.name)}">&#8681; Zip</a>` : ''}</td></tr>`; }).join('')
-    : '<tr><td colspan="6" class="empty">No packages yet. Review clips on the Clips page and press Finish all reviewed; each one lands here when it is finished.</td></tr>';
-  document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(b.dataset.open));
-  document.querySelectorAll('[data-play]').forEach(b => b.onclick = () => { $('player').style.display = ''; $('ptitle').textContent = b.dataset.play + ' · comparison';
-    $('pvid').src = `/package/${encodeURIComponent(b.dataset.play)}/comparison`; $('pvid').play(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
-  $('sub').textContent = `${LIST.length} finished v2.1 package(s) in ${ROOT}`;
-  $('check').disabled = !LIST.length; $('check').className = LIST.length && !Object.keys(CHECK).length ? 'primary' : '';
+let LIST = [], CHECK = {}, ROOT = '', CHECKING = false;
+const mb = v => v == null ? '' : (v >= 1000 ? (v / 1000).toFixed(2) + ' GB' : v.toFixed(1) + ' MB');
+function title(p) { return p.package || p.name; }
+function sub(p) { return [p.package ? esc(p.name) : '<span class="warn">no v2.1 package name: press Name them… on the Clips page</span>',
+                          p.resolution ? p.resolution.join(' × ') : ''].filter(Boolean).join(' · '); }
+function actions(p) {
+  return `<div class="acts">${p.comparison ? `<button data-play="${esc(p.name)}" data-title="${esc(title(p))}">&#9654; Play</button>` : ''}` +
+    `<button data-open="${esc(p.folder)}">Folder</button>` +
+    (p.zip && p.package ? `<a class="btn" href="/download/${encodeURIComponent(p.name)}" title="Downloads as ${esc(p.package)}.zip">&#8681; Zip</a>` : '') + '</div>';
 }
-async function load() { const s = await api('/api/settings'); ROOT = s.submit_root; LIST = await api('/api/submissions'); render(); }
+function render() {
+  const done = LIST.filter(p => p.zip), part = LIST.filter(p => !p.zip);
+  $('table').style.display = done.length ? '' : 'none';
+  $('emptybox').style.display = done.length ? 'none' : '';
+  $('hint').style.display = done.length ? '' : 'none';
+  $('rows').innerHTML = done.map(p => {
+    const c = CHECK[p.name];
+    const chk = CHECKING && !c ? '<span class="muted">checking…</span>' : !c ? '<span class="muted">not checked</span>' :
+      c.ok ? '<span class="good">&#10003; matches v2.1</span>' : `<span class="bad">&#10005; ${c.problems.length} problem${c.problems.length > 1 ? 's' : ''}</span>`;
+    const row = `<tr class="${c && !c.ok ? 'hasprob' : ''}"><td class="pkg"><b>${esc(title(p))}</b><div class="small muted">${sub(p)}</div></td>
+      <td class="r" data-k="Length">${p.duration ? p.duration.toFixed(1) + ' s' : '–'}</td><td class="r" data-k="Size">${mb(p.zip_mb)}</td>
+      <td class="nowrap" data-k="Made">${esc(p.made)}</td><td class="nowrap" data-k="Check">${chk}</td><td>${actions(p)}</td></tr>`;
+    const probs = c && !c.ok ? `<tr class="probs"><td colspan="6"><ul>${c.problems.map(x => `<li>${esc(x)}</li>`).join('')}</ul></td></tr>` : '';
+    return row + probs; }).join('');
+  $('incomplete').style.display = part.length ? '' : 'none';
+  $('irows').innerHTML = part.map(p => `<tr><td class="pkg"><b>${esc(title(p))}</b><div class="small muted">${sub(p)}</div></td>
+      <td class="nowrap" data-k="Changed">${esc(p.made)}</td><td>${actions(p)}</td></tr>`).join('');
+  document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(b.dataset.open));
+  document.querySelectorAll('[data-play]').forEach(b => b.onclick = () => { $('player').style.display = ''; $('ptitle').textContent = b.dataset.title + ' · comparison video';
+    $('pvid').src = `/package/${encodeURIComponent(b.dataset.play)}/comparison`; $('pvid').play(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+  $('sub').textContent = `${done.length} finished package${done.length === 1 ? '' : 's'}` + (part.length ? ` · ${part.length} incomplete` : '') + ` · in ${ROOT}`;
+  $('check').disabled = !done.length || CHECKING;
+  $('check').innerHTML = CHECKING ? 'Checking…' : '&#10003; Check packages';
+  $('check').className = done.length && !Object.keys(CHECK).length && !CHECKING ? 'primary' : '';
+}
+async function load() { try { const s = await api('/api/settings'); ROOT = s.submit_root; LIST = await api('/api/submissions');
+  LIST.sort((a, b) => (b.mtime || 0) - (a.mtime || 0)); render(); } catch (e) { toast('Cannot reach Blender Agent: ' + e.message, true); } }
 $('pclose').onclick = () => { $('pvid').pause(); $('player').style.display = 'none'; };
 $('openroot').onclick = () => openFolder(ROOT);
-$('check').onclick = async () => { $('sumcard').style.display = ''; $('sum').textContent = 'Checking every package (a few seconds each)…';
-  const rows = await api('/api/validate'); CHECK = {}; rows.forEach(r => CHECK[r.package] = r);
-  const ok = rows.filter(r => r.ok).length;
-  $('sum').innerHTML = rows.length ? `<span class="${ok === rows.length ? 'good' : 'warn'}">${ok} of ${rows.length}</span> package(s) match the v2.1 delivery spec.` : 'Nothing to check yet.';
-  render(); };
+$('check').onclick = async () => {
+  if (CHECKING) return;
+  CHECKING = true; render();
+  const s = $('sumcard'); s.className = 'banner run'; s.textContent = 'Checking every package against the v2.1 spec (a few seconds each)…';
+  try {
+    const rows = await api('/api/validate'); CHECK = {}; rows.forEach(r => CHECK[r.package] = r);
+    const ok = rows.filter(r => r.ok).length;
+    s.className = 'banner ' + (ok === rows.length ? 'done' : 'fail');
+    s.textContent = !rows.length ? 'Nothing to check yet.' : ok === rows.length ? `All ${rows.length} package${rows.length === 1 ? '' : 's'} match the v2.1 delivery spec.` :
+      `${rows.length - ok} of ${rows.length} package${rows.length === 1 ? '' : 's'} do not match the v2.1 delivery spec. The problems are listed under each one.`;
+  } catch (e) { s.className = 'banner fail'; s.textContent = 'The check could not run: ' + e.message; }
+  CHECKING = false; render();
+};
 load(); setInterval(load, 30000);
 </script>
 </body>

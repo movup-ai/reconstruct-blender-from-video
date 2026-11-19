@@ -511,7 +511,10 @@ def submissions(c):
         out.append({"name": d, "package": pkg.package_name(d), "folder": sub, "zip": zp if os.path.exists(zp) else None,
                     "zip_mb": round(os.path.getsize(zp) / 1e6, 1) if os.path.exists(zp) else None, "folder_mb": round(size / 1e6, 1),
                     "made": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(zp if os.path.exists(zp) else sub))),
-                    "duration": meta.get("pattern_video_duration"), "resolution": meta.get("source_video_resolution")})
+                    "duration": meta.get("pattern_video_duration"), "resolution": meta.get("source_video_resolution"),
+                    "comparison": bool(glob.glob(os.path.join(sub, "comparison", "*.mp4"))),
+                    "mtime": os.path.getmtime(zp if os.path.exists(zp) else sub)})
+    out.sort(key=lambda r: -r["mtime"])                       # newest first
     return out
 
 
@@ -582,10 +585,7 @@ def make_handler(app):
                     left -= len(chunk)
 
         def body_json(self):
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > 20 * 1024 * 1024:
-                raise HttpError(413, "request too large")
-            raw = self.rfile.read(n).decode("utf-8") if n else ""
+            raw = (getattr(self, "_raw", b"") or b"").decode("utf-8")       # read in do_POST, before any answer
             try:
                 return json.loads(raw) if raw else {}
             except ValueError:
@@ -614,7 +614,29 @@ def make_handler(app):
             self.handle_any(self.get)
 
         def do_POST(self):
+            # Read the whole request body before answering: a reply sent while the browser is still sending the body
+            # makes Windows reset the connection, so the browser (or a test) sees "connection reset" instead of the
+            # answer.  An upload streams its own body; a too-large body closes the connection after the answer.
+            self._raw = b""
+            if urlparse(self.path).path.rstrip("/") != "/api/upload":
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > 20 * 1024 * 1024:
+                    self.close_connection = True
+                    return self.send(413, {"error": "request too large"})
+                self._raw = self.rfile.read(n) if n > 0 else b""
             self.handle_any(self.post)
+
+        def drain(self, limit=64 * 1024 * 1024):
+            """an upload refused before it was read: read and drop its body, or close the connection when it is huge"""
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > limit:
+                self.close_connection = True
+                return
+            while n > 0:
+                chunk = self.rfile.read(min(1 << 20, n))
+                if not chunk:
+                    break
+                n -= len(chunk)
 
         # ---- GET
         def get(self):
@@ -717,6 +739,8 @@ def make_handler(app):
                 name = os.path.basename(parts[1])
                 m = sorted(glob.glob(os.path.join(c["submit_root"], name, parts[2], "*.mp4")))
                 return self.file(m[0] if m else None, "video/mp4")
+            if parts == ["media", "clipthumb", parts[-1]] and parts[-1].split(".")[0] in app.lib.removed_by_id:   # a removed video's card
+                return self.file(media.clip_thumb(c, app.lib.removed_by_id[parts[-1].split(".")[0]]), "image/jpeg")
             if parts[0] == "media" and len(parts) >= 3:
                 kind = parts[1]; cl = app.clip(parts[2].split(".")[0]); f = folders(c, cl)
                 if kind == "video":
@@ -738,6 +762,15 @@ def make_handler(app):
 
         # ---- upload: raw file body, streamed to disk (no size held in memory)
         def upload(self, q):
+            try:
+                return self._upload(q)
+            except HttpError:
+                if not getattr(self, "_up_started", False):           # refused before reading: drop the body first
+                    self.drain()
+                raise
+
+        def _upload(self, q):
+            self._up_started = False
             VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
             fname = os.path.basename((q.get("name") or [""])[0]).strip()
             film = (q.get("film") or [""])[0].strip()
@@ -762,6 +795,7 @@ def make_handler(app):
                 dest = os.path.join(dest_dir, "%s (%d)%s" % (stem, k, ext)); k += 1
             tmp = dest + ".uploading"
             left = n
+            self._up_started = True
             try:
                 with open(tmp, "wb") as fh:
                     while left > 0:

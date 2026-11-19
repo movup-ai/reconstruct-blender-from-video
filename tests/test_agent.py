@@ -400,6 +400,8 @@ class TestApi(unittest.TestCase):
             self.assertEqual(lst["clips"], [])
             self.assertEqual(len(lst["removed"]), 1)
             self.assertTrue(os.path.exists(lst["removed"][0]["path"]), "the video file stays")
+            self.assertEqual(lst["removed"][0]["id"], self.cid)
+            self.assertEqual(self.get("/media/clipthumb/%s.jpg" % self.cid)[0], 200, "a removed video's card still has its picture")
             self.assertEqual(self.post("/api/restore", {"path": "C:\\not\\removed.mp4"})[0], 400)
         finally:
             code, d = self.post("/api/restore", {"path": lst["removed"][0]["path"]})

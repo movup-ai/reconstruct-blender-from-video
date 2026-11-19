@@ -36,6 +36,7 @@ class Library:
         self.clips = []
         self.clashes = []
         self.removed = []
+        self.removed_by_id = {}
         self.by_id = {}
         self.scanned = 0
         self.rescan()
@@ -59,7 +60,9 @@ class Library:
                 self.clashes.append({"clip": cl.name, "other": other})
                 cl.name = "%s_%s" % (cl.name, cl.id[:4])
         gone = removed_set()                                # taken off the list by the person (files stay where they are)
-        self.removed = [{"path": cl.video, "name": cl.name, "rel": cl.rel} for cl in clips if os.path.normcase(cl.video) in gone]
+        off = [cl for cl in clips if os.path.normcase(cl.video) in gone]
+        self.removed = [{"id": cl.id, "path": cl.video, "name": cl.name, "rel": cl.rel} for cl in off]
+        self.removed_by_id = {cl.id: cl for cl in off}                  # for their cards' thumbnails
         clips = [cl for cl in clips if os.path.normcase(cl.video) not in gone]
         self.clips = clips
         self.by_id = {cl.id: cl for cl in clips}

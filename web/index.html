@@ -33,7 +33,11 @@
 
   <div class="tabs" id="tabsrow"><span id="tabs" class="contents"></span><input type="text" class="search" id="search" placeholder="Search clips" aria-label="Search clips" autocomplete="off" spellcheck="false"></div>
   <div id="list"><div class="empty">Loading…</div></div>
-  <details class="removed" id="removedbox" style="display:none"><summary id="removedsum"></summary><ul id="removedlist"></ul></details>
+  <section class="removed" id="removedbox" style="display:none">
+    <h2 id="removedsum">Removed from the list</h2>
+    <p class="hint">These videos are not prepared or finished. Their files are still in SOURCE; <b>Add back</b> puts one on the list again.</p>
+    <div class="grid" id="removedlist"></div>
+  </section>
   <p class="small muted" id="csv" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a></p>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -125,14 +129,19 @@ function render() {
     list.appendChild(g);
   }
   list.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
-    const r = await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list. The file stays in SOURCE.`); load(); });
+    if (!(await ask(`Remove ${b.dataset.name} from the list? It will not be prepared or finished, and its waiting jobs are cancelled. The video file stays in SOURCE, and you can add it back at the bottom of this page.`, 'Remove'))) return;
+    await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list`); load(); });
   // ---- removed from the list: bring any back
   const rm = DATA.removed || [];
   $('removedbox').style.display = rm.length ? '' : 'none';
   $('removedsum').textContent = `Removed from the list (${rm.length})`;
-  $('removedlist').innerHTML = rm.map((r, i) => `<li><span>${esc(r.rel)}</span><button data-restore="${i}">Put back</button></li>`).join('');
+  $('removedlist').innerHTML = rm.map((r, i) => { const short = r.name.replace(/^[^_]+_/, '');
+    return `<div class="clipcard off"><div class="clip">${r.id ? `<img loading="lazy" src="/media/clipthumb/${r.id}.jpg" alt="">` : '<div class="noimg"></div>'}
+      <div class="t"><span class="n" title="${esc(r.rel)}">${esc(short)}</span><span class="chip">removed</span></div>
+      <div class="addback"><button data-restore="${i}">&#8634; Add back</button></div></div></div>`; }).join('');
   $('removedlist').querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
-    await post('/api/restore', { path: rm[+b.dataset.restore].path }); toast('Put back on the list'); load(); });
+    const r = rm[+b.dataset.restore];
+    await post('/api/restore', { path: r.path }); toast(`${r.name.replace(/^[^_]+_/, '')} is back on the list. Press Start to prepare it.`); load(); });
 }
 async function load() { try { DATA = await api('/api/clips'); render(); } catch (e) { toast('Cannot reach Blender Agent: ' + e.message, true); } }
 async function health() {
