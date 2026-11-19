@@ -153,6 +153,25 @@ class TestProgressAndFlags(unittest.TestCase):
         self.assertEqual(server.jump_frames(rep, {"9": 3}), {"3": [5, 40], "9": [5, 40]})   # joined track: old editor id too
 
 
+class TestSubmissionsPage(unittest.TestCase):
+    def test_v21_meta_and_package_name(self):
+        d = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(d, "clip_a", "meta"))
+            with open(os.path.join(d, "clip_a", "meta", "meta.json"), "w", encoding="utf-8") as fh:
+                json.dump({"duration": 4.5, "output_video": {"resolution": [1920, 1080]}}, fh)
+            with mock.patch.object(pkg, "package_names", return_value={"clip_a": "film-3"}):
+                row = server.submissions({"submit_root": d})[0]
+            self.assertEqual((row["package"], row["duration"], row["resolution"]), ("film-3", 4.5, [1920, 1080]))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_character_file_follows_style(self):
+        self.assertEqual(server.char_file({"character_style": "master"}), "human_master.json")
+        self.assertEqual(server.char_file({"character_style": "base21"}), "base_character_v21.json")
+        self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", server.char_file(config.load()))))
+
+
 class TestCheckPage(unittest.TestCase):
     def test_current_template_used(self):
         d = tempfile.mkdtemp()

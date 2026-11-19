@@ -82,7 +82,8 @@ class App:
             {"name": "Source folder", "ok": os.path.isdir(self.c["source_root"]), "detail": "%s · %d clips" % (self.c["source_root"], len(self.lib.clips))},
             {"name": "Blender", "ok": bool(be), "detail": be or "not found - install Blender 5.x or set its path in Settings"},
             {"name": "Depth model", "ok": os.path.exists(MODEL_PATH), "detail": "models\\depth_anything_v2_small.onnx" if os.path.exists(MODEL_PATH) else "missing - run Setup.bat"},
-            {"name": "Sample character", "ok": os.path.exists(os.path.join(config.ROOT, "assets", "sample_character.json")), "detail": "assets\\sample_character.json"},
+            {"name": "Character (%s)" % self.c.get("character_style", "master"), "ok": os.path.exists(os.path.join(config.ROOT, "assets", char_file(self.c))),
+             "detail": "assets\\" + char_file(self.c)},
             {"name": "Pose models", "ok": bool(glob.glob(os.path.join(os.path.expanduser("~"), ".cache", "rtmlib", "hub", "checkpoints", "*.onnx"))), "detail": "downloaded on first use if missing"},
             {"name": "AI suggestions (optional)", "ok": ai.status(self.c)["ready"], "optional": True, "detail": ai.status(self.c)["detail"]},
             {"name": "Disk space", "ok": free is None or free > 20e9, "detail": "%.0f GB free" % (free / 1e9) if free else "?"},
@@ -450,6 +451,11 @@ def save_objects(c, cl, body):
     return n
 
 
+def char_file(c):
+    """the character definition the fit and Blender use for config character_style"""
+    return {"base21": "base_character_v21.json", "sample": "sample_character.json"}.get(c.get("character_style", "master"), "human_master.json")
+
+
 def submissions(c):
     root = c["submit_root"]
     out = []
@@ -463,14 +469,17 @@ def submissions(c):
         size = 0
         for r_, _, fs in os.walk(sub):
             size += sum(os.path.getsize(os.path.join(r_, x)) for x in fs)
-        meta = read_json(os.path.join(sub, "meta", "meta.jsonl"))
-        if meta is None:
+        meta = read_json(os.path.join(sub, "meta", "meta.json"))          # v2.1
+        if meta:
+            meta = {"pattern_video_duration": meta.get("duration"),
+                    "source_video_resolution": (meta.get("output_video") or {}).get("resolution")}
+        else:                                                               # older packages: meta.jsonl, one line
             try:
                 with open(os.path.join(sub, "meta", "meta.jsonl"), encoding="utf-8") as fh:
                     meta = json.loads(fh.readline())
             except (OSError, ValueError):
                 meta = {}
-        out.append({"name": d, "folder": sub, "zip": zp if os.path.exists(zp) else None,
+        out.append({"name": d, "package": pkg.package_name(d), "folder": sub, "zip": zp if os.path.exists(zp) else None,
                     "zip_mb": round(os.path.getsize(zp) / 1e6, 1) if os.path.exists(zp) else None, "folder_mb": round(size / 1e6, 1),
                     "made": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(zp if os.path.exists(zp) else sub))),
                     "duration": meta.get("pattern_video_duration"), "resolution": meta.get("source_video_resolution")})
@@ -627,6 +636,8 @@ def make_handler(app):
             if parts == ["api", "settings"]:
                 out = {k: c.get(k) for k in config.EDITABLE if k not in config.SECRETS}
                 out["deepseek_key_set"] = bool(ai.api_key(c))
+                from common import has_nvidia
+                out["nvidia"] = has_nvidia()
                 return self.send(200, out)
             if parts[:2] == ["api", "clip"] and len(parts) == 3:
                 return self.send(200, app.clip_info(parts[2]))
