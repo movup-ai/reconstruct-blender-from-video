@@ -1,11 +1,11 @@
 # Blender Agent
 
-Local white-model (白模) production app. It turns the film clips in `D:\Shared\Source` into the client's submission
+Local white-model (白模) production app. It turns the film clips in the `SOURCE` folder into the client's submission
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
 The pose and depth models run on the NVIDIA card (CUDA, `onnxruntime-gpu`) when the PC has one. On a PC without an
 NVIDIA card, `Setup.bat` installs the CPU build (`requirements-cpu.txt`) and the models run on the processor: same
 results, slower. Keep *Clips at once* at 1 there.
-`D:\Shared\Source\3D` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
+A `3D` folder inside `SOURCE` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
 
 Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 - measures the clip's lens from the picture (MoGe-2) instead of the fixed `lens_mm`; `"lens_auto": false` switches it off,
@@ -99,7 +99,6 @@ Running `--stage fit` again replaces the set with the automatic one: run `build_
 | `data\jobs.db` | job queue (survives restarts) |
 | `logs\` | app log |
 | `tests\` | `.venv\Scripts\python -m unittest discover -s tests` |
-| `_archive\` | the earlier apps (白模 Studio, review app) and dev files, kept for reference |
 
-Outputs go to `D:\Blender-agent\Work_auto` (previews, logs) and `D:\Blender-agent\SUBMIT` (submissions). Change the
+Outputs go to `Work_auto` (previews, logs) and `SUBMIT` (submissions) inside this folder. Change the
 folders in `config.json`.

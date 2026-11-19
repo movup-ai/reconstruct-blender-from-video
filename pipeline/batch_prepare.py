@@ -6,7 +6,7 @@
 Per film: automark on the GPU (one model load for the whole film), then roles are written from the detection for clips
 that have no review yet (review.json, auto), then the fits run in parallel while the next film is being detected.
 Clips a person already reviewed keep their marks and review.  Progress: logs\\batch_prepare.log"""
-import argparse, json, os, subprocess, sys, time, glob, shutil
+import argparse, json, os, subprocess, sys, time, shutil
 from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE); sys.path.insert(0, ROOT)

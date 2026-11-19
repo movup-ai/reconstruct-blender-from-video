@@ -8,7 +8,7 @@ AGENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG_PATH = os.path.join(AGENT, "config.json")
 DEFAULT_CFG = {
     "blender_exe": "",                       # empty = search C:\\Program Files\\Blender Foundation\\*\\blender.exe
-    "source_root": r"D:\Shared\Source",
+    "source_root": os.path.join(AGENT, "SOURCE"),         # clips are read from here (film folders or loose videos)
     "source_exclude": ["3D"],                # folders under source_root that are not clips (the client's samples)
     "submit_root": os.path.join(AGENT, "SUBMIT"),
     "work_root": os.path.join(AGENT, "Work_auto"),
@@ -31,9 +31,11 @@ DEFAULT_CFG = {
 def cfg():
     c = dict(DEFAULT_CFG)
     if os.path.exists(CFG_PATH):
-        c.update(json.load(open(CFG_PATH, encoding="utf-8")))
+        with open(CFG_PATH, encoding="utf-8") as fh:
+            c.update(json.load(fh))
     else:
-        json.dump(c, open(CFG_PATH, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        with open(CFG_PATH, "w", encoding="utf-8") as fh:
+            json.dump(c, fh, ensure_ascii=False, indent=2)
     sb = os.environ.get("BA_SANDBOX")                  # test runs: everything written goes under this folder
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
@@ -129,7 +131,8 @@ def gpu_session(model, engine="tensorrt", warm=(), profile=None, exclude=None):
     return s, "cuda"
 
 def jload(p):
-    return json.load(open(p, encoding="utf-8"))
+    with open(p, encoding="utf-8") as fh:
+        return json.load(fh)
 
 def jsave(p, d):
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -176,7 +179,8 @@ def read_frames_at(path, idxs):
 def imwrite_u(path, img, q=90):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ok, buf = cv2.imencode(os.path.splitext(path)[1] or ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])
-    open(path, "wb").write(buf.tobytes())
+    with open(path, "wb") as fh:
+        fh.write(buf.tobytes())
 
 def ffmpeg_exe():
     try:

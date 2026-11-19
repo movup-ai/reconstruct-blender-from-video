@@ -15,7 +15,7 @@ Schema "ba_whitemodel_scene" 1.0 — everything needed to rebuild the shot with 
              rotations), mesh blocks with the joint they follow, eye / chest band material
   camera     camera object, lens, sensor, per-shot frame ranges
 The .blend stays the master project; this file is a faithful copy of its objects, geometry and keys."""
-import json, math, os
+import json, os
 
 SCHEMA = "ba_whitemodel_scene"
 VERSION = "1.0"

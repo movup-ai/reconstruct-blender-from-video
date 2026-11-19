@@ -231,7 +231,8 @@ class TestZip(unittest.TestCase):
             sub = os.path.join(d, name)
             for s in package.SUBDIRS:
                 os.makedirs(os.path.join(sub, s))
-            open(os.path.join(sub, "meta", "meta.jsonl"), "w").write("{}\n")
+            with open(os.path.join(sub, "meta", "meta.jsonl"), "w") as fh:
+                fh.write("{}\n")
             zp = sub + ".zip"
             package.zip_gbk(sub, name, zp)
             with zipfile.ZipFile(zp) as z:
@@ -401,7 +402,8 @@ class TestApi(unittest.TestCase):
     def test_upload(self):
         p = os.path.join(self.d, "up.mp4")
         make_video(p, n=12)
-        data = open(p, "rb").read()
+        with open(p, "rb") as fh:
+            data = fh.read()
         code, d = self.upload("新片Test", "clip A.mp4", data)
         self.assertEqual(code, 200, d)
         self.assertTrue(os.path.exists(os.path.join(self.d, "src", "新片Test", "clip A.mp4")))

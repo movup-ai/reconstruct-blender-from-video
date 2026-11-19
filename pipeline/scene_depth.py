@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """grey set from a depth model: clean background plate (people removed) -> Depth Anything V2 -> metric depth
 (scaled with the ground under the people) -> 2.5D relief mesh seen from the camera."""
-import os, re, json, math, numpy as np, cv2
+import os, json, math, numpy as np, cv2
 from scipy.optimize import least_squares
 from common import *
 

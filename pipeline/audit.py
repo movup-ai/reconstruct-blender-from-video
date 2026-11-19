@@ -9,7 +9,7 @@ Prints the worst frames per person, which joints are off, and the average per jo
 import argparse, os, sys
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-from common import cfg, jload, AGENT
+from common import cfg, jload
 from build_env import Cam
 from compare import rig_uv
 

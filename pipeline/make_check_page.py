@@ -5,7 +5,7 @@ Frames already confirmed in checked.json are shown with the confirmed dots.
 
   python pipeline\\make_check_page.py <package|clip> [--step 1] [--quality 80]"""
 import argparse, base64, json, os, sys
-import numpy as np, cv2
+import cv2
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE); sys.path.insert(0, ROOT)
 from common import read_frames

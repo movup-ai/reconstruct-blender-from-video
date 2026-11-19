@@ -3,7 +3,7 @@
 hints.before_v21fix.json).  Angles: XYZ euler deg on the rig (forward bend = spine/chest x < 0; hip / shoulder x > 0 =
 thigh / arm forward; knee x < 0 = bent; elbow x > 0 = bent; shoulder y: + moves the hand toward -x (L outward, R inward);
 hip y: + = toward -x (L abduct, R adduct))."""
-import json, os, shutil, sys
+import json, os, shutil
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ARMS_DOWN = {"shoulder_L": [8, 0, None], "shoulder_R": [8, 0, None], "elbow_L": [15], "elbow_R": [15]}

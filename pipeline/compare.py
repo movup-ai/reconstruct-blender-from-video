@@ -9,7 +9,7 @@ Uses Work_auto\\<clip>\\render\\wm_NNNN.jpg (made by --stage render)."""
 import argparse, os, sys
 import numpy as np, cv2
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-from common import cfg, jload, imwrite_u, read_frames, AGENT
+from common import cfg, jload, imwrite_u, read_frames
 from build_env import Cam
 from rig import Rig, JOINTS
 

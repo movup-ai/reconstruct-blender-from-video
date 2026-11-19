@@ -72,7 +72,8 @@ def _worker(src, dst):
             o = m.infer(x, use_fp16=(dev == "cuda"))
         K = o["intrinsics"].float().cpu().numpy()                 # normalised: fx in picture widths
         out.append(float(2 * math.degrees(math.atan(0.5 / K[0, 0]))))
-    json.dump(out, open(dst, "w"))
+    with open(dst, "w") as fh:
+        json.dump(out, fh)
 
 
 def measure(pictures):
@@ -90,7 +91,8 @@ def measure(pictures):
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0 or not os.path.exists(dst):
             raise RuntimeError("lens worker failed: " + (r.stderr or r.stdout).strip()[-400:])
-        return json.load(open(dst))
+        with open(dst) as fh:
+            return json.load(fh)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -104,7 +106,8 @@ def clip_lens(frames, y0, Hp, shots, work=None, c=None):
     cp = os.path.join(work, "lens_auto.json") if work else None
     if cp and os.path.exists(cp):
         try:
-            old = json.load(open(cp, encoding="utf-8"))
+            with open(cp, encoding="utf-8") as fh:
+                old = json.load(fh)
             if old.get("key") == key:
                 return old["lens_mm"], dict(old["info"], cached=True)
         except (OSError, ValueError, KeyError):
@@ -115,7 +118,8 @@ def clip_lens(frames, y0, Hp, shots, work=None, c=None):
     lens, info = summarise([[lens_from_fov(next(it)) for _ in v] for v in idx])
     if lens is not None and cp:
         os.makedirs(os.path.dirname(cp), exist_ok=True)
-        json.dump({"key": key, "lens_mm": lens, "info": info}, open(cp, "w", encoding="utf-8"))
+        with open(cp, "w", encoding="utf-8") as fh:
+            json.dump({"key": key, "lens_mm": lens, "info": info}, fh)
     return lens, info
 
 

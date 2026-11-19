@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""One-time (run inside Blender): dump the official human_master.blend (rig + its 10 skinned pieces) for
+r"""One-time (run inside Blender): dump the official human_master.blend (rig + its 10 skinned pieces) for
 extract_human_master.py: each piece's rest geometry (armature space), material index per face, the deform bone it
 follows, and the rest matrices / heads of the bones used.
 

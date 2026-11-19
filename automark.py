@@ -708,7 +708,9 @@ def main():
     if args.no_overlap_split:
         KEEP_OVERLAPPING = SPLIT_WIDE = False
     if not args.inputs:
-        args.inputs = [r"D:\Shared\Source"]
+        sys.path.insert(0, os.path.join(HERE, "pipeline"))
+        from common import cfg as _cfg
+        args.inputs = [_cfg()["source_root"]]                # no input given: the Source folder of config.json
     vids = []
     for p in args.inputs:
         if os.path.isdir(p):

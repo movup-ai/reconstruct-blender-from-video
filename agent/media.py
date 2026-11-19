@@ -7,7 +7,7 @@ import tempfile
 import threading
 
 import cv2
-import numpy as np
+
 
 from .clips import folders, read_json
 

@@ -18,7 +18,7 @@ World: z up, floor z = 0, camera above the origin looking along +y at frame 0; y
 import argparse, json, math, os, sys
 import numpy as np, cv2
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-from common import cfg, jload, jsave, imwrite_u, read_frames_at, AGENT, output_dir
+from common import cfg, jload, jsave, imwrite_u, read_frames_at, output_dir
 import props
 
 SHADE = {"main": "set", "dark": "dark", "light": "light"}

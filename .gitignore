@@ -65,6 +65,7 @@ Work_auto/
 SUBMIT/
 output/
 DELIVERY/
+ISSUES/
 _sandbox/
 
 # ---------------------------------------------------------------
@@ -83,9 +84,3 @@ Desktop.ini
 .idea/
 .claude/settings.local.json
 .claude/worktrees/
-
-# source files
-SOURCE/
-ISSUES/
-DELIVERY/
-Work_auto/

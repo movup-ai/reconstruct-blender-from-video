@@ -109,7 +109,8 @@ def puff(cx, cy, cz, rx, ry, rz, rng=None, seg=11, ring=7):
     V = V * (1 + rng.uniform(-0.015, 0.015, (len(V), 1)))
     a = rng.uniform(0, 2 * math.pi); ca, sa = math.cos(a), math.sin(a)
     x, y, z = V[:, 0] * rx, V[:, 1] * ry, V[:, 2] * rz
-    return ([(round(cx + p * ca - q * sa, 4), round(cy + p * sa + q * ca, 4), round(cz + s, 4)) for p, q, s in zip(x, y, z)], F)
+    # never below the floor (z = 0): the size jitter pushed a clump resting on it a few mm under
+    return ([(round(cx + p * ca - q * sa, 4), round(cy + p * sa + q * ca, 4), round(max(cz + s, 0.0), 4)) for p, q, s in zip(x, y, z)], F)
 
 
 _ICO = {}
