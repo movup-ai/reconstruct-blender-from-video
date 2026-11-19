@@ -671,7 +671,9 @@ def main():
     ap.add_argument("--out", default=os.path.join(HERE, "output"))
     ap.add_argument("--base", default=None, help="input root, used to mirror the folder layout under --out")
     ap.add_argument("--step", type=int, default=8, help="review every Nth frame")
-    ap.add_argument("--mode", default="performance", choices=["lightweight", "balanced", "performance"])
+    ap.add_argument("--mode", default=None, choices=["lightweight", "balanced", "performance"],
+                    help="pose models: performance (largest, most exact), balanced (several times faster on a processor, "
+                         "less exact joints), lightweight. default: config.json pose_mode")
     ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--no-tiles", action="store_true", help="faster, but may miss small far-away people")
     ap.add_argument("--min-track", type=int, default=8, help="ignore people seen in fewer frames than this")
@@ -687,7 +689,7 @@ def main():
     ap.add_argument("--engine", default=None, choices=["tensorrt", "cuda"],
                     help="GPU engine (tensorrt falls back to cuda). default: config.json pose_engine")
     args = ap.parse_args()
-    if args.detect_stride is None or args.engine is None:
+    if args.detect_stride is None or args.engine is None or args.mode is None:
         try:
             sys.path.insert(0, os.path.join(HERE, "pipeline"))
             from common import cfg
@@ -696,6 +698,7 @@ def main():
             c = {}
         args.detect_stride = args.detect_stride or str(c.get("detect_stride", "auto"))
         args.engine = args.engine or str(c.get("pose_engine", "tensorrt"))
+        args.mode = args.mode or str(c.get("pose_mode", "performance"))
     try:                                                 # "cpu" on a PC without an NVIDIA card
         sys.path.insert(0, os.path.join(HERE, "pipeline"))
         from common import pick_device, cfg

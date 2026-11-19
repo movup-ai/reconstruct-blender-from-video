@@ -24,6 +24,8 @@ DEFAULT_CFG = {
     "pose3d": True,                          # 3D pose lifter (MotionBERT, pose3d.py) as a prior in the fit; false = 2D marks only
     "pose3d_weight": 1.0,                    # strength of that prior (bone directions, sigma pose3d_sigma)
     "pose3d_sigma": 0.2,
+    "pose_mode": "performance",              # automark models: "performance" (YOLOX-x + RTMPose-x) or "balanced" (-m models:
+                                             # several times faster on a processor, joints less exact)
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
     "detect_stride": "auto"                  # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
 }
