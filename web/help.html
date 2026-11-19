@@ -14,9 +14,9 @@
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Choose a source folder</b>: step 1 on the Clips page, <i>Choose folder…</i>. Any folder on this PC; the videos stay there. Type an English title once: videos without a v2.1 package name get <code>title-1</code>, <code>title-2</code>… in file-name order. Choosing a folder does not start anything.</li>
-      <li><b>Start</b>: step 2. Nothing runs until you press <i>Start</i>, also after restarting the app. The local models then find people, joints, lens, camera, cuts, ground and set; the Clips page shows each video's step and progress. About 3–5 minutes per video on this PC. <i>Pause</i> lets the running video finish and starts nothing new.</li>
-      <li><b>Review</b> each clip marked <span class="chip g-ready">ready for review</span> (step 3, <i>Review next clip</i>):
+      <li><b>Copy the videos into the SOURCE folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays in SOURCE, and <i>Removed from the list</i> below the cards puts it back). Give the videos their v2.1 package names once with <i>Name them…</i>: type an English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
+      <li><b>Start</b>: step 1 on the Clips page. Nothing runs until you press <i>Start</i>, also after restarting the app. The local models then find people, joints, lens, camera, cuts, ground and set; the Clips page shows each video's step and progress. About 3–5 minutes per video on this PC. <i>Pause</i> lets the running video finish and starts nothing new.</li>
+      <li><b>Review</b> each clip marked <span class="chip g-ready">ready for review</span> (step 2, <i>Review next clip</i>):
         <ul>
           <li><b>1 Who is who</b>: give each person a role. A card saying <i>Not a person?</i> looks like a statue, a picture or a false detection: one click, then <i>Re-check</i>.</li>
           <li><b>2 Joints</b>: the editor opens on the frames where the 3D person moved suddenly. Drag wrong dots into place.</li>
@@ -59,17 +59,17 @@
   <section class="step">
     <h2>Questions</h2>
     <h3>A clip says "no package name"</h3>
-    <p>It cannot be finished without a v2.1 package name. On the Clips page, press <i>Choose folder…</i>, choose the same folder again and type its English title: only videos without a name get one, existing names never change.</p>
+    <p>It cannot be finished without a v2.1 package name. On the Clips page, press <i>Name them…</i> and type an English title: only videos without a name get one, existing names never change.</p>
     <h3>A clip says "changed since Finish"</h3>
     <p>Its roles, joints, objects or description changed after its last Finish, so its package is out of date. <i>Finish all reviewed</i> makes it again.</p>
     <h3>When can I add videos?</h3>
-    <p>Any time, even while others are being prepared. Copy them into the source folder, click <i>look for new videos</i> in step 1 on the Clips page, then press <i>Start</i>.</p>
+    <p>Any time, even while others are being prepared. Copy them into the SOURCE folder: within a few seconds they appear on the Clips page. Then press <i>Start</i>.</p>
     <h3>Where are the results?</h3>
     <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Preparation results, previews and logs are in the Work folder (Settings).</p>
     <h3>What do the colours mean?</h3>
     <p>People: 主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow, other people purple. The set is light grey like the client samples; <i>More → Set</i> can switch it to the video's own colours. The colours in <i>More → Held objects</i> (touched or held orange, far interactive pink, special purple, foreground brown, light source white) are for objects people hold or touch, not for the objects of step 3.</p>
     <h3>A clip shows "failed"</h3>
-    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> in step 2 on the Clips page tries all failed clips again.</p>
+    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> in step 1 on the Clips page tries all failed clips again.</p>
     <h3>How do I get recognisable objects (doors, shelves, cars…)?</h3>
     <p>On a clip page, step <b>3 Objects</b>: drag a box around an object on the background picture, pick its type (door, cabinet, shelf, counter, table, chair, car, tree, lamp post…), whether it stands on the floor or hangs on a wall, and which way it faces. <i>Save</i> keeps your boxes; <i>Re-check</i> builds them into the set, each as a simple model of its type at the right size. With a DeepSeek key saved, the list is filled in for you and you only correct it.</p>
     <h3>The set looks wrong</h3>

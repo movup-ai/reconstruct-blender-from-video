@@ -202,7 +202,7 @@ class App:
         if not st["fit"]:
             raise HttpError(409, "prepare the clip first")
         if not pkg.package_name(cl.name):
-            raise HttpError(409, "%s has no v2.1 package name yet: choose its folder again on the Clips page and type a title" % cl.name)
+            raise HttpError(409, "%s has no v2.1 package name yet: press Name them… on the Clips page and type a title" % cl.name)
         if not st["confirmed"]:
             raise HttpError(409, "mark the clip reviewed first")
         if st["done"] and not force:
@@ -657,11 +657,14 @@ def make_handler(app):
             if parts == ["api", "health"]:
                 return self.send(200, app.health())
             if parts == ["api", "clips"]:
+                if time.time() - app.lib.scanned > 10:                  # new videos in SOURCE appear by themselves
+                    app.lib.rescan()
                 names = pkg.package_names()
                 return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name)) for cl, st in app.status_all()],
                                        "queue": app.queue_summary(), "ai_ready": app.ai_ready(),
                                        "source": {"path": c["source_root"], "exists": os.path.isdir(c["source_root"]),
-                                                  "clashes": app.lib.clashes}})
+                                                  "clashes": app.lib.clashes},
+                                       "removed": app.lib.removed})
             if parts == ["api", "folder"]:                              # what picking a folder would do
                 return self.send(200, folder_scan(c, (q.get("path") or [""])[0], (q.get("title") or [""])[0]))
             if parts == ["api", "settings"]:
@@ -809,6 +812,12 @@ def make_handler(app):
                 return self.send(200, ai.test_key(app.c))
             if parts in (["api", "start"], ["api", "prepare_all"]):
                 return self.send(200, app.start())
+            if parts == ["api", "restore"]:                              # put a removed video back on the list
+                path = str(self.body_json().get("path", ""))
+                if not any(os.path.normcase(r["path"]) == os.path.normcase(path) for r in app.lib.removed):
+                    raise HttpError(400, "that video is not on the removed list")
+                app.lib.restore(path)
+                return self.send(200, {"ok": True, "clips": len(app.lib.clips)})
             if parts == ["api", "pause"]:
                 app.runner.pause()
                 return self.send(200, {"ok": True})
@@ -898,6 +907,13 @@ def make_handler(app):
                     if r == "queued":
                         app.runner.resume()
                     return self.send(200, {"ok": True, "result": r})
+                if action == "remove":                                   # off the list; the file stays in SOURCE
+                    job = app.store.latest_for(cl.id)
+                    if job and job["state"] == "running":
+                        raise HttpError(409, "%s is being processed right now: remove it when that job is done" % cl.name)
+                    app.store.cancel_queued(cl.id)
+                    app.lib.remove(cl)
+                    return self.send(200, {"ok": True, "removed": cl.name})
                 if action == "cancel":
                     return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})
             raise HttpError(404, "not found")

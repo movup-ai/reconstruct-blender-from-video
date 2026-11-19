@@ -49,10 +49,10 @@ button:disabled, button:disabled:hover { background:var(--sunk); color:var(--fai
 button:focus-visible, .btn:focus-visible { box-shadow:0 0 0 3px var(--accent-ring); }
 
 /* ---------------------------------------------------------------- fields */
-select, input[type=text], input[type=number], input[type=password], textarea { background:var(--paper); color:var(--ink);
+select, input[type=text], input[type=search], input[type=number], input[type=password], input:not([type]), textarea { background:var(--paper); color:var(--ink);
   border:1px solid var(--seam-strong); border-radius:var(--r-sm); padding:6px 9px; font:inherit; font-size:14px; min-height:34px; }
 select:hover, input:hover, textarea:hover { border-color:#b5bdc4; }
-select:focus, input:focus, textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-ring); }
+select:focus, input:focus, textarea:focus, select:focus-visible, input:focus-visible, textarea:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(15,110,116,.14); }
 textarea { width:100%; min-height:84px; line-height:1.5; } input[type=number] { width:80px; }
 input[type=checkbox] { accent-color:var(--accent); width:16px; height:16px; }
 .seg { display:inline-flex; border:1px solid var(--seam-strong); border-radius:var(--r); overflow:hidden; background:var(--sunk); padding:2px; gap:2px; }
@@ -143,7 +143,7 @@ kbd { background:var(--paper); border:1px solid var(--seam-strong); border-botto
 .tabs { display:flex; gap:6px; flex-wrap:wrap; margin:22px 0 8px; align-items:center; }
 .tabs button { min-height:30px; padding:0 12px; border-radius:99px; font-size:13px; box-shadow:none; color:var(--slate); }
 .tabs button.on { background:var(--ink); border-color:var(--ink); color:#fff; font-weight:600; }
-.search { border-radius:99px !important; padding:5px 14px !important; font-size:13px !important; margin-left:auto; min-width:200px; min-height:32px !important; }
+.search { margin-left:auto; width:220px; min-height:32px; padding:5px 10px; font-size:13.5px; }   /* a plain field, like the others */
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:14px; }
 a.clip { display:block; background:var(--paper); border:1px solid var(--seam); border-radius:10px; overflow:hidden; color:var(--ink);
          box-shadow:var(--shadow-1); transition:border-color .12s, box-shadow .12s; }
@@ -245,3 +245,19 @@ table.list tr:hover td { background:#f8fafa; }
 details.step summary span.num { color:#fff; font-size:12.5px; font-weight:600; margin:0 9px 0 0; }   /* the step number keeps its own look inside a summary */
 table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px; }   /* row actions side by side */
 .faq code, .checks code { white-space:nowrap; }
+
+/* clip card: remove from the list (the x in the top right corner of the picture) */
+.clipcard { position:relative; }
+.clipcard .rm { position:absolute; top:8px; right:8px; min-height:0; width:28px; height:28px; padding:0; border-radius:50%;
+                background:rgba(255,255,255,.92); border:1px solid rgba(30,37,43,.12); color:var(--ink); font-size:12px; line-height:1;
+                box-shadow:0 1px 3px rgba(30,37,43,.2); opacity:.85; }
+.clipcard:hover .rm, .clipcard .rm:focus-visible { opacity:1; }
+.clipcard .rm:hover { background:var(--bad); border-color:var(--bad); color:#fff; }
+.clipcard .rm:disabled { opacity:.45; background:rgba(255,255,255,.92); color:var(--faint); }
+.removed { margin-top:18px; font-size:13.5px; color:var(--slate); }
+.removed summary { cursor:pointer; }
+.removed ul { list-style:none; padding:0; margin:8px 0 0; }
+.removed li { display:flex; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--seam); }
+.removed li span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); }
+.removed li button { min-height:28px; padding:0 10px; font-size:12.5px; }
+.sub code { background:var(--sunk); padding:1px 6px; border-radius:4px; }

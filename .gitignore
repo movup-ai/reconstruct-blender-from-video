@@ -84,3 +84,4 @@ Desktop.ini
 .idea/
 .claude/settings.local.json
 .claude/worktrees/
+data/removed.json

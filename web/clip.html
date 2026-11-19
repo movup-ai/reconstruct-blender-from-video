@@ -308,7 +308,7 @@ function banner() {
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
-  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name, so it cannot be finished. On the Clips page, choose its folder again and type an English title.'; }
+  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name, so it cannot be finished. On the Clips page, press <i>Name them…</i> and type an English title.'; }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
   else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
   else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
@@ -343,7 +343,7 @@ async function load(first) {
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit || !INFO.package;
-  $('finish').title = !INFO.package ? 'No v2.1 package name: choose the folder again on the Clips page and type a title' :
+  $('finish').title = !INFO.package ? 'No v2.1 package name: press Name them… on the Clips page and type a title' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
   $('pkgname').innerHTML = INFO.package ? 'v2.1 package · <b>' + esc(INFO.package) + '</b>' : '<span class="warn">no v2.1 package name</span>';
   if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;

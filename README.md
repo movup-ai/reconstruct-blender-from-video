@@ -25,10 +25,10 @@ Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.
 
 ## Work
 
-1. **Choose source folder** on the Clips page (any folder; the videos stay there). Type an English title once: videos
-   without a v2.1 package name get `title-1`, `title-2`… in file-name order (saved in `data\package_names.json`).
-   Joints, work files and packages still go to `output\`, `Work_auto\` and `SUBMIT\`; joints of a folder other than
-   `SOURCE\` go to `output\_sources\<folder>_<id>\`, so two folders with the same file names never share them.
+1. **Copy the videos into `SOURCE\`.** Each one appears on the Clips page as a card by itself; the ✕ on a card takes it
+   off the list (the file stays; `data\removed.json` remembers it, and *Removed from the list* puts it back).
+   *Name them…* gives videos without a v2.1 package name `title-1`, `title-2`… in file-name order from one English
+   title (saved in `data\package_names.json`). Joints, work files and packages go to `output\`, `Work_auto\` and `SUBMIT\`.
 2. **Start.** Nothing runs until you press **Start** on the Clips page, also after restarting the app (jobs left from
    last time wait in the queue). Start prepares every video not prepared yet; **Pause** lets the running job finish
    and starts nothing new. The Clips page shows each video's step and progress.

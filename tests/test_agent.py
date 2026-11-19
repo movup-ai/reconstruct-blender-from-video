@@ -392,6 +392,20 @@ class TestApi(unittest.TestCase):
             self.app.runner.pause()
             self.post("/api/cancel_queued")
 
+    def test_remove_from_list_and_put_back(self):
+        code, d = self.post("/api/clip/%s/remove" % self.cid)
+        self.assertEqual(code, 200)
+        try:
+            lst = json.loads(self.get("/api/clips")[1])
+            self.assertEqual(lst["clips"], [])
+            self.assertEqual(len(lst["removed"]), 1)
+            self.assertTrue(os.path.exists(lst["removed"][0]["path"]), "the video file stays")
+            self.assertEqual(self.post("/api/restore", {"path": "C:\\not\\removed.mp4"})[0], 400)
+        finally:
+            code, d = self.post("/api/restore", {"path": lst["removed"][0]["path"]})
+        self.assertEqual((code, d["clips"]), (200, 1))
+        self.assertEqual(json.loads(self.get("/api/clips")[1])["clips"][0]["id"], self.cid)
+
     def test_zip_downloads_under_its_package_name(self):
         import package as pkg
         os.makedirs(self.app.c["submit_root"], exist_ok=True)

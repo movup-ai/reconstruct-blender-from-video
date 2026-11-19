@@ -76,6 +76,29 @@ class TestClipIds(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class TestRemoveFromList(unittest.TestCase):
+    def test_remove_and_put_back_keeps_the_file_and_the_names(self):
+        d = tempfile.mkdtemp(); data = config.DATA
+        try:
+            config.DATA = os.path.join(d, "data")
+            src = os.path.join(d, "src", "FilmA"); os.makedirs(src)
+            for n in ("a.mp4", "b.mp4"):
+                make_video(os.path.join(src, n), n=5)
+            lib = clipsmod.Library(dict(config.load(), source_root=os.path.join(d, "src"), work_root=os.path.join(d, "w")))
+            names = sorted(cl.name for cl in lib.clips)
+            a = next(cl for cl in lib.clips if cl.video.endswith("a.mp4"))
+            lib.remove(a)
+            self.assertEqual([cl.video for cl in lib.clips], [os.path.join(src, "b.mp4")])
+            self.assertTrue(os.path.exists(a.video), "the file stays where it is")
+            self.assertEqual([r["path"] for r in lib.removed], [a.video])
+            lib.restore(a.video)
+            self.assertEqual(sorted(cl.name for cl in lib.clips), names)
+            self.assertEqual(lib.removed, [])
+        finally:
+            config.DATA = data
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class TestFinishFingerprint(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()

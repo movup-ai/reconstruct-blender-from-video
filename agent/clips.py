@@ -35,6 +35,7 @@ class Library:
         self.c = c
         self.clips = []
         self.clashes = []
+        self.removed = []
         self.by_id = {}
         self.scanned = 0
         self.rescan()
@@ -57,10 +58,22 @@ class Library:
             if other and os.path.normcase(os.path.realpath(other)) != os.path.normcase(os.path.realpath(cl.video)) and os.path.exists(other):
                 self.clashes.append({"clip": cl.name, "other": other})
                 cl.name = "%s_%s" % (cl.name, cl.id[:4])
+        gone = removed_set()                                # taken off the list by the person (files stay where they are)
+        self.removed = [{"path": cl.video, "name": cl.name, "rel": cl.rel} for cl in clips if os.path.normcase(cl.video) in gone]
+        clips = [cl for cl in clips if os.path.normcase(cl.video) not in gone]
         self.clips = clips
         self.by_id = {cl.id: cl for cl in clips}
         self.scanned = time.time()
         return len(clips)
+
+    def remove(self, cl):
+        """take a video off the list: it is not prepared or finished; the file is not touched"""
+        gone = removed_set(); gone.add(os.path.normcase(cl.video)); save_removed(gone)
+        self.rescan()
+
+    def restore(self, path):
+        gone = removed_set(); gone.discard(os.path.normcase(os.path.abspath(path))); save_removed(gone)
+        self.rescan()
 
     def get(self, cid):
         cl = self.by_id.get(cid)
@@ -73,6 +86,21 @@ class Library:
             if cl.id == cid:
                 return i
         return -1
+
+
+def _removed_p():
+    return os.path.join(config.DATA, "removed.json")
+
+
+def removed_set():
+    """videos taken off the list in the app (normcased full paths)"""
+    return set(read_json(_removed_p(), []) or [])
+
+
+def save_removed(gone):
+    os.makedirs(os.path.dirname(_removed_p()), exist_ok=True)
+    with open(_removed_p(), "w", encoding="utf-8") as fh:
+        json.dump(sorted(gone), fh, ensure_ascii=False, indent=1)
 
 
 _FP_CACHE = {}
