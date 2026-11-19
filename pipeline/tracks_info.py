@@ -19,10 +19,14 @@ for arg in sys.argv[1:]:
     f = folders(c, cl)
     with open(f["pose"], encoding="utf-8") as fh:
         pose = json.load(fh)
-    with open(f["review"], encoding="utf-8") as fh:
-        rv = json.load(fh)
-    with open(f["scene"], encoding="utf-8") as fh:
-        sd = json.load(fh)
+    rv = {"people": {}}                                    # not reviewed yet: no roles to show
+    if os.path.exists(f["review"]):
+        with open(f["review"], encoding="utf-8") as fh:
+            rv = json.load(fh)
+    sd = {"frames": "?", "chars": {}}                      # not fitted yet: no characters to show
+    if os.path.exists(f["scene"]):
+        with open(f["scene"], encoding="utf-8") as fh:
+            sd = json.load(fh)
     print("=== %s  %s  frames %s  shots %s" % (arg, clip, sd["frames"], [s["frames"] for s in sd.get("shots", [])]))
     fit = {str(ch["track_id"]): k for k, ch in sd["chars"].items()}
     people = pose.get("people") or pose.get("tracks") or {}
