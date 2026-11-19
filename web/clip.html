@@ -211,7 +211,7 @@ $('askai').onclick = async () => { const r = await post(`/api/clip/${CID}/run?st
 $('confirm').onclick = async () => {
   const roles = Object.values(collect(true).people).map(p => p.role).filter(r => !['ignore', 'extra'].includes(r));
   const dup = roles.find((r, i) => roles.indexOf(r) !== i);
-  if (dup && !(await ask(`Two people have the same role (${ROLES.find(x => x[0] === dup)[1]}). That's right if they are the same character, for example before and after a cut. Continue?`))) return;
+  if (dup && !(await ask(`Two people are both ${ROLES.find(x => x[0] === dup)[1]}. That’s right only if they are the same character, for example before and after a cut.`, 'Continue', { title: 'Same role twice?' }))) return;
   const r = await saveAll(true);
   if ($('gonext').checked && r.next_review) { location.href = '/clip/' + r.next_review; return; }
   const h = r.handoff;
@@ -219,7 +219,7 @@ $('confirm').onclick = async () => {
 async function finish(force) {
   const r = await post(`/api/clip/${CID}/finish${force ? '?force=1' : ''}`);
   if (r.result === 'unchanged') {
-    if (await ask('Nothing changed since the last Finish, so the package in SUBMIT is up to date. Make it again anyway?', 'Make it again')) return finish(true);
+    if (await ask('Nothing changed since the last Finish, so the package in SUBMIT is up to date.', 'Make it again', { title: 'Make the package again?' })) return finish(true);
     return; }
   toast(r.result === 'queued' ? 'Finishing: fit, set, Blender, videos and the v2.1 zip. You can review other clips meanwhile.' : 'This clip is already working'); refresh();
 }

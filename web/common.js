@@ -42,7 +42,7 @@ function nav(active) {
     `<span class="qind" id="qind" title="Jobs"></span>` +
     `<button class="quitbtn" id="quit" title="Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.">Quit</button></div>`;
   document.body.prepend(bar);
-  $('quit').onclick = async () => { if (!(await ask('Stop Blender Agent? Unfinished jobs wait in the queue for the next Start.', 'Quit'))) return;
+  $('quit').onclick = async () => { if (!(await ask('Unfinished jobs wait in the queue for the next Start.', 'Quit', { title: 'Quit Blender Agent?' }))) return;
     await post('/api/quit');
     document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };
   const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
@@ -58,12 +58,17 @@ function progressBar(pct, step) {
 }
 async function openFolder(path) { try { await post('/api/open', { path }); } catch (e) {} }
 
-// ---- app-styled confirmation dialog: await ask('Question?', 'Do it')  -> true / false
-function ask(msg, okLabel) {
+// ---- app-styled confirmation dialog: await ask('Short explanation.', 'Do it', { title, name, points, danger })  -> true / false
+//      title: the question as a heading · name: the file or item it acts on · points: short facts as a list · danger: red button
+function ask(msg, okLabel, o = {}) {
   return new Promise(resolve => {
-    const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true' });
-    bg.innerHTML = `<div class="modal"><p>${esc(msg)}</p><div class="actions" style="justify-content:flex-end">
-      <button class="m-no">Cancel</button><button class="primary m-yes">${esc(okLabel || 'Continue')}</button></div></div>`;
+    const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'asktitle' });
+    bg.innerHTML = `<div class="modal">${o.title ? `<h3 class="m-title" id="asktitle">${esc(o.title)}</h3>` : ''}` +
+      (o.name ? `<div class="m-name" title="${esc(o.name)}">${esc(o.name)}</div>` : '') +
+      (msg ? `<p${o.title ? '' : ' id="asktitle"'}>${esc(msg)}</p>` : '') +
+      (o.points ? `<ul class="m-points">${o.points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '') +
+      `<div class="actions" style="justify-content:flex-end">
+      <button class="m-no">Cancel</button><button class="${o.danger ? 'danger' : 'primary'} m-yes">${esc(okLabel || 'Continue')}</button></div></div>`;
     const done = v => { bg.remove(); document.removeEventListener('keydown', key); resolve(v); };
     const key = e => { if (e.key === 'Escape') done(false); if (e.key === 'Enter') done(true); };
     bg.querySelector('.m-no').onclick = () => done(false); bg.querySelector('.m-yes').onclick = () => done(true);

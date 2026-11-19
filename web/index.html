@@ -85,7 +85,7 @@ function render() {
   if (q.queued) minor.push(`<a href="#" id="cancel">Remove ${q.queued} waiting job(s)</a>`);
   $('minor2').innerHTML = minor.join(' · ');
   if ($('retry')) $('retry').onclick = async e => { e.preventDefault(); const r = await post('/api/retry_failed'); toast(`${r.queued} failed clip(s) queued again`); load(); };
-  if ($('cancel')) $('cancel').onclick = async e => { e.preventDefault(); if (!(await ask('Remove all waiting jobs from the queue? A running job finishes.', 'Remove'))) return;
+  if ($('cancel')) $('cancel').onclick = async e => { e.preventDefault(); if (!(await ask('A job that is already running still finishes.', 'Clear the queue', { title: 'Clear all waiting jobs?' }))) return;
     const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); load(); };
 
   // ---- step 3: review and finish
@@ -129,7 +129,7 @@ function render() {
     list.appendChild(g);
   }
   list.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
-    if (!(await ask(`Remove ${b.dataset.name} from the list? It will not be prepared or finished, and its waiting jobs are cancelled. The video file stays in SOURCE, and you can add it back at the bottom of this page.`, 'Remove'))) return;
+    if (!(await ask('', 'Remove', { title: 'Remove this video?', name: b.dataset.name, danger: true, points: ['It won’t be prepared or finished. Its waiting jobs are cancelled.', 'The file stays in SOURCE. Nothing is deleted.', 'You can add it back at the bottom of this page.'] }))) return;
     await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list`); load(); });
   // ---- removed from the list: bring any back
   const rm = DATA.removed || [];

@@ -95,10 +95,10 @@ async function load() {
   document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(S[b.dataset.open]));
   $('ai_enabled').checked = !!S.ai_enabled; $('ai_send_images').checked = S.ai_send_images !== false; $('deepseek_model').value = S.deepseek_model || '';
   $('ds_state').innerHTML = S.deepseek_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="ds_del">remove</a>' : '<span class="muted">○ no key yet: AI suggestions are off, everything else works</span>';
-  const del = $('ds_del'); if (del) del.onclick = async e => { e.preventDefault(); if (!(await ask('Remove the saved DeepSeek key?'))) return; await post('/api/settings', { deepseek_key: '' }); toast('Key removed'); load(); };
+  const del = $('ds_del'); if (del) del.onclick = async e => { e.preventDefault(); if (!(await ask('Ask DeepSeek stays hidden until you add a key again.', 'Remove the key', { title: 'Remove the DeepSeek key?', danger: true }))) return; await post('/api/settings', { deepseek_key: '' }); toast('Key removed'); load(); };
 }
 async function set(obj, msg) { try { await post('/api/settings', obj); toast(msg || 'Saved'); load(); } catch (e) { load(); } }
-segInit($('autopilot'), async v => { if (v === 'full' && !(await ask('Full auto marks every clip reviewed and finishes it after Start, without waiting for your review of people, joints and objects. Turn it on?', 'Turn on Full auto'))) { load(); return; } set({ autopilot: v }, 'Autopilot: ' + v); });
+segInit($('autopilot'), async v => { if (v === 'full' && !(await ask('After Start, every clip is marked reviewed and finished without waiting for you to check people, joints and objects.', 'Turn on Full auto', { title: 'Turn on Full auto?' }))) { load(); return; } set({ autopilot: v }, 'Autopilot: ' + v); });
 segInit($('set_detail'), v => set({ set_detail: v }, 'Set style: ' + v + ' (used for the next builds)'));
 $('parallel').onchange = e => set({ parallel: +e.target.value }, 'Clips at once: ' + e.target.value);
 $('max_attempts').onchange = e => set({ max_attempts: +e.target.value });
