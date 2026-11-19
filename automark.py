@@ -212,9 +212,14 @@ class Marker:
             self.det = getattr(self.body, "det_model", None)
             self.pose = getattr(self.body, "pose_model", None)
         log("pose backend: %s (%s, %s; %s)" % (backend, device, mode, self.engine))
-        self.tiles = tiles and self.det is not None and self.pose is not None
+        split = self.det is not None and self.pose is not None
+        self.tiles = tiles and split
         if tiles and not self.tiles:
             log("note: this rtmlib version does not expose det/pose models separately - tiles switched off")
+        # processor without tiles: the same path as with tiles (detector boxes merged and size-filtered, all crops
+        # through RTMPose in one batched call, duplicate skeletons dropped) with the full picture only - not rtmlib's
+        # Body, which runs the crops one by one and returns boxes drawn round the joints
+        self.full_only = (not tiles) and split and device == "cpu"
         self.n_det = self.n_pose_calls = self.n_crops = 0
 
     def detect(self, img):
@@ -236,7 +241,7 @@ class Marker:
             log("  detector error on full picture:", e)
         # 2 x 2 overlapping tiles -> small far-away people become big enough for the detector
         tw, th = int(w * 0.6), int(h * 0.6)
-        for ty in (0, h - th):
+        for ty in (() if self.full_only else (0, h - th)):
             for tx in (0, w - tw):
                 tile = img[ty:ty + th, tx:tx + tw]
                 try:
@@ -280,7 +285,7 @@ class Marker:
 
     def run_many(self, imgs):
         """several picture areas (BGR) -> per picture list of (kps(17,2), scores(17), box)"""
-        if not self.tiles:
+        if not self.tiles and not self.full_only:
             return [self(img) for img in imgs]
         bxs = [self.boxes(img) for img in imgs]
         res = self.poses(list(zip(imgs, bxs)))
@@ -334,7 +339,7 @@ class Marker:
 
     def __call__(self, img):
         """img = picture area (BGR). returns list of (kps(17,2), scores(17), box)"""
-        if not self.tiles:
+        if not self.tiles and not self.full_only:
             if self.body is not None:
                 kps, sc = self.body(img)
             else:                                        # GPU sessions: what rtmlib's Body does (detector, then pose)
