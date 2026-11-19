@@ -586,8 +586,8 @@ _DEPTH = {}
 def get_depth(c):
     if "m" not in _DEPTH:
         try:
-            from scene_depth import DepthModel
-            _DEPTH["m"] = DepthModel(pick_device(c.get("depth_device", c.get("device", "cuda"))))
+            from scene_depth import depth_model
+            _DEPTH["m"] = depth_model(pick_device(c.get("depth_device", c.get("device", "cuda"))))
         except Exception as e:                                           # no model / no GPU: geometry without it
             log("    camera: depth model not available (%s)" % e)
             _DEPTH["m"] = None

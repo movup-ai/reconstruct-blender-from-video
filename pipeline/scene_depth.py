@@ -31,6 +31,13 @@ class DepthModel:
         d = np.squeeze(d).astype(np.float32)
         return cv2.resize(d, (W, H), interpolation=cv2.INTER_CUBIC)      # relative inverse depth (bigger = nearer)
 
+_MODELS = {}
+def depth_model(device):
+    """the depth model of this process (loaded once: the camera and the set both use it)"""
+    if device not in _MODELS:
+        _MODELS[device] = DepthModel(device)
+    return _MODELS[device]
+
 class FakeDepth:
     """test stand-in (no model): ground plane, a hill band and sky"""
     def __init__(self, world, k):
@@ -1054,7 +1061,7 @@ def build_set(frames, y0, world, people_keys, boxes, c, log_=log, fake=False):
     if not fake and not os.path.exists(MODEL_PATH):
         info["warning"] = "depth model missing (run setup.bat) - flat ground + backdrop used"
         return flat_set(world, N, far), info
-    model = None if fake else DepthModel(pick_device(c.get("device", "cuda")))
+    model = None if fake else depth_model(pick_device(c.get("device", "cuda")))
     meshes = []
     for k in plate_keys(world, N, c.get("plate_step_deg", 12.0)):
         plate, still = make_plate(frames, y0, world, k, boxes)
