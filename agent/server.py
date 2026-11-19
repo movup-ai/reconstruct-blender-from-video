@@ -68,7 +68,7 @@ class App:
             run.append({"clip": j["clip"], "name": cl.name if cl else j["clip"], "stage": j["stage"],
                         "since": round(time.time() - (j["started"] or time.time())), "progress": pr.get("pct"), "step": pr.get("step")})
         return {"running": len(run), "queued": cnt.get("queued", 0), "failed": cnt.get("failed", 0),
-                "parallel": self.c["parallel"], "autopilot": self.c["autopilot"], "now": run}
+                "parallel": self.c["parallel"], "autopilot": self.c["autopilot"], "now": run, "paused": self.runner.paused}
 
     def health(self):
         from common import blender_exe
@@ -109,7 +109,7 @@ class App:
                "prev": self.lib.clips[idx - 1].id if idx > 0 else None,
                "next": self.lib.clips[idx + 1].id if 0 <= idx < len(self.lib.clips) - 1 else None,
                "next_review": self.next_to_review(cl.id), "defaults": {"height": c["person_height"], "lens": c["lens_mm"]},
-               "ai_ready": self.ai_ready(), "package": pkg.package_name(cl.name)}
+               "ai_ready": self.ai_ready(), "package": pkg.package_name(cl.name), "paused": self.runner.paused}
         pose = read_json(f["pose"])
         if pose:
             media.person_crops(c, cl)
@@ -170,21 +170,28 @@ class App:
 
     # ------------------------------------------------------------ the simple flow: folder -> prepare -> review -> Finish
     def use_folder(self, path, title):
-        """make <path> the source folder: package names for its new videos, then every video is prepared"""
+        """make <path> the source folder and give its new videos package names.  Nothing starts: the queue is
+        paused, and waiting jobs of the previous folder's clips are removed; the person presses Start."""
         scan = folder_scan(self.c, path, title)
         if scan["unnamed"] and not scan["slug"]:
             raise HttpError(400, "type an English title for this folder (letters and numbers), e.g. the hidden blade")
-        upd = {"source_root": scan["path"]}
-        if self.c["autopilot"] == "off":                       # preparing starts by itself
-            upd["autopilot"] = "prepare"
-        self.c = config.save(upd)
+        self.runner.pause()
+        old = set(self.lib.by_id)
+        self.c = config.save({"source_root": scan["path"]})
         self.lib.c = self.c
         self.lib.rescan()
+        dropped = sum(self.store.cancel_queued(cid) for cid in old - set(self.lib.by_id))
         new = pkg.assign_names([cl.name for cl in self.lib.clips], scan["title"])
-        queued = sum(1 for cl, st in self.status_all() if not st["fit"] and self.store.enqueue(cl.id, "fit"))
-        self.runner.wake()
-        log.info("source folder %s: %d videos, %d new package names, %d queued", scan["path"], len(self.lib.clips), len(new), queued)
-        return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "queued": queued, "clashes": self.lib.clashes}
+        log.info("source folder %s: %d videos, %d new package names", scan["path"], len(self.lib.clips), len(new))
+        return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "dropped": dropped, "clashes": self.lib.clashes}
+
+    def start(self):
+        """Start: queue every video that is not prepared yet, and let the queue run"""
+        queued = sum(1 for cl, st in self.status_all()
+                     if not st["fit"] and not (st["job"] and st["job"]["state"] in ("queued", "running")) and self.store.enqueue(cl.id, "fit"))
+        self.runner.resume()
+        log.info("start: %d video(s) queued to prepare", queued)
+        return {"ok": True, "queued": queued}
 
     def finish(self, cl, force=False):
         """queue the final job (fit, set, Blender, videos, v2.1 zip) for a reviewed clip.
@@ -211,7 +218,8 @@ class App:
                 out["no_name"] += 1
                 continue
             out[self.finish(cl)] += 1
-        self.runner.wake()
+        if out["queued"]:
+            self.runner.resume()                                # an explicit request: the queue runs
         return out
 
     def report_rows(self):
@@ -753,10 +761,11 @@ def make_handler(app):
                                        "deepseek_key_set": bool(ai.api_key(app.c))})
             if parts == ["api", "ai_test"]:
                 return self.send(200, ai.test_key(app.c))
-            if parts == ["api", "prepare_all"]:
-                n = sum(1 for cl, st in app.status_all() if not st["fit"] and app.store.enqueue(cl.id, "fit"))
-                app.runner.wake()
-                return self.send(200, {"ok": True, "queued": n})
+            if parts in (["api", "start"], ["api", "prepare_all"]):
+                return self.send(200, app.start())
+            if parts == ["api", "pause"]:
+                app.runner.pause()
+                return self.send(200, {"ok": True})
             if parts in (["api", "finish_reviewed"], ["api", "render_confirmed"]):
                 return self.send(200, dict(app.finish_reviewed(), ok=True))
             if parts == ["api", "pick_folder"]:
@@ -769,7 +778,7 @@ def make_handler(app):
                 for cl, st in app.status_all():
                     if st["label"] == "failed" and st["job"] and app.store.enqueue(cl.id, st["job"]["stage"]):
                         n += 1
-                app.runner.wake()
+                app.runner.resume()
                 return self.send(200, {"ok": True, "queued": n})
             if parts == ["api", "cancel_queued"]:
                 return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued()})
@@ -830,16 +839,18 @@ def make_handler(app):
                     if stage == "all" and not (read_json(f["review"]) or {}).get("confirmed"):
                         raise HttpError(409, "confirm the clip first")
                     jid = app.store.enqueue(cl.id, stage, force=True)
-                    app.runner.wake()
+                    app.runner.resume()                                  # the person asked for it: the queue runs
                     return self.send(200, {"ok": True, "queued": bool(jid)})
                 if action == "objects":
                     n = save_objects(app.c, cl, self.body_json())
                     jid = app.store.enqueue(cl.id, "fit", force=True) if (q.get("rebuild") or ["1"])[0] == "1" else None
-                    app.runner.wake()
+                    if jid:
+                        app.runner.resume()
                     return self.send(200, {"ok": True, "objects": n, "queued": bool(jid)})
                 if action == "finish":                                   # final job for one reviewed clip
                     r = app.finish(cl, force=(q.get("force") or ["0"])[0] == "1")
-                    app.runner.wake()
+                    if r == "queued":
+                        app.runner.resume()
                     return self.send(200, {"ok": True, "result": r})
                 if action == "cancel":
                     return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})

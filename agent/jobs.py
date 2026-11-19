@@ -121,11 +121,12 @@ class Runner:
         self.busy = 0
         self.procs = {}
         self.stop = threading.Event()
+        self.paused = True        # nothing runs until the person presses Start (queued jobs wait, even from last time)
 
     def start(self):
         n = self.store.recover()
         if n:
-            log.info("resumed %d job(s) that were running when the app stopped", n)
+            log.info("%d job(s) that were running when the app stopped wait in the queue for Start", n)
         for i in range(self.MAX_WORKERS):
             threading.Thread(target=self._worker, name="worker-%d" % i, daemon=True).start()
         threading.Thread(target=self._autopilot, name="autopilot", daemon=True).start()
@@ -133,6 +134,14 @@ class Runner:
     def wake(self):
         with self.cond:
             self.cond.notify_all()
+
+    def resume(self):
+        self.paused = False
+        self.wake()
+
+    def pause(self):
+        """no new job starts; running ones finish, queued ones wait"""
+        self.paused = True
 
     def shutdown(self):
         self.stop.set()
@@ -144,7 +153,7 @@ class Runner:
     def _worker(self):
         while not self.stop.is_set():
             with self.cond:
-                while not self.stop.is_set() and self.busy >= self.app.c["parallel"]:
+                while not self.stop.is_set() and (self.paused or self.busy >= self.app.c["parallel"]):
                     self.cond.wait(5)
                 if self.stop.is_set():
                     return
@@ -253,7 +262,7 @@ class Runner:
         """keeps the queue fed while autopilot is on"""
         while not self.stop.wait(20):
             c = self.app.c
-            if c["autopilot"] == "off":
+            if c["autopilot"] == "off" or self.paused:
                 continue
             try:
                 latest = self.store.latest()

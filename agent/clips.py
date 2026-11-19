@@ -152,7 +152,7 @@ def read_json(p, default=None):
 
 
 LABELS = {  # label -> group used by the start page
-    "not started": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
+    "not prepared": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
     "waiting for AI": "busy", "ready for review": "ready", "reviewed": "conf", "auto-confirmed": "conf",
     "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail"}
 
@@ -190,7 +190,7 @@ def status(c, cl, job=None):
     elif s["fit"]:
         label = "ready for review"
     else:
-        label = "not started"
+        label = "not prepared"
     s["label"] = label
     s["group"] = LABELS[label]
     return s

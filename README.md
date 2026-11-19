@@ -29,15 +29,18 @@ Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.
    without a v2.1 package name get `title-1`, `title-2`… in file-name order (saved in `data\package_names.json`).
    Joints, work files and packages still go to `output\`, `Work_auto\` and `SUBMIT\`; joints of a folder other than
    `SOURCE\` go to `output\_sources\<folder>_<id>\`, so two folders with the same file names never share them.
-2. **Prepare** starts by itself (Autopilot → Prepare only). The Clips page shows each video's step and progress.
+2. **Start.** Nothing runs until you press **Start** on the Clips page, also after restarting the app (jobs left from
+   last time wait in the queue). Start prepares every video not prepared yet; **Pause** lets the running job finish
+   and starts nothing new. The Clips page shows each video's step and progress.
 3. **Review** a clip marked *ready for review*: **1 Who is who** (cards saying *Not a person?* look like a statue, a
    picture or a false detection; one click, then *Re-check*), **2 Joints** (the editor opens on the frames where the
-   fitted person moved suddenly), **3 Objects**. Press **✓ Reviewed**.
+   fitted person moved suddenly), **3 Objects**. Press **✓ Mark reviewed** (finish later) or **▶ Finish now**. Camera, set, held objects and the description
+   are filled in automatically; change them under **More** only if they are wrong.
 4. **Finish all reviewed** (or **Finish** on one clip): final fit, set, Blender, videos and the v2.1 zip in `SUBMIT\`.
    A clip whose roles, joints, objects, hints and notes are unchanged since its last Finish is skipped
    (`Work_auto\<clip>\finished.json` holds the fingerprint).
 
-**Autopilot → Full auto** does steps 2–4 on its own, without a review. If a DeepSeek key is saved, DeepSeek checks the
+**Settings → Autopilot → Full auto** does steps 2–4 on its own after Start, without a review. If a DeepSeek key is saved, DeepSeek checks the
 people and the set first. You can still open any clip, change it and finish again.
 
 The start page also has: *Clips at once* (parallel jobs), *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.

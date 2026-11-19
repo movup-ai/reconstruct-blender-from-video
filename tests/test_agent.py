@@ -194,7 +194,7 @@ class TestStatus(unittest.TestCase):
             c = dict(config.load(), source_root=os.path.join(d, "src"), work_root=os.path.join(d, "w"), submit_root=os.path.join(d, "s"),
                      marks_root=os.path.join(d, "m"))
             cl = clipsmod.Library(c).clips[0]
-            self.assertEqual(clipsmod.status(c, cl)["label"], "not started")
+            self.assertEqual(clipsmod.status(c, cl)["label"], "not prepared")
             self.assertEqual(clipsmod.status(c, cl, {"stage": "fit", "state": "running"})["label"], "preparing")
             self.assertEqual(clipsmod.status(c, cl, {"stage": "all", "state": "failed", "error": "x"})["label"], "failed")
         finally:
@@ -372,10 +372,24 @@ class TestApi(unittest.TestCase):
         d = json.loads(body)
         self.assertEqual(len(d["clips"]), 1)
         self.assertEqual(d["clips"][0]["name"], "电影_11月12日(1)")
-        self.assertEqual(d["clips"][0]["status"]["label"], "not started")
+        self.assertEqual(d["clips"][0]["status"]["label"], "not prepared")
         code, body, _ = self.get("/api/clip/" + self.cid)
         self.assertEqual(code, 200)
         self.assertIsNone(json.loads(body)["review"])
+
+    def test_nothing_runs_before_start(self):
+        q = json.loads(self.get("/api/clips")[1])["queue"]
+        self.assertTrue(q["paused"], "the app starts paused")
+        try:
+            code, d = self.post("/api/start")
+            self.assertEqual((code, d["queued"]), (200, 1))
+            self.assertFalse(json.loads(self.get("/api/clips")[1])["queue"]["paused"])
+            self.assertEqual(self.post("/api/start")[1]["queued"], 0, "a queued clip is not queued twice")
+            self.post("/api/pause")
+            self.assertTrue(json.loads(self.get("/api/clips")[1])["queue"]["paused"])
+        finally:
+            self.app.runner.pause()
+            self.post("/api/cancel_queued")
 
     def test_media(self):
         self.assertEqual(self.get("/media/clipthumb/%s.jpg" % self.cid)[0], 200)

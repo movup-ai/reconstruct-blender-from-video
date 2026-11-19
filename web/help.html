@@ -14,15 +14,15 @@
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Choose source folder</b> on the Clips page: any folder on this PC. The videos stay there; joints, work files and packages go to the project's <code>output</code>, <code>Work_auto</code> and <code>SUBMIT</code> folders. Type an English title once: videos without a v2.1 package name get <code>title-1</code>, <code>title-2</code>… in file-name order. (You can also drag videos in, or copy them into the folder and press <i>Rescan</i>.)</li>
-      <li><b>Prepare</b> starts by itself: the local models find people, joints, lens, camera, cuts, ground and set. The Clips page shows each video's step and progress. About 4–5 minutes per clip on this PC.</li>
+      <li><b>Choose source folder</b> on the Clips page: any folder on this PC. The videos stay there; joints, work files and packages go to the project's <code>output</code>, <code>Work_auto</code> and <code>SUBMIT</code> folders. Type an English title once: videos without a v2.1 package name get <code>title-1</code>, <code>title-2</code>… in file-name order. Choosing a folder does not start anything. (You can also drag videos in, or copy them into the folder and press <i>Rescan</i>.)</li>
+      <li><b>Start</b>: nothing runs until you press <i>Start</i> on the Clips page (also after restarting the app). Then the local models find people, joints, lens, camera, cuts, ground and set. The Clips page shows each video's step and progress. About 4–5 minutes per clip on this PC.</li>
       <li><b>Review</b> a clip marked <span class="chip g-ready">ready for review</span>:
         <b>1 Who is who</b> (a card saying <i>Not a person?</i> looks like a statue, picture or false detection: one click, then <i>Re-check</i>),
-        <b>2 Joints</b> (the editor opens on the flagged frames first), <b>3 Objects</b> (drag boxes on the background: door, jar, tree…). Then press <b>✓ Reviewed</b>.</li>
+        <b>2 Joints</b> (the editor opens on the flagged frames first), <b>3 Objects</b> (drag boxes on the background: door, jar, tree…). Then press <b>✓ Mark reviewed</b> (finish later, with others) or <b>▶ Finish now</b>. Camera, set, held objects and the description are filled in automatically; change them under <i>More</i> only if they are wrong.</li>
       <li><b>Finish</b>: <i>Finish all reviewed</i> on the Clips page (or <i>Finish</i> on a clip) runs the final fit, set, Blender, videos and the v2.1 zip into SUBMIT. A clip whose roles, joints, objects and notes have not changed since its last Finish is skipped, so nothing renders twice.</li>
       <li><b>Deliver</b>: on the Submissions page, press <i>Check all against the sample</i>, then send the zips.</li>
     </ol>
-    <p>Autopilot <b>Full auto</b> does steps 2–4 by itself, without your review. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
+    <p>Settings → Autopilot <b>Full auto</b> does steps 2–4 by itself after Start, without your review. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
   </section>
 
   <section class="step">
@@ -41,7 +41,7 @@
   <section class="step">
     <h2>Questions</h2>
     <h3>When can I add videos?</h3>
-    <p>Any time, even while clips are rendering. With Autopilot on, new videos are prepared straight away; otherwise press <i>Prepare all clips</i>.</p>
+    <p>Any time, even while clips are rendering. Copy them into the source folder and click <i>look for new videos</i> on the Clips page, then press <i>Start</i>.</p>
     <h3>Where are the results?</h3>
     <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Previews and logs are in the Work folder.</p>
     <h3>What do the colours mean?</h3>

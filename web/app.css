@@ -96,7 +96,7 @@ pre.log { background:#0e0f11; color:#cfd3d7; padding:8px; border-radius:6px; max
 .drop:hover, .drop.over { border-color:#9cc8ff; background:#1d2733; color:var(--text); }
 .uplist { margin-top:8px; font-size:13px; } .uprow { display:flex; gap:10px; align-items:center; margin:4px 0; }
 .uprow .n { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bar2 { width:160px; height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; } .bar2 i { display:block; height:100%; width:0; background:#5aa8f0; }
+.uprow .bar2 { width:160px; height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; } .uprow .bar2 i { display:block; height:100%; width:0; background:#5aa8f0; }
 /* top navigation */
 .topnav { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:4px; padding:0 16px; height:48px;
           background:#121417; border-bottom:1px solid var(--line); }
@@ -162,3 +162,26 @@ a.clip .pk { padding:0 10px 8px; overflow:hidden; text-overflow:ellipsis; white-
 .person .suggest { margin-top:6px; padding:6px 8px; border-radius:7px; background:#4d3d10; color:#f5d27a; font-size:13px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 :root[data-theme="light"] .person .suggest { background:#fbefd2; color:#7a5a0a; }
 .person .suggest button { padding:2px 8px; font-size:12.5px; }
+
+/* Clips page: the three steps of the flow; the step with the next thing to do is outlined */
+.flow { display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:14px; margin-bottom:6px; }
+.fstep { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; display:flex; flex-direction:column; min-width:0; }
+.fstep.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+.fstep .fh { display:flex; align-items:center; font-size:15.5px; }
+.fstep:not(.active) .num { background:var(--panel2); color:var(--muted); }
+.fdesc { color:var(--muted); font-size:13.5px; margin:8px 0 0; }
+.fpath { display:block; margin-top:10px; padding:6px 8px; border-radius:6px; background:var(--input); font-size:13px; overflow-wrap:anywhere; }
+.fstep .actions { margin-top:auto; padding-top:12px; }
+.minor { font-size:13px; margin-top:6px; }
+a.btn.primary { background:var(--accent); border-color:#f06a62; font-weight:600; color:#fff; }
+button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--run); outline-offset:2px; }
+/* clip page: the "More" section groups the optional settings; the footer keeps the two finishing actions on the right */
+details.step .sub { border-top:1px solid var(--line); margin-top:14px; padding-top:12px; }
+details.step .sub h3 { font-size:14.5px; margin:0 0 8px; }
+.ft .grow { flex:1; }
+.stepper .film { align-self:center; font-size:12.5px; color:var(--muted); padding-left:6px; white-space:nowrap; }
+@media (max-width:560px) {   /* phone: the logo stands for the name, the four links fit */
+  .topnav { padding:0 8px; gap:0; } .topnav .brand { margin-right:4px; font-size:0; gap:0; } .topnav .brand img { font-size:15px; }
+  .topnav .nl { padding:6px 8px; } .topnav .qind { display:none; }
+}
+:root[data-theme="light"] { --warn:#8a5a00; --bad:#b42323; --ok:#1f7a3a; }   /* 4.5:1 on white */
