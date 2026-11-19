@@ -40,9 +40,9 @@ Kept on purpose:
 
 | What | Why |
 |---|---|
-| The tools in "Command-line tools" and "Client packaging" below that no code calls | They are run by hand; the docs or other tools name them. Every one imports or runs. |
+| The tools in "Command-line tools" and "Client packaging" below that no code calls | They are run by hand; the docs or other tools name them. Every one imports or runs. Owner confirmed keeping them (2026-11-19). |
 | `samples\*.blend`, `data\package_tasks.json` | Client originals and task records |
-| `models\sam2\` (857 MB) | Needed by `env_auto.py` on a PC with an NVIDIA card; owner chose to keep it |
+| `models\sam2\` (857 MB) | Needed by `env_auto.py` on a PC with an NVIDIA card; owner confirmed keeping it (2026-11-19) |
 | `Work_auto\report_*.csv` | One small file per run: run history |
 
 ## Speed (this PC: i5-13400, no NVIDIA card)
