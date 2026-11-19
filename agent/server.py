@@ -451,6 +451,27 @@ def save_objects(c, cl, body):
     return n
 
 
+# role -> the colour the joint editor draws a person in (the review page's role colours, brighter on video)
+DRAW_HEX = {"red": "#ff4d4d", "blue": "#4d8dff", "green": "#3ddc6b", "yellow": "#ffd23f", "purple": "#c07bff", "pink": "#ff7ac8",
+            "orange": "#ff9b3d", "cyan": "#4fe0ff", "brown": "#c8925a", "white": "#f5f5f5", "grey": "#9a9a9a"}
+ROLE_NAME = {"main": "主角色", "second": "第二角色", "third": "第三角色", "fourth": "第四角色", "extra": "other", "ignore": "not a person"}
+
+
+def editor_colours(rv, stitched=None):
+    """review -> {joint editor person id: {hex, role}}.  The editor numbers people as automark found them; a track the
+    fit joined (pose.json "stitched" {old: new}) takes the colour of the track it joined."""
+    ppl = (rv or {}).get("people") or {}
+    out = {}
+    for pid, p in ppl.items():
+        role = p.get("role", "extra")
+        out[str(pid)] = {"hex": DRAW_HEX["grey"] if role == "ignore" else DRAW_HEX.get(p.get("colour") or "", DRAW_HEX["purple"]),
+                         "role": ROLE_NAME.get(role, "")}
+    for old, new in (stitched or {}).items():
+        if str(new) in out:
+            out[str(old)] = out[str(new)]
+    return out
+
+
 def download_name(fn):
     """Content-Disposition for a download saved as <fn> (non-ASCII names in the RFC 5987 form)"""
     from urllib.parse import quote
@@ -671,8 +692,11 @@ def make_handler(app):
                 html = check_page(c, cl)
                 chk = sorted(glob.glob(os.path.join(f["marks"], "checked*.json")), key=os.path.getmtime)
                 inj = "<script>window.APP_SAVE='/api/clip/%s/marks';" % cl.id
-                inj += "window.APP_FLAGGED=" + json.dumps(jump_frames(read_json(os.path.join(f["work"], "report.json"), {}) or {},
-                                                                      (read_json(f["pose"], {}) or {}).get("stitched"))) + ";"
+                stitched = (read_json(f["pose"], {}) or {}).get("stitched")
+                inj += "window.APP_FLAGGED=" + json.dumps(jump_frames(read_json(os.path.join(f["work"], "report.json"), {}) or {}, stitched)) + ";"
+                inj += "window.APP_COLOURS=" + json.dumps(editor_colours(read_json(f["review"]) or review.suggested(c, cl), stitched), ensure_ascii=False) + ";"
+                inj += "window.APP_CLIP_URL='/clip/%s';" % cl.id
+                inj += "window.APP_JOINED=" + json.dumps({str(k): v for k, v in (stitched or {}).items()}) + ";"
                 if chk:
                     with open(chk[-1], encoding="utf-8") as fh:
                         inj += "window.APP_CHECKED=" + fh.read() + ";"
