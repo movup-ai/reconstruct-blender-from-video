@@ -333,3 +333,8 @@ table.subs tr.probs li { margin:2px 0; }
   table.subs tr:hover td { background:transparent; }
 }
 @media (max-width:760px) { .deliverhint { margin-top:10px; } }
+/* the joints step says whether there are unsaved joint fixes */
+.mstate { margin-left:auto !important; font-size:12.5px !important; font-weight:500 !important; padding:2px 10px; border-radius:99px; }
+.mstate:empty { display:none; }
+.mstate.unsaved { background:var(--warn-tint); color:var(--warn) !important; }
+.mstate.saved { background:var(--ok-tint); color:var(--ok) !important; }

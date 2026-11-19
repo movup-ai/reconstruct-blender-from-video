@@ -29,7 +29,8 @@
   #title { font-weight: 600; margin-right: 6px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #frameinfo { min-width: 104px; text-align: center; color: var(--slate); }
   #status { margin-left: auto; color: var(--ok); font-size: 13px; }
-  body.embed #title, body.embed #back, body.embed #save, body.embed #savesep { display: none; }
+  body.embed #title, body.embed #back { display: none; }
+  #bar #save.unsaved { background: var(--accent); border-color: var(--accent-hover); color: #fff; }
   #main { display: flex; flex: 1; min-height: 0; }
   #wrap { flex: 1; position: relative; overflow: hidden; background: #e7ebee; }
   #flagbar { position: absolute; left: 0; right: 0; top: 0; z-index: 2; padding: 6px 12px; font-size: 13px; background: #fbf0d9; color: var(--warn);
@@ -95,7 +96,7 @@
   <button id="copy" title="Replace this frame's dots with those of the key frame before it (C)">Copy previous</button>
   <button id="reset" title="Fit the picture to the window (R)">Reset view</button>
   <span class="sep" id="savesep"></span>
-  <button id="save" class="primary" title="Ctrl+S">Save</button>
+  <button id="save" class="primary" title="Save your joint fixes (Ctrl+S)">Save</button>
   <span id="status"></span>
 </div>
 <div id="main">
@@ -253,7 +254,16 @@ function draw() {
   }
   ui();
 }
+let lastState = '';
+function report() {                                // the clip page shows "unsaved joint fixes" from this
+  const nfix = PAGE.frames.filter((fr, i) => fixed(i)).length;
+  const st = JSON.stringify({ type: 'marks_state', dirty, fixed: nfix, ok: checked.size });
+  const b = $('save'); b.disabled = !dirty; b.classList.toggle('unsaved', dirty);
+  b.textContent = dirty ? (EMBED ? 'Save joint fixes' : 'Save') : (EMBED ? 'Joint fixes saved' : 'Saved');
+  if (EMBED && st !== lastState) { lastState = st; window.parent.postMessage(JSON.parse(st), '*'); }
+}
 function ui() {
+  report();
   const f = PAGE.frames[cur].f;
   $('frameinfo').textContent = `frame ${f} · ${cur + 1}/${PAGE.frames.length}` + (checked.has(f) ? ' ✓' : '');
   $('ok').disabled = checked.has(f);
@@ -369,7 +379,8 @@ async function save() {
   if (window.APP_SAVE) {                         // opened from the app: save straight into the clip folder
     const r = await fetch(APP_SAVE, { method: 'POST', body: text });
     if (r.ok) { dirty = false; say(`saved ✓ ${n} corrected frame(s)`);
-      if (EMBED) window.parent.postMessage({ type: 'marks_saved', ok: checked.size, total: PAGE.frames.length }, '*'); }
+      report();
+      if (EMBED) window.parent.postMessage({ type: 'marks_saved', ok: checked.size, total: PAGE.frames.length, frames: n }, '*'); }
     else say('save failed: ' + r.status, true);
     return;
   }
@@ -413,7 +424,8 @@ window.addEventListener('keydown', e => {
 window.addEventListener('message', async e => {     // the clip page's buttons save the editor first
   if (!e.data || e.data.type !== 'do_save') return;
   if (e.data.all) { PAGE.frames.forEach(fr => checked.add(fr.f)); dirty = true; }
-  if (!dirty) { window.parent.postMessage({ type: 'marks_saved', ok: checked.size, total: PAGE.frames.length, unchanged: true }, '*'); return; }
+  if (!dirty) { window.parent.postMessage({ type: 'marks_saved', ok: checked.size, total: PAGE.frames.length, unchanged: true,
+                 frames: PAGE.frames.filter((fr, i) => checked.has(fr.f) || fixed(i)).length }, '*'); return; }
   save();
 });
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });

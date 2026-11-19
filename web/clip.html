@@ -35,7 +35,7 @@
   </section>
 
   <details class="step" id="s-marks">
-    <summary><span class="num">2</span>Fix joints <span id="marksum">(every 8th frame)</span></summary>
+    <summary><span class="num">2</span>Fix joints <span id="marksum">(every 8th frame)</span><span id="marksstate" class="mstate"></span></summary>
     <p class="hint" style="margin-top:8px">Starts on the frames where the 3D person moved suddenly (orange line; <kbd>F</kbd> = next). Drag a dot to fix it, <kbd>Enter</kbd> = frame OK. Your fixes are kept when you press any button below.</p>
     <iframe id="marks" title="marks editor"></iframe>
   </details>
@@ -176,7 +176,7 @@ function collect(confirmed) {
 function saveMarks() {
   return new Promise(res => {
     const f = $('marks'); if (!f || !f.getAttribute('src') || !f.contentWindow) return res(false);
-    const done = e => { if (e.data && e.data.type === 'marks_saved') { window.removeEventListener('message', done); res(true); } };
+    const done = e => { if (e.data && e.data.type === 'marks_saved') { window.removeEventListener('message', done); res(e.data); } };
     window.addEventListener('message', done); setTimeout(() => { window.removeEventListener('message', done); res(false); }, 3000);
     f.contentWindow.postMessage({ type: 'do_save', all: false }, '*');
   });
@@ -188,7 +188,22 @@ async function saveObjects() {                       // objects are kept with ev
   await post(`/api/clip/${CID}/objects?rebuild=0`, body); ODIRTY = false;
 }
 async function saveAll(confirmed) { await saveMarks(); await saveObjects(); const r = await sendReview(confirmed); dirty = false; return r; }
-$('save').onclick = async () => { await saveAll(false); toast('Saved'); };
+$('save').onclick = async () => {
+  const m = await saveMarks(); await saveObjects(); await sendReview(false); dirty = false;
+  toast('Saved: roles and objects' + (m && m.frames ? `, and joint fixes in ${m.frames} frame(s)` : '') + '.'); };
+let MARKS = { dirty: false, fixed: 0, ok: 0 };
+window.addEventListener('message', e => {
+  if (!e.data || e.data.type !== 'marks_state') return;
+  MARKS = e.data; marksState();
+});
+function marksState() {
+  const st = $('marksstate'); if (!st) return;
+  st.className = 'mstate ' + (MARKS.dirty ? 'unsaved' : MARKS.fixed || MARKS.ok ? 'saved' : '');
+  st.textContent = MARKS.dirty ? 'Unsaved joint fixes' : MARKS.fixed || MARKS.ok ? `${MARKS.fixed} frame(s) fixed, ${MARKS.ok} marked OK` : '';
+  $('save').className = MARKS.dirty ? 'primary' : '';
+  if (MARKS.dirty) msg('Unsaved joint fixes: press Save (or Save joint fixes in the editor).');
+}
+window.addEventListener('beforeunload', e => { if (MARKS.dirty) { e.preventDefault(); e.returnValue = ''; } });
 $('prepone').onclick = async () => { const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Preparing this clip…' : 'This clip is already being prepared'); refresh(); };
 $('rerun').onclick = async () => { await saveMarks(); await saveObjects(); if (INFO.status.marks) await sendReview(false); dirty = false;
   const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Queued. The picture updates when it’s done.' : 'This clip is already being processed'); refresh(); };
@@ -208,7 +223,35 @@ async function finish(force) {
     return; }
   toast(r.result === 'queued' ? 'Finishing: fit, set, Blender, videos and the v2.1 zip. You can review other clips meanwhile.' : 'This clip is already working'); refresh();
 }
-$('finish').onclick = async () => { await saveAll(true); await finish(false); };
+$('finish').onclick = async () => {
+  if (!INFO.package && !(await nameHere())) return;
+  await saveAll(true); await finish(false);
+};
+async function nameHere() {          // v2.1 packages need a name: one English title names every video of SOURCE without one
+  const src = (await api('/api/settings')).source_root;
+  return new Promise(resolve => {
+    const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nmt' });
+    bg.innerHTML = `<div class="modal"><h3 id="nmt" style="margin:0 0 6px">Package name needed</h3>
+      <p class="small muted" style="margin:0 0 12px">A v2.1 package needs a name. Type the film's English title once: every video in SOURCE without a name gets one, numbered in file-name order. Existing names never change.</p>
+      <label style="display:flex;gap:8px;align-items:center">English title <input type="text" id="nmtitle" style="flex:1" placeholder="e.g. the hidden blade"></label>
+      <p class="small" id="nmhint" style="margin:10px 0 14px;min-height:20px"></p>
+      <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes" disabled>Save the name and finish</button></div></div>`;
+    document.body.appendChild(bg);
+    const close = v => { bg.remove(); resolve(v); };
+    bg.querySelector('.m-no').onclick = () => close(false);
+    bg.addEventListener('keydown', e => { if (e.key === 'Escape') close(false); });
+    let T = null, plan = null;
+    $('nmtitle').oninput = () => { clearTimeout(T); T = setTimeout(async () => {
+      plan = await api(`/api/folder?path=${encodeURIComponent(src)}&title=${encodeURIComponent($('nmtitle').value)}`);
+      const me = plan.videos.find(v => v.clip === INFO.clip.name), others = plan.videos.filter(v => v.new_name && v.clip !== INFO.clip.name).length;
+      $('nmhint').innerHTML = me && me.package ? `This clip: <b>${esc(me.package)}</b>` + (others ? ` · ${others} other video(s) also get a name` : '') : '<span class="muted">Type the English title (letters and numbers).</span>';
+      bg.querySelector('.m-yes').disabled = !(me && me.package); }, 250); };
+    bg.querySelector('.m-yes').onclick = async () => {
+      await post('/api/use_folder', { path: src, title: $('nmtitle').value });
+      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Package name saved: ' + INFO.package); close(true); };
+    $('nmtitle').focus();
+  });
+}
 $('addprop').onclick = () => { propRow(); dirty = true; };
 segInit($('camtype'), () => dirty = true);
 ['env_depth', 'env_colour', 'env_useai', 'lens', 'camnote', 'notes'].forEach(id => $(id).addEventListener('change', () => dirty = true));
@@ -315,7 +358,7 @@ function banner() {
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
-  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name, so it cannot be finished. On the Clips page, press <i>Name them…</i> and type an English title.'; }
+  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name yet. <i>Finish now</i> asks for the film’s English title and names it.'; }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
   else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
   else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
@@ -349,8 +392,8 @@ async function load(first) {
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
-  $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit || !INFO.package;
-  $('finish').title = !INFO.package ? 'No v2.1 package name: press Name them… on the Clips page and type a title' :
+  $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
+  $('finish').title = !INFO.package ? 'Asks for the English title first (a v2.1 package needs a name), then finishes' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
   $('pkgname').innerHTML = INFO.package ? `<span class="pkchip" title="v2.1 package name">${esc(INFO.package)}</span>` : '<span class="pkchip none">No package name</span>';
   if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
