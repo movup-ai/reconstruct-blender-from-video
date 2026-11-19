@@ -549,20 +549,43 @@ def run_clip(video, c, args):
         if len(grounded) < len(chars) and (sinfo.get("terrain_xyz") or sinfo.get("plane")):
             log("    feet not in the picture: %s kept on the solved floor (not moved onto the set's terrain)" %
                 ", ".join(sorted(set(chars) - set(grounded))))
-        if sinfo.get("terrain_xyz"):                       # uneven ground: feet on the terrain under them
+        T = np.array(sinfo.pop("terrain_xyz"), float) if sinfo.get("terrain_xyz") else None
+        if T is not None or sinfo.get("plane"):            # uneven / sloping ground: feet on the set's ground
             from scipy.spatial import cKDTree
-            T = np.array(sinfo.pop("terrain_xyz"), float)
-            tree = cKDTree(T[:, :2])
-            for ch in grounded.values():
-                for r in ch["root"]:
+            from build_env import Cam
+            tree = cKDTree(T[:, :2]) if T is not None else None
+            pl = sinfo.get("plane")
+            def ground_z(r):
+                z = r[2]
+                if tree is not None:
                     dd, ii = tree.query([r[0], r[1]], k=min(8, len(T)))
                     if np.min(dd) < 3.0:
-                        r[2] = round(float(np.median(T[np.atleast_1d(ii), 2])), 4)
-        if sinfo.get("plane"):                             # sloping ground: feet on the slope
-            pn = sinfo["plane"][:3]; pd = sinfo["plane"][3]
-            for ch in grounded.values():
-                for r in ch["root"]:
-                    r[2] = round((pd - pn[0] * r[0] - pn[1] * r[1]) / pn[2], 4)
+                        z = float(np.median(T[np.atleast_1d(ii), 2]))
+                if pl:
+                    z = (pl[3] - pl[0] * r[0] - pl[1] * r[1]) / pl[2]
+                return round(float(z), 4)
+            # moving a person up or down without refitting shifts them in the picture by about the same share of
+            # their height; keep the move only when the character still lines up with the person in the film
+            # (a pedestal, a step or a wall base under a statue / a far person read as "ground" otherwise)
+            scam = Cam({"res": [W, Hp], "lens": c["lens_mm"], "sensor": 36.0, "cam": [world.blender_cam(i) for i in range(Ns)]})
+            stracks = {p["id"]: p for p in spose["people"]}
+            for k, ch in grounded.items():
+                new = [ground_z(r) for r in ch["root"]]
+                tr = stracks.get(ch.get("track_id"))
+                if tr is None or max(abs(z - r[2]) for z, r in zip(new, ch["root"])) < 0.02:
+                    for z, r in zip(new, ch["root"]):
+                        r[2] = z
+                    continue
+                e0 = quality.fit_error(ch, tr, scam, y0, Ns)
+                old = [r[2] for r in ch["root"]]
+                for z, r in zip(new, ch["root"]):
+                    r[2] = z
+                e1 = quality.fit_error(ch, tr, scam, y0, Ns)
+                if e0 is not None and e1 is not None and e1 > max(1.25 * e0, e0 + 1.5):
+                    for z, r in zip(old, ch["root"]):
+                        r[2] = z
+                    log("    %s kept on the solved floor: on the set's ground it would be %.0f%% of its height off the "
+                        "picture (now %.0f%%)" % (k, e1, e0))
         palette.update(sinfo.get("palette", {}))
         if sky is None and sinfo.get("sky_rgb") and not c.get("_set_grey"):
             sky = sinfo["sky_rgb"]
