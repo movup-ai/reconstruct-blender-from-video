@@ -40,6 +40,13 @@ if not exist "third_party\MotionBERT-main\lib\model\DSTformer.py" (
 )
 if not exist "third_party\MotionBERT-main\lib\model\DSTformer.py" echo   (MotionBERT code missing - people are fitted without the 3D pose step)
 if not exist "models\motionbert\FT_MB_release_MB_ft_h36m.bin" echo   (MotionBERT weights missing: models\motionbert\FT_MB_release_MB_ft_h36m.bin from huggingface.co/walterzhu/MotionBERT)
+echo Lens model (MoGe-2)...
+".venv\Scripts\python.exe" -c "import utils3d_moge" 2>nul || ".venv\Scripts\python.exe" -m pip install huggingface-hub "utils3d_moge @ git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37" || echo   (utils3d not installed - every clip uses the fixed lens of config.json)
+if not exist "third_party\MoGe\moge\model\v2.py" (
+  if not exist third_party mkdir third_party
+  curl -sS -L --retry 5 -o "third_party\moge.zip" https://github.com/microsoft/MoGe/archive/refs/heads/main.zip && tar -xf "third_party\moge.zip" -C third_party && del "third_party\moge.zip" && ren "third_party\MoGe-main" MoGe
+)
+if not exist "models\moge2\model.pt" echo   (MoGe-2 weights missing: models\moge2\model.pt - every clip uses the fixed lens of config.json)
 if not exist "assets\sample_character.json" (
   echo NOTE: assets\sample_character.json is missing - characters fall back to box mannequins.
 )

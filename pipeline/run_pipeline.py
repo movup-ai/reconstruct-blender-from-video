@@ -20,6 +20,7 @@ from shots import split_shots as find_shots
 from fit_people import fit_all
 from rig import Rig, JOINTS
 import package as pkg
+import quality
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 199], "backdrop": [205, 205, 207],
@@ -448,6 +449,25 @@ def run_clip(video, c, args):
         log("  hand-built set: %s  (automatic depth set skipped)" % hand_set_path(video, name, c))
     palette = dict(PALETTE); sky = None
     cam_all, chars_all, meshes_all, prep_all, warns, shot_rep, tiles = [None] * N, {}, [], [], [], [], []
+    # the clip's lens from the picture (lens_auto.py, MoGe-2) unless it was set by hand (hints.json / review)
+    lens_info = None
+    rl = (review or {}).get("camera", {}).get("lens")          # the review form is pre-filled with config.json's lens:
+    by_hand = "lens_mm" in hints or bool(rl and abs(float(rl) - float(cfg()["lens_mm"])) > 0.05)   # only another value is "by hand"
+    if c.get("lens_auto", True) and not by_hand and not c.get("_fake_depth"):
+        try:
+            import lens_auto
+            tl = time.time()
+            lens, lens_info = lens_auto.clip_lens(frames, y0, Hp, shots, work, c)
+            if lens is None:
+                log("  lens: %.1f mm from config.json (%s)" % (c["lens_mm"], lens_info.get("why")))
+            else:
+                log("  lens: %.1f mm from the picture (config.json has %.1f mm)%s  %.0fs" % (
+                    lens, c["lens_mm"], "  [kept from the last fit]" if lens_info.get("cached") else "", time.time() - tl))
+                lens_info["config_mm"] = c["lens_mm"]; c["lens_mm"] = round(lens, 1)
+                if lens_info.get("warning"):
+                    warns.append(lens_info["warning"])
+        except Exception as e:                                 # never let the lens stop a clip
+            log("  lens: %.1f mm from config.json (measuring failed: %s)" % (c["lens_mm"], str(e)[:200]))
     for si, (s0, s1) in enumerate(shots):
         tag = "_s%d" % (si + 1) if len(shots) > 1 else ""
         c["_shot_tag"] = tag
@@ -458,6 +478,9 @@ def run_clip(video, c, args):
         tp0 = time.time()
         people = coco_people(spose, schk)
         people = {pid: (list(fs), K) for pid, (fs, K) in people.items()}
+        people = quality.drop_junk(people, c, fps, log)        # short + unclear tracks: not a person worth fitting
+        rvp = (c.get("_review") or {}).get("people", {})       # "Not a person" (statue, poster): not for the camera / floor either
+        people = {pid: v for pid, v in people.items() if rvp.get(str(pid), {}).get("role") != "ignore"}
         cam = Camera(W, Hp, c["lens_mm"])
         if c.get("camera_estimator", "new") == "new":      # dense tracking + depth / horizon / people ground (camera_estimate.py)
             camj, u, hc, ginfo = estimate_shot(sf, spose, people, cam, y0, Hp, c)
@@ -490,6 +513,17 @@ def run_clip(video, c, args):
         tp0 = time.time()
         c["_fps"] = float(fps)
         chars, prep = fit_all(world, y0, people, Ns, c)
+        # half-body shot (no feet in the picture): the floor was a guess - put it under the people and fit them again
+        dz = None if ("height" in hcam or c.get("floor_from_people", True) is False) else quality.floor_shift(chars, people)
+        if dz:
+            hc2 = float(np.clip(hc + dz, 0.3, 12.0))
+            log("    nobody's feet are in the picture: floor moved %+.2f m to stand the people on it (camera height %.2f -> %.2f m)" % (-dz, hc, hc2))
+            world = World(cam, camj["R"], u, hc2)
+            if hcam.get("path"):
+                world.set_path(hcam["path"], Ns)
+            ginfo = dict(ginfo, camera_height=hc2, floor="under the people (no feet in the picture)", camera_height_before=hc)
+            hc = hc2
+            chars, prep = fit_all(world, y0, people, Ns, c)
         log("    people %.1fs" % (time.time() - tp0))
         boxes = {}
         for p in spose["people"]:
@@ -565,6 +599,15 @@ def run_clip(video, c, args):
         warns.append("no people found")
     rep = {"clip": name, "video": video, "checked": bool(chk_p), "frames": N, "people": prep_all, "shots": shot_rep,
            "ground": shot_rep[0]["ground"], "camera_rotation_deg": max(s["max_rotation_deg"] for s in shot_rep), "warnings": warns}
+    if c.get("_junk"):
+        rep["left_out"] = c["_junk"]
+    rep["lens"] = dict(lens_info or {}, used_mm=c["lens_mm"])
+    try:                                                   # the clip's quality in numbers (quality.py); never stops a clip
+        rep["quality"] = quality.measure(data, pose, y0)
+        log("  quality:"); quality.show(rep["quality"], log)
+        warns += ["quality - " + w for w in rep["quality"]["flags"]]
+    except Exception as e:
+        log("  quality numbers failed: %s" % str(e)[:200])
     info = {"W": W, "Hfull": Hfull, "y0": y0, "Hpic": Hp, "frames": N, "fps": fps}
     jsave(os.path.join(work, "clip_info.json"), dict(info, video=video, desc_path=os.path.join(os.path.dirname(pose_p), "desc.txt")))
     frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder

@@ -7,6 +7,13 @@ NVIDIA card, `Setup.bat` installs the CPU build (`requirements-cpu.txt`) and the
 results, slower. Keep *Clips at once* at 1 there.
 `D:\Shared\Source\3D` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
 
+Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
+- measures the clip's lens from the picture (MoGe-2) instead of the fixed `lens_mm`; `"lens_auto": false` switches it off,
+  and a lens set in `hints.json` or in the review wins;
+- leaves out tracks that are both short and unclear (`"junk_filter": false` switches it off);
+- in half-body shots (no feet in the picture) puts the floor under the people (`"floor_from_people": false`);
+- writes quality numbers and flags into `report.json` and the clip's warnings (`python pipeline\quality.py <clip>`).
+
 ## Start
 
 Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.1:8765.
