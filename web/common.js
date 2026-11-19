@@ -39,9 +39,8 @@ function nav(active) {
   const bar = el('nav', { class: 'topnav' });
   bar.innerHTML = `<a class="brand" href="/"><img src="/favicon.svg" alt=""> Blender Agent</a>` +
     links.map(([h, l, k]) => `<a class="nl${k === active ? ' on' : ''}" href="${h}">${l}</a>`).join('') +
-    `<span class="qind" id="qind" title="Jobs"></span><button class="themebtn" id="themebtn" title="Light / dark theme" aria-label="Switch light or dark theme">◐</button>`;
+    `<span class="qind" id="qind" title="Jobs"></span>`;
   document.body.prepend(bar);
-  $('themebtn').onclick = toggleTheme;
   const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
       $('qind').innerHTML = q.running || q.queued ? `<span class="pulse"></span>${q.running} working · ${q.queued} waiting` : '<span class="idle"></span>idle';
       const base = document.title.replace(/^\(\d+\)\s*/, ''); document.title = (q.running || q.queued ? `(${q.running + q.queued}) ` : '') + base;
@@ -68,12 +67,5 @@ function ask(msg, okLabel) {
   });
 }
 
-// ---- light / dark theme, remembered in this browser
-(function () {
-  let t = null; try { t = localStorage.getItem('ba-theme'); } catch (e) {}
-  if (t) document.documentElement.dataset.theme = t;
-})();
-function toggleTheme() {
-  const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = t; try { localStorage.setItem('ba-theme', t); } catch (e) {}
-}
+// one light theme for the whole app (an older dark-theme choice saved in this browser is cleared)
+try { localStorage.removeItem('ba-theme'); } catch (e) {}

@@ -45,8 +45,8 @@
 <script src="/static/common.js"></script>
 <script>
 nav('clips');
-const GROUPS = [['ready', 'Needs review', '#f0b840'], ['busy', 'Queued or working', '#5aa8f0'], ['conf', 'Reviewed', '#9fd8b0'],
-                ['done', 'Finished', '#5cc27a'], ['fail', 'Failed', '#ef6464'], ['new', 'Not prepared', '#4a5059']];
+const GROUPS = [['ready', 'Needs review', '#e0a83a'], ['busy', 'Queued or working', '#6f97d6'], ['conf', 'Reviewed', '#5fa3a7'],
+                ['done', 'Finished', '#3a9a62'], ['fail', 'Failed', '#d0574f'], ['new', 'Not prepared', '#c6cdd3']];
 let FILTER = 'all', DATA = null;
 
 function render() {
@@ -151,7 +151,7 @@ $('nameall').onclick = async () => {
   folderDialog();
 };
 // Quit lives in the top menu bar, next to the theme switch, not in front of the steps
-const quitBtn = el('button', { class: 'themebtn', id: 'quit', title: 'Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.' }, 'Quit');
+const quitBtn = el('button', { class: 'quitbtn', id: 'quit', title: 'Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.' }, 'Quit');
 document.querySelector('nav.topnav').appendChild(quitBtn);
 $('quit').onclick = async () => { if (!(await ask('Stop Blender Agent? Unfinished jobs wait in the queue for the next Start.', 'Quit'))) return; await post('/api/quit');
   document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };

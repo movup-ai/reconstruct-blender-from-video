@@ -4,51 +4,66 @@
 <meta charset="utf-8">
 <title>Joints</title>
 <style>
+  /* the app's light design system (web/app.css), inlined: this page is also opened on its own */
+  :root { --plaster:#f4f6f7; --paper:#fff; --sunk:#eef1f3; --seam:#dde2e6; --seam-strong:#c6cdd3; --ink:#1e252b; --slate:#5e6a73;
+          --accent:#0f6e74; --accent-hover:#0b5a5f; --accent-tint:#e3f1f1; --ring:rgba(15,110,116,.28); --ok:#1d7a46; --warn:#94600a; color-scheme:light; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: #1d1f22; color: #e6e6e6; font: 14px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  html, body { margin: 0; height: 100%; background: var(--plaster); color: var(--ink);
+               font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-variant-numeric: tabular-nums; }
   body { display: flex; flex-direction: column; }
-  #bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: #2a2d31; border-bottom: 1px solid #3a3e44; flex-wrap: wrap; flex: none; }
-  #bar button, .dlg button { background: #3a3f46; color: #eee; border: 1px solid #4a5058; border-radius: 6px; padding: 5px 9px; cursor: pointer; font: inherit; font-size: 13px; }
-  #bar button:hover, .dlg button:hover { background: #474d55; }
-  #bar button:disabled { opacity: .45; cursor: default; }
-  #bar button.primary, .dlg button.primary { background: #c0392b; border-color: #d9493b; font-weight: 600; }
-  #bar button.ok { background: #2e6b3a; border-color: #3f8a4d; font-weight: 600; }
-  button:focus-visible, a:focus-visible { outline: 2px solid #5aa8f0; outline-offset: 2px; }
-  #bar .sep { width: 1px; height: 22px; background: #4a5058; margin: 0 3px; }
-  #back { color: #9cc8ff; text-decoration: none; margin-right: 4px; }
+  #bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: var(--paper); border-bottom: 1px solid var(--seam); flex-wrap: wrap; flex: none; }
+  #bar button, .dlg button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 11px; background: var(--paper); color: var(--ink);
+    border: 1px solid var(--seam-strong); border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(30,37,43,.06); transition: background-color .12s, border-color .12s; }
+  #bar button:hover, .dlg button:hover { background: var(--sunk); border-color: #b5bdc4; }
+  #bar button:active, .dlg button:active { transform: translateY(1px); box-shadow: none; }
+  #bar button:disabled { background: var(--sunk); color: #8a949c; border-color: var(--seam); box-shadow: none; cursor: default; transform: none; }
+  #bar button.ok, .dlg button.primary { background: var(--accent); border-color: var(--accent-hover); color: #fff; font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 1px 2px rgba(11,90,95,.3); }
+  #bar button.ok:hover, .dlg button.primary:hover { background: var(--accent-hover); }
+  #bar button.ok:disabled { background: var(--accent-tint); color: var(--accent); border-color: #b9d6d8; box-shadow: none; }
+  #bar button.primary { color: var(--accent); border-color: var(--accent); font-weight: 600; }   /* Save, on its own page */
+  button:focus-visible, a:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
+  #bar .sep { width: 1px; height: 22px; background: var(--seam); margin: 0 3px; }
+  #back { color: var(--accent); text-decoration: none; margin-right: 4px; font-weight: 500; }
   #title { font-weight: 600; margin-right: 6px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #frameinfo { min-width: 104px; text-align: center; font-variant-numeric: tabular-nums; }
-  #status { margin-left: auto; color: #9fd39f; font-size: 13px; }
+  #frameinfo { min-width: 104px; text-align: center; color: var(--slate); }
+  #status { margin-left: auto; color: var(--ok); font-size: 13px; }
   body.embed #title, body.embed #back, body.embed #save, body.embed #savesep { display: none; }
   #main { display: flex; flex: 1; min-height: 0; }
-  #wrap { flex: 1; position: relative; overflow: hidden; }
-  #flagbar { position: absolute; left: 0; right: 0; top: 0; z-index: 2; padding: 5px 10px; font-size: 13px; background: rgba(60,40,5,.86); color: #f5c76a; display: none; }
+  #wrap { flex: 1; position: relative; overflow: hidden; background: #e7ebee; }
+  #flagbar { position: absolute; left: 0; right: 0; top: 0; z-index: 2; padding: 6px 12px; font-size: 13px; background: #fbf0d9; color: var(--warn);
+             border-bottom: 1px solid #efdcae; display: none; }
   canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
-  #side { width: 250px; padding: 10px 12px; background: #24272b; border-left: 1px solid #3a3e44; overflow-y: auto; flex: none; }
+  #side { width: 250px; padding: 12px 14px; background: var(--paper); border-left: 1px solid var(--seam); overflow-y: auto; flex: none; }
   #side h3 { margin: 4px 0 6px; font-size: 13.5px; }
-  #people div { padding: 4px 8px; border-radius: 5px; cursor: pointer; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
-  #people div.sel { background: #5a4a10; }
-  #people i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  #people div { padding: 5px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  #people div:hover { background: var(--sunk); }
+  #people div.sel { background: var(--accent-tint); box-shadow: inset 0 0 0 1px #b9d6d8; }
+  #people i { width: 12px; height: 12px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
   #thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  #thumbs button { padding: 2px 6px; border-radius: 4px; background: #3a3f46; color: #ddd; border: 0; cursor: pointer; font: inherit; font-size: 12px; }
-  #thumbs button.cur { outline: 2px solid #f1c40f; }
-  #thumbs button.ok { background: #2e6b3a; }
-  #thumbs button.fixed { background: #24527a; }
-  #thumbs button.flag { box-shadow: inset 0 -3px 0 #f39c12; }
-  .legend { font-size: 12px; color: #aab; margin: 6px 0 0; }
+  #thumbs button { padding: 2px 7px; border-radius: 5px; background: var(--sunk); color: var(--ink); border: 0; cursor: pointer; font: inherit; font-size: 12px; }
+  #thumbs button:hover { background: #e2e7ea; }
+  #thumbs button.cur { box-shadow: 0 0 0 2px var(--accent); }
+  #thumbs button.ok { background: #e2f3e9; color: var(--ok); }
+  #thumbs button.fixed { background: #e4ecf8; color: #2d63b7; }
+  #thumbs button.flag { box-shadow: inset 0 -3px 0 #d98a0b; }
+  #thumbs button.cur.flag { box-shadow: 0 0 0 2px var(--accent), inset 0 -3px 0 #d98a0b; }
+  .legend { font-size: 12px; color: var(--slate); margin: 6px 0 0; }
   .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
   .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-  .note { font-size: 12.5px; color: #b9bec6; margin: 10px 0 0; }
-  details.keys { margin-top: 10px; font-size: 12.5px; color: #bbb; }
-  details.keys summary { cursor: pointer; color: #ddd; }
-  details.keys p { margin: 4px 0; }
-  kbd { background: #3a3f46; border: 1px solid #555; border-radius: 3px; padding: 0 4px; font-size: 12px; }
-  #tip { position: absolute; pointer-events: none; background: rgba(0,0,0,.78); padding: 2px 6px; border-radius: 4px; font-size: 12px; display: none; }
-  .dlgbg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
-  .dlg { background: #2a2d31; border: 1px solid #4a5058; border-radius: 10px; padding: 16px 18px; max-width: 420px; width: 100%; box-shadow: 0 16px 50px #000a; }
-  .dlg p { margin: 0 0 12px; }
+  .note { font-size: 12.5px; color: var(--slate); margin: 12px 0 0; line-height: 1.5; }
+  details.keys { margin-top: 10px; font-size: 12.5px; color: var(--slate); }
+  details.keys summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+  details.keys p { margin: 5px 0; }
+  kbd { background: var(--paper); border: 1px solid var(--seam-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11.5px; font-family: inherit; color: var(--ink); }
+  #tip { position: absolute; pointer-events: none; background: rgba(30,37,43,.88); color: #fff; padding: 2px 7px; border-radius: 5px; font-size: 12px; display: none; }
+  .dlgbg { position: fixed; inset: 0; background: rgba(30,37,43,.32); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+  .dlg { background: var(--paper); border: 1px solid var(--seam); border-radius: 12px; padding: 18px 20px; max-width: 420px; width: 100%;
+         box-shadow: 0 12px 32px rgba(30,37,43,.16), 0 2px 6px rgba(30,37,43,.08); }
+  .dlg p { margin: 0 0 12px; line-height: 1.5; }
   .dlg .opts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-  .dlg .opts button { text-align: left; }
+  .dlg .opts button { justify-content: flex-start; }
   .dlg .row { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 </head>
@@ -78,9 +93,9 @@
     <h3>People in this frame</h3>
     <div id="people"></div>
     <div class="legend"><span>solid = right side</span><span>dashed = left side</span><span>○ = hidden</span></div>
-    <h3 style="margin-top:12px">Key frames <span id="progress" style="color:#9fd39f;font-weight:400"></span></h3>
+    <h3 style="margin-top:14px">Key frames <span id="progress" style="color:var(--slate);font-weight:400"></span></h3>
     <div id="thumbs"></div>
-    <div class="legend"><span><i style="background:#2e6b3a"></i>OK</span><span><i style="background:#24527a"></i>fixed</span><span><i style="background:#3a3f46;box-shadow:inset 0 -3px 0 #f39c12"></i>flagged</span></div>
+    <div class="legend"><span><i style="background:#e2f3e9;box-shadow:inset 0 0 0 1px #1d7a46"></i>OK</span><span><i style="background:#e4ecf8;box-shadow:inset 0 0 0 1px #2d63b7"></i>fixed</span><span><i style="background:#eef1f3;box-shadow:inset 0 -3px 0 #d98a0b"></i>flagged</span></div>
     <p class="note">Only frames you fix or mark <b>OK</b> are used as corrections; the fit trusts them. Other frames keep the detector's own confidence.</p>
     <details class="keys"><summary>Keys</summary>
       <p>Drag a dot to move it · wheel = zoom · drag empty space = move the view</p>
@@ -152,7 +167,7 @@ function dialog(msg, buttons, opts) {
   });
 }
 let statusT = null;
-function say(t, bad) { const s = $('status'); s.textContent = t; s.style.color = bad ? '#f5b041' : '#9fd39f'; clearTimeout(statusT); statusT = setTimeout(() => s.textContent = '', 4000); }
+function say(t, bad) { const s = $('status'); s.textContent = t; s.style.color = bad ? 'var(--warn)' : 'var(--ok)'; clearTimeout(statusT); statusT = setTimeout(() => s.textContent = '', 4000); }
 
 // ---------------------------------------------------------------- undo: a snapshot of the frame before each change
 function remember() { UNDO.push({ i: cur, people: clone(PAGE.frames[cur].people), ok: checked.has(PAGE.frames[cur].f) }); if (UNDO.length > 60) UNDO.shift(); $('undo').disabled = false; }
@@ -175,7 +190,7 @@ const people = () => PAGE.frames[cur].people;
 
 function draw() {
   if (!view) fitView(); if (!view) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#e7ebee'; ctx.fillRect(0, 0, cv.width, cv.height);
   const im = imgs[cur]; ctx.imageSmoothingEnabled = view.s < 2;
   ctx.drawImage(im, view.ox, view.oy, im.width * view.s, im.height * view.s);
   const r = Math.max(3, Math.min(9, 2.2 * view.s)) * devicePixelRatio ** 0.5, lw = devicePixelRatio ** 0.5;
@@ -222,7 +237,7 @@ function ui() {
   const pl = $('people'); pl.innerHTML = '';
   for (const p of people()) {
     const d = document.createElement('div');
-    d.innerHTML = `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' · ' + roleOf(p.id) : ''}</span><span style="margin-left:auto;color:#999">${p.kps.filter(q => q[2] > 0).length}/17</span>`;
+    d.innerHTML = `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' · ' + roleOf(p.id) : ''}</span><span style="margin-left:auto;color:var(--slate)">${p.kps.filter(q => q[2] > 0).length}/17</span>`;
     d.title = 'Select (then S, D…)';
     if (p.id === sel) d.className = 'sel'; d.onclick = () => { sel = sel === p.id ? null : p.id; draw(); }; pl.appendChild(d);
   }
