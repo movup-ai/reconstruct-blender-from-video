@@ -9,16 +9,20 @@ from agent import config
 from agent.clips import Library, folders
 
 c = config.load(); lib = Library(c)
-names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+    names = json.load(fh)
 inv = {v: k for k, v in names.items()}
 sys.stdout.reconfigure(encoding="utf-8")
 for arg in sys.argv[1:]:
     clip = inv.get(arg, arg)
     cl = next(x for x in lib.clips if x.name == clip)
     f = folders(c, cl)
-    pose = json.load(open(f["pose"], encoding="utf-8"))
-    rv = json.load(open(f["review"], encoding="utf-8"))
-    sd = json.load(open(f["scene"], encoding="utf-8"))
+    with open(f["pose"], encoding="utf-8") as fh:
+        pose = json.load(fh)
+    with open(f["review"], encoding="utf-8") as fh:
+        rv = json.load(fh)
+    with open(f["scene"], encoding="utf-8") as fh:
+        sd = json.load(fh)
     print("=== %s  %s  frames %s  shots %s" % (arg, clip, sd["frames"], [s["frames"] for s in sd.get("shots", [])]))
     fit = {str(ch["track_id"]): k for k, ch in sd["chars"].items()}
     people = pose.get("people") or pose.get("tracks") or {}

@@ -28,7 +28,8 @@ IMG_W = 1400                              # frames are served at this width (dot
 
 def _pkg_name(cl):
     try:
-        names = json.load(open(os.path.join(config.ROOT, "data", "package_names.json"), encoding="utf-8"))
+        with open(os.path.join(config.ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+            names = json.load(fh)
         return names.get(cl.name)
     except (OSError, ValueError):
         return None

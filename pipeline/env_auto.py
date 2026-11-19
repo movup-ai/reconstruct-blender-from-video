@@ -877,7 +877,9 @@ def main():
     c = cfg()
     names = list(a.names)
     if a.all:
-        for ln in open(os.path.join(AGENT, "logs", "clip_list.txt"), encoding="utf-8"):
+        with open(os.path.join(AGENT, "logs", "clip_list.txt"), encoding="utf-8") as fh:
+            clip_lines = fh.read().splitlines()
+        for ln in clip_lines:
             if "|" in ln and not ln.startswith("FILM"):
                 nm = ln.split("|")[0].strip()
                 if nm and nm not in names:

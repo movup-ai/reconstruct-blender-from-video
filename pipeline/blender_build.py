@@ -8,7 +8,8 @@ the solved camera, saves model_3d/<name>.blend and optionally renders JPEG frame
 import math, json, os, re, sys
 
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-DATA = json.load(open(ARGS[0], encoding="utf-8"))
+with open(ARGS[0], encoding="utf-8") as fh:
+    DATA = json.load(fh)
 SUBMIT_DIR, WORK_DIR = DATA["submit_dir"], DATA["work_dir"]
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # scene_export.py next to this file
 BLEND_PATH = os.path.join(SUBMIT_DIR, "model_3d", (DATA.get("package_name") or DATA["name"]) + ".blend")   # v2.1: <package>.blend
@@ -137,7 +138,10 @@ def sample_asset():
     if not _ASSET:
         p = DATA.get("character_asset") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                                         "assets", "sample_character.json")
-        _ASSET.append(json.load(open(p, encoding="utf-8")) if os.path.exists(p) else None)
+        _ASSET.append(None)
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as fh:
+                _ASSET[-1] = json.load(fh)
     return _ASSET[0]
 
 def rig(kind, height):
@@ -155,7 +159,8 @@ def rig(kind, height):
     if DATA["chars"][kind].get("style") == "base21":
         # v2.1 supplied base model (assets/base_character_v21.json): its own joints and blocks, white eye + chest bands
         p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "base_character_v21.json")
-        asset = json.load(open(p, encoding="utf-8"))
+        with open(p, encoding="utf-8") as fh:
+            asset = json.load(fh)
         J = [(n, par, S(*o)) for n, par, o in asset["joints"]]
         P = []
         for j in ["chest", "head", "shoulder_L", "elbow_L", "shoulder_R", "elbow_R", "hip_L", "knee_L", "hip_R", "knee_R"]:
@@ -231,7 +236,8 @@ _MASTER = []
 def master_asset():
     """joint table of the official human_master.blend (extract_human_master.py)"""
     if not _MASTER:
-        _MASTER.append(json.load(open(os.path.join(ROOT_DIR, "assets", "human_master.json"), encoding="utf-8")))
+        with open(os.path.join(ROOT_DIR, "assets", "human_master.json"), encoding="utf-8") as fh:
+            _MASTER.append(json.load(fh))
     return _MASTER[0]
 
 def add_master(kind, E, cc, mats, colour, height):

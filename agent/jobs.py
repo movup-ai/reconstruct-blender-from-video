@@ -204,7 +204,8 @@ class Runner:
                 rc, err = -1, "timed out after %d min" % (timeout // 60)
             finally:
                 self.procs.pop(job["id"], None)
-        txt = open(logp, encoding="utf-8", errors="replace").read()
+        with open(logp, encoding="utf-8", errors="replace") as fh:
+            txt = fh.read()
         ok = rc == 0 and err is None and "Traceback" not in txt and (job["stage"] == "ai" or " 0 failed" in txt)
         if not ok and err is None:
             err = last_error(txt) or "exit code %s" % rc

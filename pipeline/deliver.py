@@ -83,7 +83,8 @@ def main():
                     help="film folder keyword|中文名|English title|year (repeatable); default for 隐剑 built in")
     a = ap.parse_args()
     c = config.load(); lib = Library(c)
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
     titles = {"隐剑": ("隐剑鬼爪", "The Hidden Blade", "2004")}
     for m in a.movie:
         k, zh, en, yr = m.split("|"); titles[k] = (zh, en, yr)
@@ -106,7 +107,8 @@ def main():
         log.append("=" * 70 + "\n" + out)
         if code != 0:
             bad.append("%s (%s): check_package.py failed" % (pkg, cl.name)); continue
-        sd = json.load(open(f["scene"], encoding="utf-8"))
+        with open(f["scene"], encoding="utf-8") as fh:
+            sd = json.load(fh)
         title = next((v for k, v in titles.items() if k in cl.film), ("", "", ""))
         rows.append({"package_name": pkg, "version": "v1", "zip_sha256": sha256(zp), "zip_size": os.path.getsize(zp),
                      "comparison_sha256": sha256(cp), "movie_title": title[0], "theme": "",

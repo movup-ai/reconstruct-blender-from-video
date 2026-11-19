@@ -26,7 +26,8 @@ def log(*a):
 def run(cmd, lp):
     with open(lp, "w", encoding="utf-8", errors="replace") as fh:
         rc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, cwd=ROOT, env=dict(os.environ, PYTHONIOENCODING="utf-8")).returncode
-    return rc, open(lp, encoding="utf-8", errors="replace").read()
+    with open(lp, encoding="utf-8", errors="replace") as fh:
+        return rc, fh.read()
 
 
 def one(c, cl, force):
@@ -61,7 +62,8 @@ def main():
     if a.films:
         clips = [cl for cl in clips if any(k in cl.film for k in a.films.split(","))]
     if a.clips:
-        want = {l.strip() for l in open(a.clips, encoding="utf-8") if l.strip()}
+        with open(a.clips, encoding="utf-8") as fh:
+            want = {l.strip() for l in fh if l.strip()}
         clips = [cl for cl in clips if cl.name in want]
     log("start: %d clips" % len(clips))
     with ThreadPoolExecutor(max_workers=a.workers) as pool:

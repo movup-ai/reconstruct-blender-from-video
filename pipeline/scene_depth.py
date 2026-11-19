@@ -81,7 +81,9 @@ def make_plate(frames, y0, world, k, boxes, nmax=15):
         wi[wm == 0] = np.nan
         cover += (wm == 0)
         stack[n] = wi
-    with np.errstate(all="ignore"):
+    import warnings
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)      # pixels covered in every frame: all NaN (filled below)
         plate = np.nanmedian(stack, axis=0)
     holes = np.isnan(plate[..., 0]).astype(np.uint8)
     base = cv2.resize(frames[k][y0:y0 + Hp], (Ws, Hs), interpolation=cv2.INTER_AREA).astype(np.float32)

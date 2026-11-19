@@ -1,11 +1,11 @@
 # Writing a clip's set by hand (env_claude.json)
 
 The client wants a clean, readable grey "white model" set for each clip, like the sample
-`D:\Shared\Source\3D\49243ef628fc30fa1018347eaf6a921d.mp4`: floor, walls, doors, windows, big furniture,
+`SOURCE\3D\49243ef628fc30fa1018347eaf6a921d.mp4`: floor, walls, doors, windows, big furniture,
 trees, rocks, cars, buildings, each as a simple recognisable block model. No people (they come from the local model),
 no tiny props, no textures. Readable beats detailed: 10 to 40 objects per shot is typical.
 
-Everything runs from `D:\Blender-agent` with `.venv\Scripts\python.exe`, `PYTHONIOENCODING=utf-8`.
+Everything runs from the project folder with `.venv\Scripts\python.exe`, `PYTHONIOENCODING=utf-8`.
 
 ## Steps for one clip
 

@@ -32,7 +32,8 @@ def main():
     ap.add_argument("--deg", type=float, default=6.0); ap.add_argument("--acc", type=float, default=5.0)
     ap.add_argument("--move", type=float, default=0.04)
     a = ap.parse_args()
-    d = json.load(open(os.path.join(cfg()["work_root"], a.clip, "scene_data.json"), encoding="utf-8"))
+    with open(os.path.join(cfg()["work_root"], a.clip, "scene_data.json"), encoding="utf-8") as fh:
+        d = json.load(fh)
     chars = d["chars"].items() if isinstance(d["chars"], dict) else enumerate(d["chars"])
     total = 0
     for key, c in chars:

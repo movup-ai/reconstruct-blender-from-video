@@ -24,7 +24,8 @@ A_LIMB = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], float)     # local (y alon
 
 def main():
     src, out = sys.argv[1], sys.argv[2]
-    d = json.load(open(src, encoding="utf-8"))
+    with open(src, encoding="utf-8") as fh:
+        d = json.load(fh)
     P = d["pieces"]
     M = {k: np.array(p["matrix"], float) for k, p in P.items()}
     L = {k: np.array(p["local_v"], float) for k, p in P.items()}
@@ -107,7 +108,8 @@ def main():
     res = {"source": "v2.1 supplied base model (character-base.blend, blender %s), pieces 物理_*" % d.get("blender"),
            "scale_to_1_75": round(k, 5), "sole": sole, "head_centre": round(hc, 5), "head_radius": round(head_r * k, 5),
            "eye_level": round(hc, 5), "joints": joints, "parts": parts}
-    json.dump(res, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(res, fh, ensure_ascii=False)
     print("scale %.4f  pelvis %.3f  neck %.3f  shoulder x %.3f z %.3f  upper %.3f fore %.3f  hip x %.3f thigh %.3f ankle %.3f  head c %.3f r %.3f"
           % (k, pelvis * k, torso_len * k, abs(sh[0]) * k, sh[1] * k, upper * k, fore * k, abs(hip[0]) * k, thigh * k, ankle * k, hc, head_r * k))
     print("marker faces: head %d, chest %d" % (len(parts["head"]["marker_faces"]), len(parts["chest"]["marker_faces"])))

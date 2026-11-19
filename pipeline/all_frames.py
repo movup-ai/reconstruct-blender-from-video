@@ -15,7 +15,9 @@ def main():
     ap.add_argument("--from", dest="f0", type=int, default=0); ap.add_argument("--to", dest="f1", type=int, default=10 ** 6)
     ap.add_argument("--crop", default=""); ap.add_argument("--cols", type=int, default=8); ap.add_argument("--rows", type=int, default=5)
     a = ap.parse_args()
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8")); inv = {v: k for k, v in names.items()}
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
+    inv = {v: k for k, v in names.items()}
     clip = inv.get(a.pkg, a.pkg); c = cfg(); work = os.path.join(c["work_root"], clip)
     ci = jload(os.path.join(work, "clip_info.json")); y0, Hp = ci["y0"], ci["Hpic"]
     frames, _ = read_frames(ci["video"])

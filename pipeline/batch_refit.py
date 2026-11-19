@@ -28,7 +28,8 @@ def one(c, cl):
     with open(lp, "w", encoding="utf-8", errors="replace") as fh:
         rc = subprocess.run([sys.executable, os.path.join(HERE, "run_pipeline.py"), cl.video, "--stage", "fit"],
                             stdout=fh, stderr=subprocess.STDOUT, cwd=ROOT, env=env).returncode
-    txt = open(lp, encoding="utf-8", errors="replace").read()
+    with open(lp, encoding="utf-8", errors="replace") as fh:
+        txt = fh.read()
     ok = rc == 0 and "Traceback" not in txt and " 0 failed" in txt
     shots = txt.count("[shot ") or 1
     if not ok:

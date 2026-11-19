@@ -23,5 +23,6 @@ for o in bpy.data.objects:
         "matrix": [list(r) for r in M],
         "material": me.materials[0].name if me.materials and me.materials[0] else None}
     dg.to_mesh_clear()
-json.dump(res, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+with open(out, "w", encoding="utf-8") as fh:
+    json.dump(res, fh, ensure_ascii=False)
 print("dumped", len(res["pieces"]), "pieces to", out)

@@ -75,7 +75,8 @@ def fit(c, cl):
     with open(lp, "w", encoding="utf-8", errors="replace") as fh:
         rc = subprocess.run([sys.executable, os.path.join(HERE, "run_pipeline.py"), cl.video, "--stage", "fit", "--device", "cuda"],
                             stdout=fh, stderr=subprocess.STDOUT, cwd=ROOT, env=dict(os.environ, PYTHONIOENCODING="utf-8")).returncode
-    txt = open(lp, encoding="utf-8", errors="replace").read()
+    with open(lp, encoding="utf-8", errors="replace") as fh:
+        txt = fh.read()
     ok = rc == 0 and "Traceback" not in txt and " 0 failed" in txt
     log("fit %-40s %s %.0fs" % (cl.name[:40], "ok" if ok else "FAILED (see %s)" % lp, time.time() - t0))
     return ok

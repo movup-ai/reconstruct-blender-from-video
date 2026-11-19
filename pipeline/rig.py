@@ -14,7 +14,8 @@ def style_asset(style):
     if style not in _ASSETS:
         import json, os
         p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", ASSET_FILES[style])
-        _ASSETS[style] = json.load(open(p, encoding="utf-8"))
+        with open(p, encoding="utf-8") as fh:
+            _ASSETS[style] = json.load(fh)
     return _ASSETS[style]
 def base21_asset():
     return style_asset("base21")

@@ -17,8 +17,10 @@ def main():
     ap.add_argument("--out", default=""); ap.add_argument("--crop", default=""); ap.add_argument("--w", type=int, default=760)
     a = ap.parse_args()
     c = cfg(); work = os.path.join(c["work_root"], a.clip)
-    ci = json.load(open(os.path.join(work, "clip_info.json"), encoding="utf-8"))
-    pose = json.load(open(os.path.join(rp.marks_dir(a.video, c), "pose.json"), encoding="utf-8"))
+    with open(os.path.join(work, "clip_info.json"), encoding="utf-8") as fh:
+        ci = json.load(fh)
+    with open(os.path.join(rp.marks_dir(a.video, c), "pose.json"), encoding="utf-8") as fh:
+        pose = json.load(fh)
     N = ci["frames"]; y0 = ci["y0"]
     fr = [int(x) for x in a.frames.split(",")] if a.frames else [int(round(x)) for x in np.linspace(0, N - 1, a.n)]
     cap = cv2.VideoCapture(a.video); rows = []

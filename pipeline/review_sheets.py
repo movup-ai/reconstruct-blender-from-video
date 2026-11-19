@@ -15,12 +15,14 @@ def main():
     ap.add_argument("--only", default=""); ap.add_argument("--n", type=int, default=32, help="frames per clip (8 per sheet)")
     a = ap.parse_args()
     c = cfg(); os.makedirs(a.out, exist_ok=True)
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
     only = set(a.only.split(",")) if a.only else None
     for clip, pkg in names.items():
         if a.films and a.films not in clip or (only and pkg not in only):
             continue
-        d = json.load(open(os.path.join(c["work_root"], clip, "scene_data.json"), encoding="utf-8"))
+        with open(os.path.join(c["work_root"], clip, "scene_data.json"), encoding="utf-8") as fh:
+            d = json.load(fh)
         N = d["frames"]
         if a.n <= 4:
             groups = [[min(N - 1, int(N * x)) for x in (0.05, 0.35, 0.65, 0.95)]]

@@ -419,7 +419,8 @@ class Runner:
                         p.kill(); rc = -9
                     with self.plock:
                         self.procs.discard(p)
-                txt = open(lp, encoding="utf-8", errors="replace").read()
+                with open(lp, encoding="utf-8", errors="replace") as fh:
+                    txt = fh.read()
                 if rc == -9:
                     txt += "\n[queue] timeout after %d min" % st.timeout_min
             ok = st.ok(x, rc, txt)
@@ -540,7 +541,8 @@ class Runner:
             hist[s] = round(0.5 * hist.get(s, sum(m) / len(m)) + 0.5 * sum(m) / len(m), 1)
         try:
             os.makedirs(os.path.dirname(times_path(self.c)), exist_ok=True)
-            json.dump(hist, open(times_path(self.c), "w", encoding="utf-8"), indent=1)
+            with open(times_path(self.c), "w", encoding="utf-8") as fh:
+                json.dump(hist, fh, indent=1)
         except OSError:
             pass
         n_f = sum(r.state == "failed" for r in self.runs)
@@ -617,7 +619,8 @@ def main():
     if a.films:
         clips = [cl for cl in clips if any(k in cl.film for k in a.films.split(","))]
     if a.clips:
-        want = {l.strip() for l in open(a.clips, encoding="utf-8-sig") if l.strip()}
+        with open(a.clips, encoding="utf-8-sig") as fh:
+            want = {l.strip() for l in fh if l.strip()}
         clips = [cl for cl in clips if cl.name in want]
     if c.get("_sandbox"):                                   # (also for --dry-run: the sandbox is a test space)
         seed_sandbox(c, clips)

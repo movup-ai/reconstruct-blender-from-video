@@ -28,5 +28,6 @@ for b in rig.data.bones:
     if b.name.startswith(("DEF-spine", "DEF-upper_arm", "DEF-forearm", "DEF-hand", "DEF-thigh", "DEF-shin", "DEF-foot")):
         res["bones"][b.name] = {"head": list(b.head_local), "tail": list(b.tail_local), "matrix": [list(r) for r in b.matrix_local],
                                 "bbone_segments": b.bbone_segments, "parent": b.parent.name if b.parent else None}
-json.dump(res, open(argv[0], "w", encoding="utf-8"), ensure_ascii=False)
+with open(argv[0], "w", encoding="utf-8") as fh:
+    json.dump(res, fh, ensure_ascii=False)
 print("dumped", len(res["pieces"]), "pieces", len(res["bones"]), "bones")

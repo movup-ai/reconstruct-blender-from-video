@@ -82,7 +82,10 @@ def main():
     if a.no_package:
         return
     desc_p = ci.get("desc_path") or ""
-    desc = open(desc_p, encoding="utf-8").read().strip() if desc_p and os.path.exists(desc_p) else ""
+    desc = ""
+    if desc_p and os.path.exists(desc_p):
+        with open(desc_p, encoding="utf-8") as fh:
+            desc = fh.read().strip()
     sub, zp, meta = pkg.package_lzhd(a.name, a.pkg, a.video, os.path.join(work, "render"), a.out_root, ci, c, desc,
                                      notes=hints.get("notes"))
     print("package", sub, zp)

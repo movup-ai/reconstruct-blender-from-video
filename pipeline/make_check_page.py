@@ -23,14 +23,18 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("pkg"); ap.add_argument("--step", type=int, default=1)
     ap.add_argument("--quality", type=int, default=80)
     a = ap.parse_args()
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8")); inv = {v: k for k, v in names.items()}
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
+    inv = {v: k for k, v in names.items()}
     clip = inv.get(a.pkg, a.pkg)
     c = config.load(); cl = next(x for x in Library(c).clips if x.name == clip); f = folders(c, cl)
-    pose = json.load(open(f["pose"], encoding="utf-8"))
+    with open(f["pose"], encoding="utf-8") as fh:
+        pose = json.load(fh)
     chk = {}
     cp = os.path.join(f["marks"], "checked.json")
     if os.path.exists(cp):
-        chk = json.load(open(cp, encoding="utf-8")).get("frames", {})
+        with open(cp, encoding="utf-8") as fh:
+            chk = json.load(fh).get("frames", {})
     frames, _ = read_frames(cl.video)
     W = frames[0].shape[1]; _, y0, _, hp = pose["picture_area"]; y1 = y0 + hp
     page_frames = []

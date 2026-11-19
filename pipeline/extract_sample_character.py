@@ -101,7 +101,8 @@ ev.to_mesh_clear()
 out = {"source": bpy.data.filepath, "mesh": MESH, "rig": rig.name, "scale_to_1_75": round(S, 5),
        "front_turn_deg": round(yaw.to_euler().z * 57.2958, 1), "parts": parts}
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
-json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False)
+with open(OUT, "w", encoding="utf-8") as fh:
+    json.dump(out, fh, ensure_ascii=False)
 print("ASSET", OUT, "scale", round(S, 4), "turn", out["front_turn_deg"])
 for k, p in parts.items():
     print("PART %-11s verts %3d faces %3d marker %2d length %.3f" % (k, len(p["v"]), len(p["f"]), len(p["marker_faces"]), p["length"]))

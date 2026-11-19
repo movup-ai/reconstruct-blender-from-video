@@ -1,12 +1,12 @@
 # One clip to the LZHD V1.0 spec (11月17日 batch)
 
-Spec: `D:\Shared\Source\LZHD白模视频复刻需求及验收标准.pdf` + palette `D:\Shared\Source\LZHD 白模配色语义色板.pdf`.
+Spec: `SOURCE\LZHD白模视频复刻需求及验收标准.pdf` + palette `SOURCE\LZHD 白模配色语义色板.pdf`.
 The approved trial is **`Dragon_11月17日(22)`**: copy its approach. Its files are the examples:
 `output\Dragon_11月17日(22)\make_env.py` (set from camera rays), `output\Dragon_11月17日(22)\make_stool.py` (moving prop),
 `output\11月17日原始素材191秒\Dragon\11月17日(22)\hints.json` (camera, light, people), `...\review.json` (heights),
 trial package `DELIVERY\lzhd_trial\dragon-22.zip`.
 
-Run everything from `D:\Blender-agent` with `.venv\Scripts\python.exe` and `PYTHONIOENCODING=utf-8`.
+Run everything from the project folder with `.venv\Scripts\python.exe` and `PYTHONIOENCODING=utf-8`.
 Video of a clip: `SOURCE\11月17日原始素材191秒\<Dragon|Swan>\<stem>.mp4`; clip name `<Dragon|Swan>_<stem>`, e.g.
 `Swan_11月17日(5)`. Marks folder (pose.json, review.json, **hints.json**): `output\11月17日原始素材191秒\<film>\<stem>\`.
 Set files (env_claude.json, make_env.py, anim_props.json): `output\<clip name>\`. Work folder: `Work_auto\<clip name>\`.
@@ -51,13 +51,13 @@ Package name: `dragon-<n>` / `swan-<n>` with n = the number in the file name; Dr
 6. **Light.** hints `"light": {"az": deg (0 = from behind the camera, -90 from screen left, 90 right, 180 back
    light), "el": deg, "sun": 1-3, "ambient": 0.3-0.6, "points": [[x, y, z, watts, radius]]}` (indoor pools: ~100-150 W
    at ~2.9 m). Outdoors: sun 2.5-3, ambient 0.6-0.8, no points.
-7. **Render + review.** `pipeline\render_lzhd.py <video> <clip> D:\Blender-agent\DELIVERY\lzhd_batch --pkg <pkg> --no-package`
+7. **Render + review.** `pipeline\render_lzhd.py <video> <clip> DELIVERY\lzhd_batch --pkg <pkg> --no-package`
    (~30-60 s), then `pipeline\lzhd_review.py <video> <clip> --n 8 --out <jpg>` (more frames / `--frames` around
    fast action, `--crop` to zoom) and READ the sheet: every person on their dots, feet on the floor, props in place,
    nothing through anything, occlusion order right. Fix (hints keys / heights / set) and repeat. Usually 2-4 rounds.
-8. **Package.** `pipeline\render_lzhd.py <video> <clip> D:\Blender-agent\DELIVERY\lzhd_batch --pkg <pkg>`: all
+8. **Package.** `pipeline\render_lzhd.py <video> <clip> DELIVERY\lzhd_batch --pkg <pkg>`: all
    `output_checks` must be true. Then the multi-view check:
-   `"C:\Program Files\Blender Foundation\Blender 5.3\blender.exe" -b "DELIVERY\lzhd_batch\<clip>\model_3d\<pkg>.blend" -P pipeline\multiview_check.py -- D:\Blender-agent\DELIVERY\lzhd_batch\multiview_<pkg>.jpg 1,<mid>,<last>`
+   `"C:\Program Files\Blender Foundation\Blender 5.3\blender.exe" -b "DELIVERY\lzhd_batch\<clip>\model_3d\<pkg>.blend" -P pipeline\multiview_check.py -- DELIVERY\lzhd_batch\multiview_<pkg>.jpg 1,<mid>,<last>`
    and look at it (same figure proportions from every view).
 9. Write the final review sheet to `DELIVERY\lzhd_batch\review_<pkg>.jpg` (lzhd_review --n 8).
 

@@ -38,7 +38,8 @@ def swing(a, b):
 
 def main():
     src, out = sys.argv[1], sys.argv[2]
-    d = json.load(open(src, encoding="utf-8"))
+    with open(src, encoding="utf-8") as fh:
+        d = json.load(fh)
     B = {k: {"head": np.array(b["head"]), "M": np.array(b["matrix"])} for k, b in d["bones"].items()}
     P = d["pieces"]
     allv = np.vstack([np.array(p["v"]) for p in P.values()])
@@ -90,7 +91,8 @@ def main():
            "scale_to_1_75": round(k, 5), "rig_height": round(top_z - sole_z, 4), "sole": round(ankle_h * k, 5),
            "head_centre": r5(head_c), "head_radius": round(head_r, 5), "eye_band": r5(mk.mean(0)),
            "eye_band_front": round(float(mk[:, 1].max()), 5), "joints": joints, "bones": bones, "parts": parts}
-    json.dump(res, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(res, fh, ensure_ascii=False)
     print("scale %.4f (rig %.3f m)  pelvis %.3f  neck %s  shoulder %s  upper %.3f fore %.3f  hip %s thigh %.3f shin %.3f  sole %.3f"
           % (k, top_z - sole_z, pelvis_z * k, r5((neck - pel) * k), r5(sh * k), upper * k, fore * k, r5(hip * k), thigh * k, shin * k, ankle_h * k))
     print("head centre %s r %.3f, eye band %s (front y %.3f); marker faces head %d chest %d"

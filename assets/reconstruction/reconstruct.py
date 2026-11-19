@@ -14,7 +14,8 @@ argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 if len(argv) < 2:
     raise SystemExit("usage: blender -b --factory-startup -P reconstruct.py -- scene.json out.blend")
 src, dst = argv[0], argv[1]
-S = json.load(open(src, encoding="utf-8"))
+with open(src, encoding="utf-8") as fh:
+    S = json.load(fh)
 if S.get("schema") != "ba_whitemodel_scene":
     raise SystemExit("not a ba_whitemodel_scene file")
 

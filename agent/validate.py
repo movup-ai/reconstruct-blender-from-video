@@ -67,7 +67,8 @@ def check_package_v21(sub, ff):
     if sorted(d for d in os.listdir(sub) if os.path.isdir(os.path.join(sub, d))) != sorted(SUBDIRS):
         P.append("folders must be exactly: " + ", ".join(SUBDIRS))
     try:
-        meta = json.load(open(os.path.join(sub, "meta", "meta.json"), encoding="utf-8"))
+        with open(os.path.join(sub, "meta", "meta.json"), encoding="utf-8") as fh:
+            meta = json.load(fh)
     except (OSError, ValueError) as e:
         return ["meta/meta.json unreadable: %s" % e], dict(F, white_model={}, comparison={})
     pkg = meta.get("id", "")
@@ -84,7 +85,8 @@ def check_package_v21(sub, ff):
         if k not in meta:
             P.append("meta.json has no " + k)
     try:
-        sj = json.load(open(os.path.join(sub, "model_3d", "reconstruction", "scene.json"), encoding="utf-8"))
+        with open(os.path.join(sub, "model_3d", "reconstruction", "scene.json"), encoding="utf-8") as fh:
+            sj = json.load(fh)
         if not sj.get("objects") or not sj.get("scene"):
             P.append("scene.json has no scene / objects")
     except (OSError, ValueError) as e:
@@ -133,7 +135,8 @@ def check_package_v1(sub, ff=None):
     meta = None
     mp = os.path.join(sub, "meta", "meta.jsonl")
     try:
-        lines = [l for l in open(mp, encoding="utf-8").read().splitlines() if l.strip()]
+        with open(mp, encoding="utf-8") as fh:
+            lines = [l for l in fh.read().splitlines() if l.strip()]
         if len(lines) != 1:
             P.append("meta.jsonl must have exactly one line")
         meta = json.loads(lines[0])

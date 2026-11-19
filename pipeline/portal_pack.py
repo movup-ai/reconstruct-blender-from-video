@@ -79,10 +79,12 @@ def main():
     c = dict(cfg())
     todo = [x for x in clips() if not a.clips or x["clip"] in a.clips.split(",")]
     names_p = os.path.join(ROOT, "data", "package_names.json")
-    names = json.load(open(names_p, encoding="utf-8"))
+    with open(names_p, encoding="utf-8") as fh:
+        names = json.load(fh)
     for x in clips():
         names[x["clip"]] = x["portal"]
-    json.dump(names, open(names_p, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    with open(names_p, "w", encoding="utf-8") as fh:
+        json.dump(names, fh, ensure_ascii=False, indent=1)
     stage = os.path.join(a.out, "_stage"); os.makedirs(stage, exist_ok=True)
     checker = os.path.join(ROOT, "tools", "v21", "check_package.py")
     bad = []
@@ -127,18 +129,23 @@ def main():
         sj = sj.replace("model_3d/%s.blend" % x["lzhd"], "model_3d/%s.blend" % P).replace('"%s.blend"' % x["lzhd"], '"%s.blend"' % P)
         open(os.path.join(md, "reconstruction", "scene.json"), "w", encoding="utf-8").write(sj)
         desc_p = ci.get("desc_path") or ""
-        desc = open(desc_p, encoding="utf-8").read().strip() if desc_p and os.path.exists(desc_p) else ""
+        desc = ""
+        if desc_p and os.path.exists(desc_p):
+            with open(desc_p, encoding="utf-8") as fh:
+                desc = fh.read().strip()
         sub_dir, zp = pkg.package(clip, x["video"], rdir, stage, ci, c, desc)
         # meta/meta.json exactly as the portal's template (same keys, same order, this clip's real values);
         # the extra details package() wrote go into meta/README.md
         mp = os.path.join(sub_dir, "meta", "meta.json")
-        full = json.load(open(mp, encoding="utf-8"))
+        with open(mp, encoding="utf-8") as fh:
+            full = json.load(fh)
         meta = {"id": P, "blender_version": full["blender_version"], "source": "target/original.mp4",
                 "white_model": "white_model/blendervid.mp4", "comparison": "comparison/comparison.mp4",
                 "model_3d": "model_3d/%s.blend" % P, "scene_json_path": "model_3d/reconstruction/scene.json",
                 "frame_start": 1, "frame_end": int(full["frames"]), "frames": int(full["frames"]),
                 "fps": int(full["fps"]), "fps_base": 1, "duration": round(full["frames"] / float(full["fps"]), 6)}
-        json.dump(meta, open(mp, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        with open(mp, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, ensure_ascii=False, indent=2)
         rp = os.path.join(sub_dir, "meta", "README.md")
         extra = {k: v for k, v in full.items() if k not in meta}
         with open(rp, "a", encoding="utf-8") as fh:

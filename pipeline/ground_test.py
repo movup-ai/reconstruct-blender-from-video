@@ -27,7 +27,9 @@ def measure(d):
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8")); inv = {v: k for k, v in names.items()}
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
+    inv = {v: k for k, v in names.items()}
     clip = inv.get(sys.argv[1], sys.argv[1])
     d = jload(os.path.join(cfg()["work_root"], clip, "scene_data.json"))
     d.pop("feet_planted", None)

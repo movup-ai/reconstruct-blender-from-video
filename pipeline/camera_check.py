@@ -35,7 +35,9 @@ def film_pan(frames, boxes, scale):
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8")); inv = {v: k for k, v in names.items()}
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
+    inv = {v: k for k, v in names.items()}
     clip = inv.get(sys.argv[1], sys.argv[1]); c = cfg(); work = os.path.join(c["work_root"], clip)
     ci = jload(os.path.join(work, "clip_info.json")); y0, Hp = ci["y0"], ci["Hpic"]
     frames, _ = read_frames(ci["video"])
@@ -73,14 +75,18 @@ def main():
         paths[str(si)] = [[i, round(float(sy[i]), 2), round(float(sp[i]), 2), 0, 0, 0, 0] for i in k]
     if "--write-hint" in sys.argv:
         hp = os.path.join(ROOT, "output", clip, "hints.json")
-        h = json.load(open(hp, encoding="utf-8")) if os.path.exists(hp) else {}
+        h = {}
+        if os.path.exists(hp):
+            with open(hp, encoding="utf-8") as fh:
+                h = json.load(fh)
         camh = h.setdefault("camera", {})
         if len(paths) == 1:
             camh["path"] = paths["1"]
         else:
             for si, p in paths.items():
                 camh.setdefault("shots", {}).setdefault(si, {})["path"] = p
-        json.dump(h, open(hp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        with open(hp, "w", encoding="utf-8") as fh:
+            json.dump(h, fh, ensure_ascii=False, indent=1)
         print("camera path written to", hp)
 
 

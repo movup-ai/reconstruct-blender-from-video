@@ -17,7 +17,8 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("clip"); ap.add_argument("--step", type=int, default=6)
     a = ap.parse_args()
     c = cfg(); work = os.path.join(c["work_root"], a.clip)
-    d = json.load(open(os.path.join(work, "scene_data.json"), encoding="utf-8"))
+    with open(os.path.join(work, "scene_data.json"), encoding="utf-8") as fh:
+        d = json.load(fh)
     for k, ch in d["chars"].items():
         rig = Rig(ch["height"], ch.get("style", "master")); gaps = []; row = []
         hip_h = float(rig.J[0][2][2]) + 0.05 * rig.s

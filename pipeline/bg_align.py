@@ -65,7 +65,8 @@ def main():
           int(np.abs(gap[:, 0]).argmax()), np.abs(gap[:, 1]).max(), int(np.abs(gap[:, 1]).argmax())))
     if "--fix" in sys.argv:
         hp = os.path.join(ROOT, "output", clip, "hints.json")
-        hj = json.load(open(hp, encoding="utf-8"))
+        with open(hp, encoding="utf-8") as fh:
+            hj = json.load(fh)
         path = sorted(hj["camera"]["path"])
         fr_k = [k[0] for k in path]
         g = gaussian_filter1d(gap, 2.0, axis=0, mode="nearest")
@@ -76,7 +77,8 @@ def main():
             base[1] += g[f, 1] * dpp            # content too low in the render -> tilt up (+pitch)
             new.append([f] + [round(v, 3) for v in base])
         hj["camera"]["path"] = new
-        json.dump(hj, open(hp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        with open(hp, "w", encoding="utf-8") as fh:
+            json.dump(hj, fh, ensure_ascii=False, indent=1)
         print("camera path corrected in", hp)
 
 

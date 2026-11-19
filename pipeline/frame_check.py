@@ -87,7 +87,8 @@ def main():
     ap.add_argument("--err", type=float, default=0.12); ap.add_argument("--csv", default=os.path.join(ROOT, "Work_auto", "frame_check.csv"))
     a = ap.parse_args(); c = cfg()
     sys.stdout.reconfigure(encoding="utf-8")
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
     items = sorted(((k, v) for k, v in names.items() if (not a.pkgs or v in a.pkgs) and a.films in k), key=lambda t: int(t[1].rsplit("-", 1)[1]))
     rows = []
     for clip, pkg in items:

@@ -78,7 +78,8 @@ def main():
             refit.append(cl.name)
     print("clips with duplicates: %d" % len(refit) if a.apply else "")
     if a.apply:
-        json.dump(refit, open(os.path.join(ROOT, "logs", "dedupe_refit.json"), "w", encoding="utf-8"), ensure_ascii=False)
+        with open(os.path.join(ROOT, "logs", "dedupe_refit.json"), "w", encoding="utf-8") as fh:
+            json.dump(refit, fh, ensure_ascii=False)
 
 
 if __name__ == "__main__":

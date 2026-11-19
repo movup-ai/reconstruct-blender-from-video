@@ -224,7 +224,8 @@ def package_name(clip, c=None):
     """v2.1 permanent package name for a clip: data/package_names.json {clip name: "english_title-N"}"""
     p = os.path.join(ROOT, "data", "package_names.json")
     try:
-        names = json.load(open(p, encoding="utf-8"))
+        with open(p, encoding="utf-8") as fh:
+            names = json.load(fh)
     except (OSError, ValueError):
         names = {}
     return names.get(clip)
@@ -353,7 +354,9 @@ def count_frames(ff, path):
 
 def blender_version(render_dir):
     try:
-        for line in open(os.path.join(os.path.dirname(render_dir), "render_done.txt"), encoding="utf-8"):
+        with open(os.path.join(os.path.dirname(render_dir), "render_done.txt"), encoding="utf-8") as fh:
+            done_lines = fh.read().splitlines()
+        for line in done_lines:
             if line.startswith("blender "):
                 return line.split(" ", 1)[1].strip()
     except OSError:

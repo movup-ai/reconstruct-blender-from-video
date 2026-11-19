@@ -49,6 +49,8 @@ def check(clip, out=True):
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8")); inv = {v: k for k, v in names.items()}
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
+    inv = {v: k for k, v in names.items()}
     for a in sys.argv[1:]:
         clip = inv.get(a, a); print("==", a, clip); check(clip)

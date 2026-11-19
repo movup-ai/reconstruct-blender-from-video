@@ -27,7 +27,8 @@ def main():
     ap.add_argument("--angles", default=""); ap.add_argument("--chars", default="")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
-    names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+        names = json.load(fh)
     inv = {v: k for k, v in names.items()}
     clip = inv.get(a.pkg, a.pkg)
     c = config.load(); cl = next(x for x in Library(c).clips if x.name == clip)
@@ -45,7 +46,8 @@ def main():
     if "render" in st:
         p = subprocess.run([PY, os.path.join(HERE, "run_pipeline.py"), cl.video, "--stage", "render"], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
         print("render:", "ok" if p.returncode == 0 and "1 ok" in p.stdout else p.stdout[-1500:] + p.stderr[-800:])
-    sd = json.load(open(os.path.join(c["work_root"], clip, "scene_data.json"), encoding="utf-8"))
+    with open(os.path.join(c["work_root"], clip, "scene_data.json"), encoding="utf-8") as fh:
+        sd = json.load(fh)
     N = sd["frames"]
     if a.angles:
         for kind, ch in sd["chars"].items():

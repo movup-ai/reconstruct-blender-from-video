@@ -635,7 +635,10 @@ def blender_render(c, work, dp, N, extra=("render",)):
 def make_zip(name, video, work, c):
     log("  videos + zip ...")
     ci = jload(os.path.join(work, "clip_info.json"))
-    desc = open(ci["desc_path"], encoding="utf-8").read().strip() if os.path.exists(ci["desc_path"]) else ""
+    desc = ""
+    if os.path.exists(ci["desc_path"]):
+        with open(ci["desc_path"], encoding="utf-8") as fh:
+            desc = fh.read().strip()
     sub, zp = pkg.package(name, video, os.path.join(work, "render"), c["submit_root"], ci, c, desc)
     return {"submission": sub, "zip": zp}
 

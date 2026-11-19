@@ -16,12 +16,14 @@ from agent.clips import Library, folders
 
 sys.stdout.reconfigure(encoding="utf-8")
 c = config.load(); lib = Library(c)
-names = json.load(open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8"))
+with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
+    names = json.load(fh)
 inv = {v: k for k, v in names.items()}
 a = sys.argv[1:]
 clip = inv.get(a[0], a[0]); cl = next(x for x in lib.clips if x.name == clip)
 pp = folders(c, cl)["pose"]
-P = json.load(open(pp, encoding="utf-8"))
+with open(pp, encoding="utf-8") as fh:
+    P = json.load(fh)
 T = {str(p["id"]): p for p in P["people"]}
 
 
@@ -89,5 +91,6 @@ elif op == "drop":
         for k in [k for k in A[key] if f0 <= int(k) <= f1]:
             A[key].pop(k)
 P["people"] = [p for p in P["people"] if p["boxes"]]
-json.dump(P, open(pp, "w", encoding="utf-8"), ensure_ascii=False)
+with open(pp, "w", encoding="utf-8") as fh:
+    json.dump(P, fh, ensure_ascii=False)
 print("ok:", " ".join(a[1:]), "->", {str(p["id"]): len(p["boxes"]) for p in P["people"]})
