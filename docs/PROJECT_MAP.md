@@ -53,7 +53,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 |---|---|---|
 | Detection on the processor used rtmlib's one-crop-at-a-time path | 125 → 98 s, 260 → 85–164 s | Done: batched path |
 | Two depth models per clip | one load saved | Done: shared |
-| Smaller pose models (`"pose_mode": "balanced"`) | detection 87 → 26 s; loses part of small far people | Opt-in setting |
+| Smaller pose models (`"pose_mode": "balanced"`) | detection 87 → 26 s; loses part of small far people | Opt-in setting; owner chose to keep the exact models as default (2026-11-19) |
 | CPU thread count | default fastest of 6 settings | Unchanged |
 | Lower lens-measurement resolution | 1.5–3× faster, lens 5–10% off | Rejected |
 | Caching depth runs | 1 repeat in 17 runs, < 1 s | Rejected |
