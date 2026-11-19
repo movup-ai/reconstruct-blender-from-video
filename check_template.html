@@ -25,6 +25,8 @@
   #thumbs span { padding: 2px 6px; border-radius: 4px; background: #3a3f46; cursor: pointer; font-size: 12px; }
   #thumbs span.cur { outline: 2px solid #f1c40f; }
   #thumbs span.ok { background: #2e6b3a; }
+  #thumbs span.flag { box-shadow: inset 0 -3px 0 #f39c12; }
+  #flaginfo { color: #f5b041; }
   kbd { background: #3a3f46; border: 1px solid #555; border-radius: 3px; padding: 0 4px; font-size: 12px; }
   .help p { margin: 4px 0; color: #bbb; font-size: 12.5px; }
   #tip { position: absolute; pointer-events: none; background: rgba(0,0,0,.75); padding: 2px 6px; border-radius: 4px; font-size: 12px; display: none; }
@@ -36,6 +38,8 @@
   <button id="prev">&#9664; Prev</button>
   <span id="frameinfo"></span>
   <button id="next">Next &#9654;</button>
+  <button id="nextflag" title="Next frame where the 3D fit moved suddenly">Next flagged (F)</button>
+  <span id="flaginfo"></span>
   <span class="sep"></span>
   <button id="ok">OK &#10003; (Enter)</button>
   <button id="swap">Swap L/R (S)</button>
@@ -61,6 +65,7 @@
       <p>Right-click a dot (or <kbd>H</kbd>) = hidden / not visible.</p>
       <p>Click a person's dot to select them. <kbd>S</kbd> swaps left/right, <kbd>D</kbd> deletes a wrong detection, <kbd>A</kbd> adds a missed person.</p>
       <p><kbd>Enter</kbd> = frame is OK, go to next. <kbd>&larr;</kbd> <kbd>&rarr;</kbd> = change frame.</p>
+      <p>Frames with an <b style="color:#f39c12">orange line</b> are where the 3D person moved suddenly: check those first (<kbd>F</kbd> = next one). The editor opens on the first of them.</p>
       <p>When all frames are green, press <b>Save</b> (<kbd>Ctrl</kbd>+<kbd>S</kbd>). In the app it is saved for you; opened on its own, keep <code>checked.json</code> next to check.html.</p>
     </div>
   </div>
@@ -81,6 +86,21 @@ if (window.APP_CHECKED) {                      // opened from the app: start fro
 }
 const N_ = PAGE.kp_names.length;
 document.getElementById('title').textContent = PAGE.clip;
+// flagged frames: the app passes APP_FLAGGED {person id: [frames where the fitted person moved suddenly]}.  Each key
+// frame scores the sudden movements within half a step of it, of the people shown in it; the worst quarter of the
+// key frames (at least 2 movements) is flagged, and F / Enter visit them worst first.
+const STEP = PAGE.frames.length > 1 ? PAGE.frames[1].f - PAGE.frames[0].f : 8;
+const NEAR = PAGE.frames.map(fr => fr.people.map(p => [p.id, ((window.APP_FLAGGED || {})[p.id] || [])
+  .filter(f => Math.abs(f - fr.f) <= STEP / 2).length]).filter(x => x[1] > 0));
+const SCORE = NEAR.map(x => x.reduce((a, b) => a + b[1], 0));
+const RANK = SCORE.map((s, i) => i).filter(i => SCORE[i] >= 2).sort((a, b) => SCORE[b] - SCORE[a])
+  .slice(0, Math.max(3, Math.ceil(PAGE.frames.length / 4)));
+const FLAGS = PAGE.frames.map((fr, i) => RANK.includes(i) ? NEAR[i].map(x => 'P' + x[0]) : []);
+function nextFlagged(from) {
+  const left = RANK.filter(i => i !== from && !checked.has(PAGE.frames[i].f));
+  return left.length ? left[0] : -1;
+}
+{ const first = nextFlagged(-1); if (first >= 0) cur = first; }
 
 function fitView() {
   const im = imgs[cur]; if (!im.width) return;
@@ -126,6 +146,10 @@ function draw() {
 function ui() {
   const f = PAGE.frames[cur].f;
   document.getElementById('frameinfo').textContent = `frame ${f}  (${cur + 1}/${PAGE.frames.length})` + (checked.has(f) ? '  ✓' : '');
+  const nf = FLAGS.filter((x, i) => x.length && !checked.has(PAGE.frames[i].f)).length;
+  document.getElementById('flaginfo').textContent = (FLAGS[cur].length ? `⚠ ${FLAGS[cur].join(', ')} moved suddenly near here · ` : '') +
+    (FLAGS.some(x => x.length) ? `${nf} flagged frame(s) left` : '');
+  document.getElementById('nextflag').style.display = FLAGS.some(x => x.length) ? '' : 'none';
   const pl = document.getElementById('people'); pl.innerHTML = '';
   for (const p of people()) {
     const d = document.createElement('div'); d.textContent = `P${p.id}  (${p.kps.filter(q => q[2] > 0).length}/17 visible)`;
@@ -135,7 +159,9 @@ function ui() {
   const th = document.getElementById('thumbs'); th.innerHTML = '';
   PAGE.frames.forEach((fr, i) => {
     const s = document.createElement('span'); s.textContent = fr.f;
-    s.className = (i === cur ? 'cur ' : '') + (checked.has(fr.f) ? 'ok' : ''); s.onclick = () => go(i); th.appendChild(s);
+    s.className = (i === cur ? 'cur ' : '') + (checked.has(fr.f) ? 'ok ' : '') + (FLAGS[i].length ? 'flag' : '');
+    if (FLAGS[i].length) s.title = FLAGS[i].join(', ') + ' moved suddenly near this frame';
+    s.onclick = () => go(i); th.appendChild(s);
   });
   document.getElementById('progress').textContent = `${checked.size}/${PAGE.frames.length} OK`;
 }
@@ -200,7 +226,8 @@ function copyPrev() {
   PAGE.frames[cur].people = JSON.parse(JSON.stringify(PAGE.frames[cur - 1].people)); dirty = true; draw();
 }
 function go(i) { cur = Math.max(0, Math.min(PAGE.frames.length - 1, i)); hover = null; fitView(); draw(); }
-function okNext() { checked.add(PAGE.frames[cur].f); dirty = true; if (cur < PAGE.frames.length - 1) go(cur + 1); else draw(); }
+function okNext() { checked.add(PAGE.frames[cur].f); dirty = true; const nf = FLAGS[cur].length ? nextFlagged(cur) : -1;  // flagged frames first
+  if (nf >= 0) go(nf); else if (cur < PAGE.frames.length - 1) go(cur + 1); else draw(); }
 async function save() {
   const out = { clip: PAGE.clip, video: PAGE.video, picture_area: PAGE.picture_area, saved: new Date().toISOString(),
     checked_frames: [...checked].sort((a, b) => a - b), frames: {} };
@@ -227,6 +254,7 @@ async function save() {
 }
 document.getElementById('prev').onclick = () => go(cur - 1);
 document.getElementById('next').onclick = () => go(cur + 1);
+document.getElementById('nextflag').onclick = () => { const i = nextFlagged(cur); if (i >= 0) go(i); };
 document.getElementById('ok').onclick = okNext;
 document.getElementById('swap').onclick = swapLR;
 document.getElementById('del').onclick = delPerson;
@@ -241,6 +269,7 @@ window.addEventListener('keydown', e => {
   else if (k === 's' && !e.ctrlKey) swapLR(); else if (k === 'd' || k === 'delete') delPerson(); else if (k === 'a') addPerson();
   else if (k === 'c' && !e.ctrlKey) copyPrev(); else if (k === 'r') { fitView(); draw(); }
   else if (k === 'h' && hover) toggleHidden(hover);
+  else if (k === 'f') { const i = nextFlagged(cur); if (i >= 0) go(i); }
   else if (k === 's' && e.ctrlKey) { e.preventDefault(); save(); }
 });
 window.addEventListener('message', e => {           // the app's "Confirm & continue" button

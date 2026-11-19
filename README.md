@@ -25,15 +25,20 @@ Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.
 
 ## Work
 
-1. **Prepare.** The local models find people, joints, camera, cuts, ground and set for each clip. Use *Prepare all clips*,
-   or set **Autopilot → Prepare only**.
-2. **Review.** Open a clip marked *ready for review*. Click each person's role (主角色 red, 第二角色 blue, 第三角色 green,
-   第四角色 yellow, or *Not a person*), check the camera and set, add held objects, and write a short description.
-3. **Confirm & render.** The clip is built in Blender with the client's sample character, rendered and packaged into
-   `Submit_auto\<film>_<clip>\` + `.zip`. The next clip that needs review opens.
+1. **Choose source folder** on the Clips page (any folder; the videos stay there). Type an English title once: videos
+   without a v2.1 package name get `title-1`, `title-2`… in file-name order (saved in `data\package_names.json`).
+   Joints, work files and packages still go to `output\`, `Work_auto\` and `SUBMIT\`; joints of a folder other than
+   `SOURCE\` go to `output\_sources\<folder>_<id>\`, so two folders with the same file names never share them.
+2. **Prepare** starts by itself (Autopilot → Prepare only). The Clips page shows each video's step and progress.
+3. **Review** a clip marked *ready for review*: **1 Who is who** (cards saying *Not a person?* look like a statue, a
+   picture or a false detection; one click, then *Re-check*), **2 Joints** (the editor opens on the frames where the
+   fitted person moved suddenly), **3 Objects**. Press **✓ Reviewed**.
+4. **Finish all reviewed** (or **Finish** on one clip): final fit, set, Blender, videos and the v2.1 zip in `SUBMIT\`.
+   A clip whose roles, joints, objects, hints and notes are unchanged since its last Finish is skipped
+   (`Work_auto\<clip>\finished.json` holds the fingerprint).
 
-**Autopilot → Full auto** does all three steps on its own. If a DeepSeek key is saved, DeepSeek checks the people and
-the set first. You can still open any clip, change it and confirm again.
+**Autopilot → Full auto** does steps 2–4 on its own, without a review. If a DeepSeek key is saved, DeepSeek checks the
+people and the set first. You can still open any clip, change it and finish again.
 
 The start page also has: *Clips at once* (parallel jobs), *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.
 

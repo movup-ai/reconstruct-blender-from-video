@@ -150,7 +150,9 @@ def measure(data, pose, y0):
         row["frames"] = vis
         t = tracks.get(ch.get("track_id"))
         try:
-            row["jumps_per_100"] = round(100.0 * len(jumps(ch)) / max(vis, 1), 1)
+            jf = jumps(ch)
+            row["jumps_per_100"] = round(100.0 * len(jf) / max(vis, 1), 1)
+            row["jump_frames"] = [int(f) for f in jf[:500]]     # the joint editor opens on these first
             g = foot_gap(ch)
             row["foot_gap_m"] = None if g is None else round(g, 3)
             if t is not None:

@@ -9,7 +9,7 @@ Automatic white-model pipeline:  video  ->  finished submission folder + zip, no
   stage all   : everything, then white_model / comparison videos, meta.jsonl and the zip
 Uses output\\<clip>\\checked.json when a checker saved one, otherwise the automatic marks.
 """
-import os, sys, re, glob, json, time, subprocess, argparse, traceback
+import os, sys, re, glob, hashlib, json, time, subprocess, argparse, traceback
 import numpy as np, cv2
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 from common import *
@@ -46,9 +46,20 @@ def clip_name(path, c=None):
     stem = os.path.splitext(os.path.basename(path))[0]
     return re.sub(r'[\\/:*?"<>|\s]+', "_", film_short(path, c) + "_" + stem).strip("_") or "clip"
 
-def marks_dir(video, c):
-    """automark mirrors the Source layout under output\\ (--base source_root)"""
+def marks_base(c):
+    """where automark writes: output\\ for the project's SOURCE folder; output\\_sources\\<folder>_<id>\\ for any
+    other source folder picked in the app, so two folders with the same file names never share joints"""
     out = c.get("marks_root") or os.path.join(AGENT, "output")
+    root = c.get("source_root")
+    if root and os.path.normcase(os.path.abspath(root)) != os.path.normcase(os.path.join(AGENT, "SOURCE")):
+        full = os.path.abspath(root)
+        key = re.sub(r'[\\/:*?"<>|\s]+', "_", os.path.basename(full.rstrip("\\/")))[:30] or "folder"
+        out = os.path.join(out, "_sources", "%s_%s" % (key, hashlib.sha1(os.path.normcase(full).encode("utf-8")).hexdigest()[:6]))
+    return out
+
+def marks_dir(video, c):
+    """automark mirrors the Source layout under marks_base() (--base source_root)"""
+    out = marks_base(c)
     stem = os.path.splitext(os.path.basename(video))[0]
     root = c.get("source_root")
     rel = os.path.relpath(os.path.dirname(os.path.abspath(video)), root) if root else ""
@@ -60,7 +71,7 @@ def load_review(video, c):
     return jload(p) if os.path.exists(p) else None
 
 def find_marks(video, c, device):
-    out = c.get("marks_root") or os.path.join(AGENT, "output")
+    out = marks_base(c)
     d = marks_dir(video, c)
     if not os.path.exists(os.path.join(d, "pose.json")):
         log("  no marks yet - running automark")

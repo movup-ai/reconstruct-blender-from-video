@@ -32,7 +32,7 @@ function render() {
     return `<tr><td><b>${esc(p.name)}</b><div class="small muted">${p.resolution ? p.resolution.join(' × ') : ''}</div></td>
       <td>${p.duration ? p.duration.toFixed(1) + ' s' : ''}</td><td>${p.zip_mb ? p.zip_mb + ' MB' : '<span class="bad">no zip</span>'}</td><td class="small">${esc(p.made)}</td><td>${chk}</td>
       <td style="white-space:nowrap"><button data-play="${esc(p.name)}">&#9654; Play</button> <button data-open="${esc(p.folder)}">Folder</button> ${p.zip ? `<a class="btn" href="/download/${encodeURIComponent(p.name)}">&#8681; Zip</a>` : ''}</td></tr>`; }).join('')
-    : '<tr><td colspan="6" class="empty">No packages yet. Confirm clips on the Clips page; each one lands here when it has rendered.</td></tr>';
+    : '<tr><td colspan="6" class="empty">No packages yet. Review clips on the Clips page and press Finish all reviewed; each one lands here when it is finished.</td></tr>';
   document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(b.dataset.open));
   document.querySelectorAll('[data-play]').forEach(b => b.onclick = () => { $('player').style.display = ''; $('ptitle').textContent = b.dataset.play + ' · comparison';
     $('pvid').src = `/package/${encodeURIComponent(b.dataset.play)}/comparison`; $('pvid').play(); window.scrollTo({ top: 0, behavior: 'smooth' }); });

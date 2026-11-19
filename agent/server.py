@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -20,6 +21,7 @@ from . import APP_NAME, __version__, config
 from .clips import Library, folders, status, read_json
 from .jobs import JobStore, Runner
 from . import review, media, ai, brief
+import package as pkg  # pipeline (on sys.path through config)
 
 log = logging.getLogger("agent.server")
 
@@ -107,7 +109,7 @@ class App:
                "prev": self.lib.clips[idx - 1].id if idx > 0 else None,
                "next": self.lib.clips[idx + 1].id if 0 <= idx < len(self.lib.clips) - 1 else None,
                "next_review": self.next_to_review(cl.id), "defaults": {"height": c["person_height"], "lens": c["lens_mm"]},
-               "ai_ready": self.ai_ready()}
+               "ai_ready": self.ai_ready(), "package": pkg.package_name(cl.name)}
         pose = read_json(f["pose"])
         if pose:
             media.person_crops(c, cl)
@@ -116,13 +118,18 @@ class App:
             for p in rep.get("people", []):
                 fitted.setdefault(str(p["track"]), []).append(p)
             aip = (read_json(f["ai"], {}) or {}).get("people", {})
+            flags = person_flags(rep)
+            jf = {int(round(fr / 8.0)) for fs in jump_frames(rep).values() for fr in fs}    # joint editor: every 8th frame
+            out["flagged"] = min(len(jf), max(3, -(-(pose["frames"] // 8 + 1) // 4))) if jf else 0  # the editor flags its worst quarter
             out["people"] = []
             for p in pose["people"]:
                 fs = sorted(int(x) for x in p["frames"])
                 fit = fitted.get(str(p["id"])) or []
                 out["people"].append({"id": p["id"], "frames": len(fs), "first": fs[0], "last": fs[-1],
                                       "fit_px": fit[0]["median_error_px"] if fit else None,
-                                      "shots": sorted({q.get("shot", 1) for q in fit}), "ai": aip.get(str(p["id"]))})
+                                      "shots": sorted({q.get("shot", 1) for q in fit}), "ai": aip.get(str(p["id"])),
+                                      "flags": (flags.get(str(p["id"])) or {}).get("flags", []),
+                                      "not_person": (flags.get(str(p["id"])) or {}).get("not_person")})
             out.update(frames=pose["frames"], fps=round(pose["fps"], 3), size=[pose["width"], pose["height"]])
             cam = read_json(os.path.join(f["work"], "camera.json"))
             if cam:
@@ -161,6 +168,52 @@ class App:
                 out["job"].update(job_progress(c, cl, job))
         return out
 
+    # ------------------------------------------------------------ the simple flow: folder -> prepare -> review -> Finish
+    def use_folder(self, path, title):
+        """make <path> the source folder: package names for its new videos, then every video is prepared"""
+        scan = folder_scan(self.c, path, title)
+        if scan["unnamed"] and not scan["slug"]:
+            raise HttpError(400, "type an English title for this folder (letters and numbers), e.g. the hidden blade")
+        upd = {"source_root": scan["path"]}
+        if self.c["autopilot"] == "off":                       # preparing starts by itself
+            upd["autopilot"] = "prepare"
+        self.c = config.save(upd)
+        self.lib.c = self.c
+        self.lib.rescan()
+        new = pkg.assign_names([cl.name for cl in self.lib.clips], scan["title"])
+        queued = sum(1 for cl, st in self.status_all() if not st["fit"] and self.store.enqueue(cl.id, "fit"))
+        self.runner.wake()
+        log.info("source folder %s: %d videos, %d new package names, %d queued", scan["path"], len(self.lib.clips), len(new), queued)
+        return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "queued": queued, "clashes": self.lib.clashes}
+
+    def finish(self, cl, force=False):
+        """queue the final job (fit, set, Blender, videos, v2.1 zip) for a reviewed clip.
+        -> "queued" | "unchanged" (same input as the last Finish) | "busy" | an error"""
+        st = status(self.c, cl, self.store.latest_for(cl.id))
+        if not st["fit"]:
+            raise HttpError(409, "prepare the clip first")
+        if not pkg.package_name(cl.name):
+            raise HttpError(409, "%s has no v2.1 package name yet: choose its folder again on the Clips page and type a title" % cl.name)
+        if not st["confirmed"]:
+            raise HttpError(409, "mark the clip reviewed first")
+        if st["done"] and not force:
+            return "unchanged"
+        if st["job"] and st["job"]["state"] in ("queued", "running"):
+            return "busy"
+        return "queued" if self.store.enqueue(cl.id, "all", force=True) else "busy"
+
+    def finish_reviewed(self):
+        out = {"queued": 0, "unchanged": 0, "busy": 0, "no_name": 0}
+        for cl, st in self.status_all():
+            if not st["confirmed"] or not st["fit"]:
+                continue
+            if not pkg.package_name(cl.name):
+                out["no_name"] += 1
+                continue
+            out[self.finish(cl)] += 1
+        self.runner.wake()
+        return out
+
     def report_rows(self):
         rows = []
         for cl, st in self.status_all():
@@ -174,39 +227,144 @@ class App:
 
 
 # ---------------------------------------------------------------- progress, advice, submissions
+# where each step starts, % of the job (measured on this PC: finding people is about half of a first preparation;
+# a Finish reuses the people found and the lens, and spends its time on the camera, the set and Blender)
+STEPS = {"fit": [("  marks:", 45, "measuring the lens"), ("  camera ...", 58, "solving the camera"),
+                 ("  people ...", 75, "fitting 3D people"), ("  set ...", 84, "building the set"), ("  quality:", 96, "checking the result")],
+         "all": [("  marks:", 3, "measuring the lens"), ("  camera ...", 6, "solving the camera"),
+                 ("  people ...", 25, "fitting 3D people"), ("  set ...", 33, "building the set"), ("  quality:", 50, "checking the result")]}
+
+
 def job_progress(c, cl, job):
     """{pct, step} from the job's log and the rendered frames"""
     f = folders(c, cl)
     lp = job.get("log") or os.path.join(f["work"], "job_%s.log" % job["stage"])
     try:
         with open(lp, encoding="utf-8", errors="replace") as fh:
-            fh.seek(max(0, os.path.getsize(lp) - 20000))
+            fh.seek(max(0, os.path.getsize(lp) - 60000))
             txt = fh.read()
     except OSError:
         return {"pct": 0, "step": "starting"}
     if job["stage"] == "ai":
         return {"pct": 50 if "environment" not in txt else 85, "step": "DeepSeek is looking at the clip"}
-    pct, step = 2, "starting"
-    m = re.findall(r"frame (\d+)/(\d+)\s+people", txt)
-    if m:
+    pct, step = 1, "starting"
+    m = re.findall(r"detected (\d+) frames \(frame \d+/(\d+)", txt)      # frames done so far (the frame number jumps:
+    if m:                                                                # the detector runs over the clip in passes)
         a, b = int(m[-1][0]), int(m[-1][1])
-        pct, step = 2 + 38 * a / max(b, 1), "finding people (frame %d of %d)" % (a, b)
-    for key, p, s in (("camera ...", 42, "solving the camera"), ("people ...", 50, "fitting 3D people"), ("set ...", 62, "building the set")):
+        pct, step = 2 + 43 * min(a, b) / max(b, 1), "finding people (%d of %d frames)" % (min(a, b), b)
+    for key, p, s in STEPS.get(job["stage"], STEPS["fit"]):
         if key in txt:
             pct, step = p, s
     shots = re.findall(r"\[shot (\d+): frames", txt)
-    if shots:
+    if shots and "  quality:" not in txt:
         step += " (shot %s)" % shots[-1]
     m = re.search(r"blender build \+ render \((\d+) frames\)", txt)
     if m:
         n = int(m.group(1))
         done = len(glob.glob(os.path.join(f["work"], "render", "wm_*.jpg")))
-        pct, step = 70 + 22 * min(done, n) / max(n, 1), "rendering frame %d of %d" % (min(done, n), n)
+        pct, step = 55 + 35 * min(done, n) / max(n, 1), "rendering frame %d of %d" % (min(done, n), n)
     if "videos + zip" in txt:
-        pct, step = 94, "encoding videos and zipping"
-    if job["stage"] == "fit":
-        pct = min(99, pct / 0.7 if pct <= 62 else 99)
+        pct, step = 92, "encoding the videos and packing the zip"
     return {"pct": round(min(pct, 99)), "step": step}
+
+
+def person_flags(rep):
+    """report.json -> {track id: {"flags": [...], "not_person": reason or None}}: what the quality check found per
+    detected person, and whether it looks like a statue / picture / junk (a suggestion only, never applied)"""
+    out = {}
+    for r in (rep.get("quality") or {}).get("people", []):
+        d = out.setdefault(str(r.get("track")), {"flags": [], "not_person": None})
+        for w in r.get("flags", []):
+            if "pose never changes" in w:
+                d["not_person"] = "the pose never changes, like a statue or a picture"
+            elif w not in d["flags"]:
+                d["flags"].append(w)
+    for j in rep.get("left_out", []) or []:
+        d = out.setdefault(str(j.get("track")), {"flags": [], "not_person": None})
+        d["not_person"] = "left out of the fit: %s" % j.get("why", "short and unclear")
+    return out
+
+
+def jump_frames(rep, stitched=None):
+    """report.json -> {person id in the joint editor: [frames where the fitted person moved suddenly]}.
+    The editor numbers people as automark found them; a track the fit joined (pose.json "stitched" {old: new})
+    shows there under its old number too."""
+    out = {}
+    for r in (rep.get("quality") or {}).get("people", []):
+        if r.get("jump_frames"):
+            out.setdefault(str(r.get("track")), []).extend(r["jump_frames"])
+    for old, new in (stitched or {}).items():
+        if str(new) in out:
+            out[str(old)] = list(out[str(new)])
+    return out
+
+
+def check_page(c, cl):
+    """the joint editor for a clip: the CURRENT check_template.html filled with the clip's frames (taken from the
+    check.html automark wrote), so editor updates reach clips prepared earlier"""
+    f = folders(c, cl)
+    p = os.path.join(f["marks"], "check.html")
+    if not os.path.exists(p):
+        raise HttpError(404, "this clip has no marks yet")
+    with open(p, encoding="utf-8") as fh:
+        html = fh.read()
+    a = html.find("const PAGE = "); b = html.find("\nconst cv = ", a)
+    tp = os.path.join(config.ROOT, "check_template.html")
+    if a >= 0 and b > a and os.path.exists(tp):
+        with open(tp, encoding="utf-8") as fh:
+            tpl = fh.read()
+        data = html[a + len("const PAGE = "):b].rstrip().rstrip(";")
+        if "__PAGE_DATA__" in tpl:
+            html = tpl.replace("__PAGE_DATA__", data, 1)
+    return html
+
+
+PICK_LOCK = threading.Lock()
+PICK_SCRIPT = r"""
+import sys, tkinter as tk
+from tkinter import filedialog
+r = tk.Tk(); r.withdraw(); r.attributes("-topmost", True); r.update()
+p = filedialog.askdirectory(parent=r, initialdir=sys.argv[1], mustexist=True, title="Choose the folder with the source videos")
+sys.stdout.write(p or "")
+"""
+
+
+def pick_folder(start):
+    """the Windows folder dialog, opened on this PC by the server (a web page cannot hand back a folder path)"""
+    if not PICK_LOCK.acquire(blocking=False):
+        raise HttpError(409, "the folder window is already open - look for it on the taskbar")
+    try:
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        r = subprocess.run([sys.executable, "-c", PICK_SCRIPT, start if os.path.isdir(start) else os.path.expanduser("~")],
+                           capture_output=True, timeout=1800, env=env)
+        p = r.stdout.decode("utf-8", "replace").strip()
+        return os.path.normpath(p) if p else None
+    finally:
+        PICK_LOCK.release()
+
+
+def title_guess(names):
+    """the English title already used for these clips, else ''"""
+    for v in names:
+        if v:
+            return v.rsplit("-", 1)[0].replace("_", " ")
+    return ""
+
+
+def folder_scan(c, path, title=""):
+    """what picking <path> as the source folder would do: its videos, their clip and package names"""
+    if not path or not os.path.isabs(path) or not os.path.isdir(path):
+        raise HttpError(400, "not a folder: %s" % path)
+    c2 = dict(c, source_root=os.path.abspath(path))
+    lib = Library(c2)
+    names = pkg.package_names()
+    title = title or title_guess(names.get(cl.name) for cl in lib.clips)
+    plan = pkg.propose_names([cl.name for cl in lib.clips], title, names)
+    rows = [{"file": cl.rel, "clip": cl.name, "package": plan[cl.name][0], "new_name": plan[cl.name][1],
+             "prepared": os.path.exists(folders(c2, cl)["pose"])} for cl in lib.clips]
+    return {"path": c2["source_root"], "title": title, "slug": pkg.title_slug(title), "videos": rows,
+            "unnamed": sum(1 for r in rows if not r["package"]), "clashes": lib.clashes,
+            "current": os.path.normcase(c2["source_root"]) == os.path.normcase(os.path.abspath(c["source_root"]))}
 
 
 ADVICE = [
@@ -414,6 +572,7 @@ def make_handler(app):
         def get(self):
             u = urlparse(self.path)
             parts = [unquote(x) for x in u.path.strip("/").split("/") if x]
+            q = parse_qs(u.query)
             c = app.c
             if not parts:
                 return self.page("index.html")
@@ -450,8 +609,13 @@ def make_handler(app):
             if parts == ["api", "health"]:
                 return self.send(200, app.health())
             if parts == ["api", "clips"]:
-                return self.send(200, {"clips": [dict(cl.to_dict(), status=st) for cl, st in app.status_all()],
-                                       "queue": app.queue_summary(), "ai_ready": app.ai_ready()})
+                names = pkg.package_names()
+                return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name)) for cl, st in app.status_all()],
+                                       "queue": app.queue_summary(), "ai_ready": app.ai_ready(),
+                                       "source": {"path": c["source_root"], "exists": os.path.isdir(c["source_root"]),
+                                                  "clashes": app.lib.clashes}})
+            if parts == ["api", "folder"]:                              # what picking a folder would do
+                return self.send(200, folder_scan(c, (q.get("path") or [""])[0], (q.get("title") or [""])[0]))
             if parts == ["api", "settings"]:
                 out = {k: c.get(k) for k in config.EDITABLE if k not in config.SECRETS}
                 out["deepseek_key_set"] = bool(ai.api_key(c))
@@ -476,13 +640,11 @@ def make_handler(app):
                                  {"Content-Disposition": 'attachment; filename="blender_agent_report.csv"'})
             if parts[0] == "check" and len(parts) == 2:             # marks editor, saving back to the app
                 cl = app.clip(parts[1]); f = folders(c, cl)
-                p = os.path.join(f["marks"], "check.html")
-                if not os.path.exists(p):
-                    raise HttpError(404, "this clip has no marks yet")
-                with open(p, encoding="utf-8") as fh:
-                    html = fh.read()
+                html = check_page(c, cl)
                 chk = sorted(glob.glob(os.path.join(f["marks"], "checked*.json")), key=os.path.getmtime)
                 inj = "<script>window.APP_SAVE='/api/clip/%s/marks';" % cl.id
+                inj += "window.APP_FLAGGED=" + json.dumps(jump_frames(read_json(os.path.join(f["work"], "report.json"), {}) or {},
+                                                                      (read_json(f["pose"], {}) or {}).get("stitched"))) + ";"
                 if chk:
                     with open(chk[-1], encoding="utf-8") as fh:
                         inj += "window.APP_CHECKED=" + fh.read() + ";"
@@ -581,7 +743,11 @@ def make_handler(app):
                         os.startfile(p)
                 return self.send(200, {"ok": True})
             if parts == ["api", "settings"]:
+                old = app.c["source_root"]
                 app.c = config.save(self.body_json())
+                app.lib.c = app.c
+                if app.c["source_root"] != old:
+                    app.lib.rescan()
                 app.runner.wake()
                 return self.send(200, {"ok": True, "settings": {k: app.c.get(k) for k in config.EDITABLE if k not in config.SECRETS},
                                        "deepseek_key_set": bool(ai.api_key(app.c))})
@@ -591,13 +757,13 @@ def make_handler(app):
                 n = sum(1 for cl, st in app.status_all() if not st["fit"] and app.store.enqueue(cl.id, "fit"))
                 app.runner.wake()
                 return self.send(200, {"ok": True, "queued": n})
-            if parts == ["api", "render_confirmed"]:
-                n = 0
-                for cl, st in app.status_all():
-                    if st["confirmed"] and not st["done"] and app.store.enqueue(cl.id, "all"):
-                        n += 1
-                app.runner.wake()
-                return self.send(200, {"ok": True, "queued": n})
+            if parts in (["api", "finish_reviewed"], ["api", "render_confirmed"]):
+                return self.send(200, dict(app.finish_reviewed(), ok=True))
+            if parts == ["api", "pick_folder"]:
+                return self.send(200, {"path": pick_folder(app.c["source_root"])})
+            if parts == ["api", "use_folder"]:
+                d = self.body_json()
+                return self.send(200, app.use_folder(str(d.get("path", "")), str(d.get("title", ""))))
             if parts == ["api", "retry_failed"]:
                 n = 0
                 for cl, st in app.status_all():
@@ -671,6 +837,10 @@ def make_handler(app):
                     jid = app.store.enqueue(cl.id, "fit", force=True) if (q.get("rebuild") or ["1"])[0] == "1" else None
                     app.runner.wake()
                     return self.send(200, {"ok": True, "objects": n, "queued": bool(jid)})
+                if action == "finish":                                   # final job for one reviewed clip
+                    r = app.finish(cl, force=(q.get("force") or ["0"])[0] == "1")
+                    app.runner.wake()
+                    return self.send(200, {"ok": True, "result": r})
                 if action == "cancel":
                     return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})
             raise HttpError(404, "not found")

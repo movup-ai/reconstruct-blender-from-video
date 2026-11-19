@@ -149,3 +149,16 @@ table.list tr:hover td { background:#1d2025; }
 :root[data-theme="light"] .roles button.on { background:#dfe5ee; border-color:#2b4f86; } :root[data-theme="light"] .seg button.on { background:#2b6cb0; }
 :root[data-theme="light"] .tabs button.on { background:#dfe5ee; border-color:#9aa8bb; } :root[data-theme="light"] .objtable tr.osel td { background:#e3ecf7; }
 :root[data-theme="light"] table.list tr:hover td { background:#f2f4f7; } :root[data-theme="light"] .toast { background:#2f3640; }
+
+/* source folder row, folder dialog, package name on a clip tile, flags on person cards */
+.srcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.srcrow .lbl { font-weight:600; }
+.srcrow code { flex:1; min-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.85; }
+.modal.wide { max-width:720px; }
+.modal .ftable { max-height:46vh; overflow:auto; margin:6px 0 12px; }
+.modal .ftable td { word-break:break-all; }
+a.clip .pk { padding:0 10px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.person .flags { font-size:12.5px; margin-top:4px; }
+.person .suggest { margin-top:6px; padding:6px 8px; border-radius:7px; background:#4d3d10; color:#f5d27a; font-size:13px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+:root[data-theme="light"] .person .suggest { background:#fbefd2; color:#7a5a0a; }
+.person .suggest button { padding:2px 8px; font-size:12.5px; }

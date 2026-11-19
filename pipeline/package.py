@@ -220,15 +220,67 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+NAMES_P = os.path.join(ROOT, "data", "package_names.json")
+
+
+def package_names():
+    """data/package_names.json {clip name: "english_title-N"} ({} when missing)"""
+    try:
+        with open(NAMES_P, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
 def package_name(clip, c=None):
     """v2.1 permanent package name for a clip: data/package_names.json {clip name: "english_title-N"}"""
-    p = os.path.join(ROOT, "data", "package_names.json")
-    try:
-        with open(p, encoding="utf-8") as fh:
-            names = json.load(fh)
-    except (OSError, ValueError):
-        names = {}
-    return names.get(clip)
+    return package_names().get(clip)
+
+
+def title_slug(title):
+    """English title -> the name part of a v2.1 package name ("The Hidden Blade!" -> "the_hidden_blade")"""
+    s = re.sub(r"[^a-z0-9]+", "_", str(title or "").lower()).strip("_")
+    return s[:60].strip("_")
+
+
+def propose_names(clips, title, names=None):
+    """clips: clip names in file-name order.  Clips that already have a package name keep it; the others get
+    <slug>-N, numbered after the highest N already used for that title.  -> {clip: (package name, is_new)}"""
+    names = package_names() if names is None else names
+    slug = title_slug(title)
+    used = set(names.values())
+    nums = [int(v.rsplit("-", 1)[1]) for v in used if v.rsplit("-", 1)[0] == slug and v.rsplit("-", 1)[-1].isdigit()]
+    n = max(nums or [0])
+    out = {}
+    for cl in clips:
+        if names.get(cl):
+            out[cl] = (names[cl], False)
+            continue
+        if not slug:
+            out[cl] = (None, False)
+            continue
+        n += 1
+        while "%s-%d" % (slug, n) in used:
+            n += 1
+        out[cl] = ("%s-%d" % (slug, n), True)
+    return out
+
+
+def assign_names(clips, title):
+    """write the new names of propose_names() into data/package_names.json; never renames a clip"""
+    names = package_names()
+    plan = propose_names(clips, title, names)
+    new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
+    for pkg in new.values():
+        if not PKG_RE.match(pkg):
+            raise ValueError("%r is not a valid v2.1 package name" % pkg)
+    if new:
+        names.update(new)
+        tmp = NAMES_P + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(names, fh, ensure_ascii=False, indent=1)
+        os.replace(tmp, NAMES_P)
+    return new
 
 
 def canvas(W, H):

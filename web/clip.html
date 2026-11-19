@@ -13,7 +13,7 @@
     <h1 id="title">…</h1><span class="film" id="film"></span><span id="state"></span>
     <a id="editmove" class="btn" style="margin-left:auto;background:#4c8dff;color:#fff;border-radius:7px;padding:4px 12px;text-decoration:none" href="#">Edit movement &#9654;</a><span class="film" id="pos"></span><a id="prevc" href="#">&#8592; Prev</a><a id="nextc" href="#">Next &#8594;</a>
   </div>
-  <div class="stepper"><a href="#s-people"><b>1</b> People</a><a href="#s-camera"><b>2</b> Camera</a><a href="#s-set"><b>3</b> Set</a><a href="#s-objects"><b>4</b> Objects</a><a href="#s-notes"><b>5</b> Notes</a><a href="#s-marks">Fix joints (optional)</a></div>
+  <div class="stepper"><a href="#s-people"><b>1</b> Who is who</a><a href="#s-marks"><b>2</b> Joints</a><a href="#s-objects"><b>3</b> Objects</a><a href="#s-camera">Camera</a><a href="#s-set">Set</a><a href="#s-notes">Notes</a><span class="film" id="pkgname" style="margin-left:auto"></span></div>
 </header>
 <main class="page">
   <div id="banner" class="banner"></div>
@@ -25,12 +25,18 @@
 
   <section class="step" id="s-people">
     <h2><span class="num">1</span>Who is who?</h2>
-    <p class="hint">Each card is one person the models followed. Click their role. The colour follows the role (主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow). Use <b>Not a person</b> for false detections, such as a driver inside a car or a reflection. If the same character appears in two shots, give both cards the same role. <span class="aitag">✦ marks DeepSeek's suggestion.</span></p>
+    <p class="hint">Each card is one person the models followed. Click their role. Where a card says <b>Not a person?</b>, the quality check thinks it is a statue, a picture or a false detection: one click marks it, then <b>Re-check</b> fits the clip again without it (about a minute). The colour follows the role (主角色 red, 第二角色 blue, 第三角色 green, 第四角色 yellow). Use <b>Not a person</b> for false detections, such as a driver inside a car or a reflection. If the same character appears in two shots, give both cards the same role. <span class="aitag">✦ marks DeepSeek's suggestion.</span></p>
     <div class="people" id="ppl"></div>
   </section>
 
+  <details class="step" id="s-marks">
+    <summary><span class="num">2</span>Fix joints <span id="marksum">(every 8th frame; the flagged ones first)</span></summary>
+    <p class="hint" style="margin-top:8px">The editor opens on the frames where the 3D person moved suddenly (orange line, <kbd>F</kbd> = next one). Drag a dot to move it, right-click to mark it hidden, <kbd>S</kbd> swaps left and right, <kbd>D</kbd> deletes a wrong person, <kbd>Enter</kbd> marks the frame OK. Fixes are saved with <b>Save</b>, <b>Re-check</b>, <b>Reviewed</b> or <b>Finish</b> below.</p>
+    <iframe id="marks" title="marks editor"></iframe>
+  </details>
+
   <section class="step" id="s-camera">
-    <h2><span class="num">2</span>How does the camera move?</h2>
+    <h2>How does the camera move?</h2>
     <p class="hint">Already filled in from what the camera solver measured. Change it if it's wrong.</p>
     <div class="shots" id="shots"></div>
     <div class="row"><span class="seg" id="camtype"><button data-v="static">Still</button><button data-v="pan">Pans / tilts</button><button data-v="moving">Moves (dolly / track)</button><button data-v="handheld">Handheld</button></span>
@@ -40,7 +46,7 @@
   </section>
 
   <section class="step" id="s-set">
-    <h2><span class="num">3</span>Set and objects</h2>
+    <h2>Set and held objects</h2>
     <p class="hint">The set is made of walls and blocks fitted to the depth model, coloured with the video's own colours (L2). In the picture, the left side is the empty background and the right side is what it became. Add objects that people touch or that hide them.</p>
     <div class="row">
       <label><input type="checkbox" id="env_depth" checked> Build the set from the video</label>
@@ -55,29 +61,25 @@
   </section>
 
   <section class="step" id="s-objects">
-    <h2><span class="num">4</span>Objects in the set</h2>
+    <h2><span class="num">3</span>Objects in the set</h2>
     <p class="hint">Everything a viewer should recognise: doors, shelves, counters, tables, cars, trees… Each one is built as a simple model of its type, like the client sample. <b>Drag on a picture</b> to add an object, click a box to select it, <kbd>Delete</kbd> removes it. With a DeepSeek key saved, this list is filled in automatically.</p>
     <div id="objshots"><div class="empty">Loading…</div></div>
     <div class="row"><button class="primary" id="objsave">Save objects &amp; rebuild the set</button><span class="small muted" id="objmsg"></span></div>
   </section>
 
   <section class="step" id="s-notes">
-    <h2><span class="num">5</span>Description and notes</h2>
+    <h2>Description and notes</h2>
     <textarea id="notes" placeholder="What happens in the shot (also used as the description in meta.jsonl), and anything that must match"></textarea>
   </section>
 
-  <details class="step" id="s-marks">
-    <summary>Fix joint marks <span>(optional: only if a skeleton in the picture above is clearly wrong)</span></summary>
-    <p class="hint" style="margin-top:8px">Every 8th frame. Drag a dot to move it, right-click to mark it hidden, <kbd>S</kbd> swaps left and right, <kbd>D</kbd> deletes a wrong person, <kbd>Enter</kbd> marks the frame OK. Your fixes are saved when you press a button below.</p>
-    <iframe id="marks" title="marks editor"></iframe>
-  </details>
   <details class="step" id="jobbox" style="display:none"><summary>Technical log <span id="jobstate"></span></summary><pre class="log" id="log"></pre></details>
 </main>
 <footer class="actbar"><div class="ft">
   <button id="save" title="Save without rendering">Save</button>
   <button id="rerun" title="Run the local models again with your changes, then look at the new picture">&#8635; Re-check with my changes</button>
   <button id="askai" title="Let DeepSeek check people, camera, set and description">&#10022; Ask DeepSeek</button>
-  <button id="confirm" class="primary">&#10003; Confirm</button>
+  <button id="confirm" title="Mark the clip reviewed; Finish it later with “Finish all reviewed” on the Clips page">&#10003; Reviewed</button>
+  <button id="finish" class="primary" title="Mark reviewed and run the final fit, set, Blender, videos and v2.1 zip now">&#9654; Finish</button>
   <label class="small muted" style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> then open the next clip to review</label>
   <span id="msg"></span>
 </div></footer>
@@ -85,7 +87,7 @@
 <div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
   <tr><td><kbd>Tab</kbd> / click</td><td>select a person</td></tr><tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>主角色 · 第二 · 第三 · 第四</td></tr>
   <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>other person / not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
-  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>confirm &amp; render</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
 <script src="/static/common.js"></script>
 <script>
 nav('clips');
@@ -114,11 +116,16 @@ function fillPeople(rv) {
     d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="P${p.id}">
       <div class="body"><div class="top"><b>Person ${p.id}</b><span class="meta">frames ${p.first}–${p.last}${shots}</span></div>
       <div class="meta">${quality(p.fit_px)}</div>${ai}
+      ${p.flags && p.flags.length ? `<div class="flags warn">⚠ ${p.flags.map(esc).join(' · ')}</div>` : ''}
+      ${p.not_person ? `<div class="suggest">Not a person? <span class="small">${esc(p.not_person)}</span><button class="np">Mark not a person</button></div>` : ''}
       <div class="roles">${ROLES.map(([v, l, c]) => `<button data-v="${v}">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
       <div class="fields"><span class="extra" style="display:none">Colour <select class="col">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select></span>
         Height <input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"> m
         <input type="text" class="nm" value="${esc(r.name)}" placeholder="Name (optional)" style="flex:1;min-width:90px"></div></div>`;
+    const np = d.querySelector('.np');
+    if (np) np.onclick = e => { e.stopPropagation(); d.querySelector('.roles button[data-v="ignore"]').click(); toast('Marked. Press Re-check to fit the clip again without it.'); };
     const paint = () => { d.querySelectorAll('.roles button').forEach(b => b.classList.toggle('on', b.dataset.v === d.dataset.role));
+      if (d.querySelector('.suggest')) d.querySelector('.suggest').style.display = d.dataset.role === 'ignore' ? 'none' : '';
       d.classList.toggle('ignored', d.dataset.role === 'ignore'); d.querySelector('.extra').style.display = d.dataset.role === 'extra' ? '' : 'none'; };
     d.querySelectorAll('.roles button').forEach(b => b.onclick = () => { d.dataset.role = b.dataset.v;
       d.dataset.colour = b.dataset.v === 'extra' ? d.querySelector('.col').value : (ROLES.find(x => x[0] === b.dataset.v)[2] || 'purple'); dirty = true; paint(); });
@@ -176,6 +183,16 @@ $('confirm').onclick = async () => {
   if ($('gonext').checked && r.next_review) { location.href = '/clip/' + r.next_review; return; }
   const h = r.handoff;
   toast(r.queued ? 'Confirmed. It renders in the background.' : 'Confirmed. Hand-off file written for Claude' + (h ? ` (${h.confirmed} of ${h.clips} clips confirmed${h.all_confirmed ? ' — all done' : ''}).` : '.')); refresh(); };
+async function finish(force) {
+  const r = await post(`/api/clip/${CID}/finish${force ? '?force=1' : ''}`);
+  if (r.result === 'unchanged') {
+    if (await ask('Nothing changed since the last Finish, so the package in SUBMIT is up to date. Make it again anyway?', 'Make it again')) return finish(true);
+    return; }
+  toast(r.result === 'queued' ? 'Finishing: fit, set, Blender, videos and the v2.1 zip. You can review other clips meanwhile.' : 'This clip is already working'); refresh();
+}
+$('finish').onclick = async () => {
+  await saveMarks(); await sendReview(true); dirty = false; await finish(false);
+};
 $('addprop').onclick = () => { propRow(); dirty = true; };
 segInit($('camtype'), () => dirty = true);
 ['env_depth', 'env_colour', 'env_useai', 'lens', 'camnote', 'notes'].forEach(id => $(id).addEventListener('change', () => dirty = true));
@@ -285,8 +302,10 @@ function banner() {
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
+  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name, so it cannot be finished. On the Clips page, choose its folder again and type an English title.'; }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
-  else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Confirm again.'; }
+  else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
+  else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
   else b.className = 'banner';
 }
 async function load(first) {
@@ -302,6 +321,7 @@ async function load(first) {
     fillForm(INFO.review || INFO.suggested);
     if (!INFO.review && INFO.suggested) msg(INFO.suggested.source === 'ai' ? 'Filled in by the local AI. Check and confirm.' : 'Filled in with first guesses. Check and confirm.');
     if (!INFO.status.marks) $('s-marks').style.display = 'none';
+    else if (INFO.flagged) $('s-marks').open = true;
     loadObjects();
   }
   const sh = (INFO.camera && INFO.camera.shots) || [];
@@ -316,7 +336,9 @@ async function load(first) {
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state);
-  $('rerun').disabled = busy; $('confirm').disabled = busy || !INFO.status.fit; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
+  $('rerun').disabled = busy; $('confirm').disabled = busy || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit || !INFO.package;
+  $('pkgname').textContent = INFO.package ? 'v2.1 · ' + INFO.package : 'no package name';
+  if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
   $('askai').title = INFO.ai_ready ? 'Let DeepSeek check people, camera, set and description' : 'Add a DeepSeek key on the start page first';
   envAi();
   $('rerun').innerHTML = INFO.status.marks ? '&#8635; Re-check with my changes' : '&#9654; Prepare this clip';

@@ -14,7 +14,7 @@ import threading
 import time
 
 from . import config
-from .clips import folders, status, read_json
+from .clips import folders, status, read_json, fingerprint, record_finish
 from . import review
 
 log = logging.getLogger("agent.jobs")
@@ -167,7 +167,8 @@ class Runner:
         py = sys.executable
         if job["stage"] == "ai":
             return [py, "-m", "agent.ai", cl.id]
-        cmd = [py, os.path.join(config.PIPELINE, "run_pipeline.py"), cl.video, "--device", "cuda", "--stage", job["stage"]]
+        cmd = [py, os.path.join(config.PIPELINE, "run_pipeline.py"), cl.video, "--device", "cuda", "--stage", job["stage"],
+               "--name", cl.name]                         # the app's name (made unique when two clips would share one)
         if job["stage"] == "all":
             cmd += ["--force", "--require-confirm"]
         return cmd
@@ -188,6 +189,7 @@ class Runner:
         timeout = 60 * c.get({"fit": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
         cmd = self._cmd(job, cl)
+        fp = fingerprint(c, cl) if job["stage"] == "all" else None     # what this Finish is made from
         log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])
         t0 = time.time()
         with open(logp, "w", encoding="utf-8", errors="replace") as lf:
@@ -217,6 +219,8 @@ class Runner:
             self.store.requeue(job["id"])
             return
         self.store.finish(job["id"], ok, err, logp)
+        if ok and fp:
+            record_finish(c, cl, fp)
         log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
         if ok:
             self.after(cl, job["stage"])
