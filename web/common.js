@@ -44,7 +44,7 @@ function nav(active) {
   document.body.prepend(bar);
   $('quit').onclick = async () => { if (!(await ask('Unfinished jobs wait in the queue for the next Start.', 'Quit', { title: 'Quit Blender Agent?' }))) return;
     await post('/api/quit');
-    document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start Blender Agent.bat”.</p></div>'; };
+    document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start_Blender_Agent.bat”.</p></div>'; };
   const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
       $('qind').innerHTML = q.running ? `<span class="pulse"></span>${q.running} working${q.queued ? ` · ${q.queued} waiting` : ''}` :
         q.queued ? `<span class="idle"></span>${q.paused ? 'Paused · ' : ''}${q.queued} waiting` : '<span class="idle"></span>Idle';

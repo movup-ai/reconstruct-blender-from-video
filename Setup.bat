@@ -54,7 +54,7 @@ if not exist "assets\sample_character.json" (
 echo.
 echo Optional AI suggestions: paste your DeepSeek API key in the app (start page, "AI suggestions").
 echo ============================================================
-echo  Setup finished.  Start the app with "Start Blender Agent.bat"
+echo  Setup finished.  Start the app with "Start_Blender_Agent.bat"
 echo ============================================================
 if /i not "%~1"=="/auto" pause
 exit /b 0

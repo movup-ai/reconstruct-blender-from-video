@@ -150,7 +150,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 |---|---|---|---|
 | `.claude/launch.json` | Starts the app in the Claude desktop preview pane | - | - |
 | `Setup.bat` | One-time install: Python packages (GPU or CPU build), models, MotionBERT and MoGe | `README.md`, `agent/server.py`, `automark.py`, `pipeline/scene_depth.py` +2 | - |
-| `Start Blender Agent.bat` | Starts the app and restarts it after a crash | `README.md`, `Setup.bat`, `agent/__init__.py`, `web/index.html` | - |
+| `Start_Blender_Agent.bat` | Starts the app and restarts it after a crash | `README.md`, `Setup.bat`, `agent/__init__.py`, `web/index.html` | - |
 | `agent/__init__.py` | App package: name and version | `agent/ai.py`, `agent/clips.py`, `agent/jobs.py`, `agent/server.py` +10 | imports |
 | `agent/__main__.py` | App entry point (python -m agent): logging, server start, browser | `agent/ai.py`, `agent/brief.py`, `agent/selftest.py`, `agent/validate.py` +41 | imports |
 | `agent/ai.py` | AI suggestions through the DeepSeek API: fills in the review form for a clip. | `agent/clips.py`, `agent/jobs.py`, `agent/review.py`, `agent/server.py` +3 | imports |

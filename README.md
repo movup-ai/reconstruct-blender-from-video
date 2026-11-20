@@ -16,7 +16,7 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 
 ## Start
 
-Double-click **`Start Blender Agent.bat`**. The browser opens at http://127.0.0.1:8765.
+Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.1:8765.
 
 - The first start runs `Setup.bat` on its own (Python packages and models, one time, needs internet).
 - Keep the black window open. Closing it stops the app, and unfinished jobs continue at the next start.
