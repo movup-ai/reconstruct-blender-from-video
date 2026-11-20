@@ -254,6 +254,20 @@ def people_boxes(pose, f, y0, k, W, H):
     return out, feet
 
 
+def side_bars(img, dark=16, rows=0.97):
+    """columns of the black bars at the left and right of a 4:3 film inside a wider frame (pillarbox) -> bool mask"""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    darkcol = (g < dark).mean(0) >= rows                          # a column that is black from top to bottom
+    H, W = g.shape; m = np.zeros((H, W), bool)
+    l = int(np.argmin(darkcol)) if not darkcol.all() else W      # contiguous from each edge only
+    r = int(np.argmin(darkcol[::-1])) if not darkcol.all() else W
+    if l >= 0.02 * W:
+        m[:, :l + 2] = True                                      # +2: the soft edge of the bar
+    if r >= 0.02 * W:
+        m[:, W - r - 2:] = True
+    return m
+
+
 def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     """MoGe + SAM at work resolution for one frame -> Frame (camera-space points, normals, masks)"""
     t0 = time.time()
@@ -263,8 +277,10 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     img = cv2.resize(bgr, (Wk, Hk), interpolation=cv2.INTER_AREA) if k < 1 else bgr.copy()
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     fr = Frame(); fr.k, fr.W, fr.H, fr.img, fr.f = k, Wk, Hk, img, f
+    fr.bars = side_bars(img)                                     # black pillarbox bars: not part of the room
     o = models.moge_run(rgb, fov_x=fov_x)
     fr.P = o["points"]; fr.N = o.get("normal"); fr.valid = o["mask"].astype(bool) & np.isfinite(fr.P).all(-1)
+    fr.valid &= ~fr.bars
     fr.P = np.where(fr.valid[..., None], fr.P, 0.0)
     if fr.N is None:                                             # normals from the point map
         gx = np.gradient(fr.P, axis=1); gy = np.gradient(fr.P, axis=0)
@@ -300,6 +316,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     lab = np.full((Hk, Wk), -1, np.int32)
     for i, m in enumerate(masks):                                # big first, smaller ones on top
         lab[m["segmentation"]] = i
+    lab[fr.bars] = -1                                            # nothing is built from the bars
     fr.lab = lab; fr.n_masks = len(masks)
     return fr
 
@@ -744,6 +761,42 @@ def make_object(R, C, indoor, fr, fpix, name):
     return o
 
 
+BODY = (5, 6, 11, 12, 13, 14)                                    # shoulders, hips, knees (not the ankles: the floor holds them)
+
+
+def inside(o, P, pad=0.03):
+    """which world points are inside an object (box: its turned footprint and height; patch: its outline as a slab)"""
+    if "pts3" in o:
+        Q = np.array(o["pts3"], float)
+        lo, hi = Q.min(0) - [pad, pad, 0.12], Q.max(0) + [pad, pad, 0.12]
+        return np.all((P >= lo) & (P <= hi), axis=1)
+    if "pos" not in o or "size" not in o:
+        return np.zeros(len(P), bool)
+    x, y, z = o["pos"]; w, h, d = o["size"]; t = math.radians(float(o.get("yaw", 0.0)))
+    dx_, dy_ = P[:, 0] - x, P[:, 1] - y
+    lx = dx_ * math.cos(t) + dy_ * math.sin(t); ly = -dx_ * math.sin(t) + dy_ * math.cos(t)
+    return (np.abs(lx) <= w / 2 + pad) & (np.abs(ly) <= d / 2 + pad) & (P[:, 2] >= z - pad) & (P[:, 2] <= z + h + pad)
+
+
+def off_people(objs, data, frames, dx=0.0):
+    """drop objects that a fitted person is inside (2+ of shoulders / hips / knees in any measured frame): a mask that
+    took in a person or a big blob in front of them, never a real piece of the set"""
+    try:
+        import build_env as BE
+        cam = BE.Cam(data)
+        pts = [np.array([p["P"][j] for j in BODY]) - [dx, 0.0, 0.0] for f in frames for p in BE.people_at(data, cam, f, 0.0)]
+    except Exception as e:
+        print("  people test skipped (%s)" % e); return objs, []
+    keep, gone = [], []
+    for o in objs:
+        if o["_src"]["cls"] not in ("floor", "terrain", "ceiling") and any(inside(o, P).sum() >= 2 for P in pts):
+            gone.append(o["_src"]["cls"]); continue
+        keep.append(o)
+    if gone:
+        print("  dropped %d object(s) that people are inside: %s" % (len(gone), ", ".join(gone)))
+    return keep, gone
+
+
 def obj_box(o):
     """rough world footprint (x0, x1, y0, y1, z1) of an object for duplicate tests"""
     if "pts3" in o:
@@ -1057,7 +1110,7 @@ def run_clip(name, models, a, c):
                 to_world(fr, Rw, Cl, sc, gplane)
                 acam.R[f] = Rw @ D; acam.C[f] = Cl + np.array([dx, 0, 0])
                 if indoor is None:                               # indoor / outdoor: sky and far depth
-                    skyf = 1.0 - fr.valid.mean()
+                    skyf = 1.0 - fr.valid[~fr.bars].mean()      # the bars are not sky
                     farq = np.percentile(fr.rng[fr.valid], 90) if fr.valid.any() else 0
                     indoor = bool(skyf < 0.02 and farq < 18)
                     rep["indoor"] = indoor; rep["sky_frac"] = round(float(skyf), 3)
@@ -1163,6 +1216,7 @@ def run_clip(name, models, a, c):
             if any(overlaps(o, q) > 0.8 and o["_src"]["area"] < 0.3 * q["_src"]["area"] and q.get("type") != "patch" for q in keep):
                 continue
             keep.append(o)
+        keep, rep["dropped_on_people"] = off_people(keep, data, want[sid], dx)
         keep = keep[:a.max_objects]
         for o in keep:
             o.pop("_R", None)
