@@ -2,74 +2,116 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Joints</title>
 <style>
   /* the app's light design system (web/app.css), inlined: this page is also opened on its own */
-  :root { --plaster:#f4f6f7; --paper:#fff; --sunk:#eef1f3; --seam:#dde2e6; --seam-strong:#c6cdd3; --ink:#1e252b; --slate:#5e6a73;
-          --accent:#0f6e74; --accent-hover:#0b5a5f; --accent-tint:#e3f1f1; --ring:rgba(15,110,116,.28); --ok:#1d7a46; --warn:#94600a; color-scheme:light; }
+  :root { --plaster:#f4f6f7; --paper:#fff; --sunk:#eef1f3; --seam:#dde2e6; --seam-strong:#c6cdd3; --ink:#1e252b; --slate:#5e6a73; --faint:#8a949c;
+          --accent:#0f6e74; --accent-hover:#0b5a5f; --accent-tint:#e3f1f1; --ring:rgba(15,110,116,.28); --ok:#1d7a46; --ok-tint:#e2f3e9;
+          --warn:#94600a; --warn-tint:#fbf0d9; --flag:#d98a0b; --fix:#2d63b7; --fix-tint:#e4ecf8; --bad:#b3372f; --bad-tint:#fbe5e3; color-scheme:light; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--plaster); color: var(--ink);
                font: 14px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; font-variant-numeric: tabular-nums; }
   body { display: flex; flex-direction: column; }
-  #bar { display: flex; gap: 6px; align-items: center; padding: 7px 10px; background: var(--paper); border-bottom: 1px solid var(--seam); flex-wrap: wrap; flex: none; }
-  #bar button, .dlg button { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 11px; background: var(--paper); color: var(--ink);
+  button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 11px; background: var(--paper); color: var(--ink);
     border: 1px solid var(--seam-strong); border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap;
     box-shadow: 0 1px 2px rgba(30,37,43,.06); transition: background-color .12s, border-color .12s; }
-  #bar button:hover, .dlg button:hover { background: var(--sunk); border-color: #b5bdc4; }
-  #bar button:active, .dlg button:active { transform: translateY(1px); box-shadow: none; }
-  #bar button:disabled { background: var(--sunk); color: #8a949c; border-color: var(--seam); box-shadow: none; cursor: default; transform: none; }
-  #bar button.ok, .dlg button.primary { background: var(--accent); border-color: var(--accent-hover); color: #fff; font-weight: 600;
+  button:hover { background: var(--sunk); border-color: #b5bdc4; }
+  button:active { transform: translateY(1px); box-shadow: none; }
+  button:disabled { background: var(--sunk); color: var(--faint); border-color: var(--seam); box-shadow: none; cursor: default; transform: none; }
+  button.primary { background: var(--accent); border-color: var(--accent-hover); color: #fff; font-weight: 600;
     box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 1px 2px rgba(11,90,95,.3); }
-  #bar button.ok:hover, .dlg button.primary:hover { background: var(--accent-hover); }
-  #bar button.ok:disabled { background: var(--accent-tint); color: var(--accent); border-color: #b9d6d8; box-shadow: none; }
-  #bar button.primary { color: var(--accent); border-color: var(--accent); font-weight: 600; }   /* Save, on its own page */
+  button.primary:hover { background: var(--accent-hover); }
+  button.primary:disabled { background: var(--accent-tint); color: var(--accent); border-color: #b9d6d8; box-shadow: none; }
   button:focus-visible, a:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--ring); }
-  #bar .sep { width: 1px; height: 22px; background: var(--seam); margin: 0 3px; }
-  #back { color: var(--accent); text-decoration: none; margin-right: 4px; font-weight: 500; }
-  #title { font-weight: 600; margin-right: 6px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #frameinfo { min-width: 104px; text-align: center; color: var(--slate); }
-  #status { margin-left: auto; color: var(--ok); font-size: 13px; }
+  kbd { background: var(--paper); border: 1px solid var(--seam-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11px; font-family: inherit; color: var(--slate); }
+
+  /* top bar: where am I, undo, saved or not */
+  #bar { display: flex; gap: 8px; align-items: center; padding: 7px 10px; background: var(--paper); border-bottom: 1px solid var(--seam); flex-wrap: wrap; flex: none; }
+  #back { color: var(--accent); text-decoration: none; font-weight: 500; }
+  #title { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   body.embed #title, body.embed #back { display: none; }
-  #bar #save.unsaved { background: var(--accent); border-color: var(--accent-hover); color: #fff; }
+  .nav { display: inline-flex; align-items: center; gap: 2px; }
+  .nav button { width: 32px; justify-content: center; padding: 0; }
+  #frameinfo { min-width: 132px; text-align: center; font-weight: 600; font-size: 13.5px; }
+  #frameinfo small { font-weight: 400; color: var(--slate); font-size: 12.5px; }
+  #nextflag .n { background: var(--warn-tint); color: var(--warn); border-radius: 99px; padding: 0 7px; font-size: 12px; font-weight: 600; }
+  #status { color: var(--ok); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  #savestate { font-size: 13px; color: var(--slate); white-space: nowrap; }
+  #savestate.unsaved { color: var(--warn); font-weight: 600; }
+
   #main { display: flex; flex: 1; min-height: 0; }
-  #wrap { flex: 1; position: relative; overflow: hidden; background: #e7ebee; }
-  #flagbar { position: absolute; left: 0; right: 0; top: 0; z-index: 2; padding: 6px 12px; font-size: 13px; background: #fbf0d9; color: var(--warn);
-             border-bottom: 1px solid #efdcae; display: none; }
+  #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #flagbar { flex: none; padding: 7px 12px; font-size: 13px; border-bottom: 1px solid var(--seam); background: var(--paper); color: var(--slate); }
+  #flagbar.flag { background: var(--warn-tint); color: var(--warn); border-color: #efdcae; }
+  #flagbar.done { color: var(--ok); }
+  #wrap { flex: 1; position: relative; overflow: hidden; background: #e7ebee; min-height: 160px; }
   canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
-  #side { width: 250px; padding: 12px 14px; background: var(--paper); border-left: 1px solid var(--seam); overflow-y: auto; flex: none; }
-  #side h3 { margin: 4px 0 6px; font-size: 13.5px; }
-  #people div { padding: 5px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
-  #people div:hover { background: var(--sunk); }
-  #people div.sel { background: var(--accent-tint); box-shadow: inset 0 0 0 1px #b9d6d8; }
+  #tip { position: absolute; pointer-events: none; background: rgba(30,37,43,.88); color: #fff; padding: 2px 7px; border-radius: 5px; font-size: 12px; display: none; }
+  #zoom { position: absolute; right: 10px; bottom: 10px; display: flex; background: var(--paper); border: 1px solid var(--seam-strong); border-radius: 8px;
+          box-shadow: 0 2px 6px rgba(30,37,43,.12); overflow: hidden; }
+  #zoom button { border: 0; border-radius: 0; box-shadow: none; min-height: 30px; padding: 0 10px; font-size: 15px; }
+  #zoom button + button { border-left: 1px solid var(--seam); }
+  #zoom #fit { font-size: 12.5px; }
+
+  /* timeline: one cell per key frame */
+  #tl { flex: none; padding: 8px 12px 6px; background: var(--paper); border-top: 1px solid var(--seam); }
+  #cells { display: flex; gap: 2px; }
+  #cells button { flex: 1 1 0; min-width: 0; min-height: 26px; padding: 0; justify-content: center; border-radius: 4px; border: 0; box-shadow: none;
+                  background: var(--sunk); color: var(--slate); font-size: 11px; font-weight: 500; overflow: hidden; position: relative; }
+  #cells button:hover { background: #e2e7ea; }
+  #cells button.fixed { background: var(--fix-tint); color: var(--fix); }
+  #cells button.ok { background: var(--ok-tint); color: var(--ok); }
+  #cells button.flag::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--flag); }
+  #cells button.cur { box-shadow: inset 0 0 0 2px var(--ink); color: var(--ink); font-weight: 700; }
+  #tlinfo { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 5px; font-size: 12px; color: var(--slate); }
+  #tlinfo i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  #progress { margin-left: auto; }
+
+  /* the one main action */
+  #act { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--paper); border-top: 1px solid var(--seam); flex-wrap: wrap; }
+  #act .hint { flex: 1; font-size: 12.5px; color: var(--slate); min-width: 200px; }
+  #ok { min-height: 36px; padding: 0 16px; font-size: 13.5px; }
+
+  /* side panel: people, then what you can do to the selected one */
+  #side { width: 280px; padding: 12px 14px; background: var(--paper); border-left: 1px solid var(--seam); overflow-y: auto; flex: none; }
+  #side h3 { margin: 2px 0 6px; font-size: 13px; }
+  #people .row { padding: 4px 8px 4px 2px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  #people .row:hover { background: var(--sunk); }
+  #people .row.sel { background: var(--accent-tint); box-shadow: inset 0 0 0 1px #b9d6d8; font-weight: 600; }
+  #people .row.off { color: var(--faint); cursor: default; }
+  #people .row.off i { opacity: .35; }
   #people i { width: 12px; height: 12px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
-  #people div { padding-left: 4px; }
-  #people div.off { color: #8a949c; cursor: default; }
-  #people div.off i { opacity: .35; }
-  #people .eye { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 6px;
-                 background: transparent; color: var(--slate); cursor: pointer; }
+  #people .meta { margin-left: auto; color: var(--slate); font-size: 12px; font-weight: 400; }
+  #people .eye { width: 28px; min-height: 26px; justify-content: center; flex: none; padding: 0; border: 0; border-radius: 6px; background: transparent;
+                 color: var(--slate); box-shadow: none; }
   #people .eye:hover { background: var(--sunk); color: var(--ink); }
-  #people div.off .eye { color: #8a949c; }
-  .solo { margin-top: 6px; width: 100%; min-height: 30px; padding: 0 10px; background: var(--paper); color: var(--ink); border: 1px solid var(--seam-strong);
-          border-radius: 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
-  .solo:hover { background: var(--sunk); }
-  .solo:disabled { color: #8a949c; background: var(--sunk); border-color: var(--seam); cursor: default; }
-  #thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-  #thumbs button { padding: 2px 7px; border-radius: 5px; background: var(--sunk); color: var(--ink); border: 0; cursor: pointer; font: inherit; font-size: 12px; }
-  #thumbs button:hover { background: #e2e7ea; }
-  #thumbs button.cur { box-shadow: 0 0 0 2px var(--accent); }
-  #thumbs button.ok { background: #e2f3e9; color: var(--ok); }
-  #thumbs button.fixed { background: #e4ecf8; color: #2d63b7; }
-  #thumbs button.flag { box-shadow: inset 0 -3px 0 #d98a0b; }
-  #thumbs button.cur.flag { box-shadow: 0 0 0 2px var(--accent), inset 0 -3px 0 #d98a0b; }
-  .legend { font-size: 12px; color: var(--slate); margin: 6px 0 0; }
-  .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
-  .legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-  .note { font-size: 12.5px; color: var(--slate); margin: 12px 0 0; line-height: 1.5; }
+  #people .empty { font-size: 12.5px; color: var(--slate); padding: 4px 2px; }
+  .linkbtn { border: 0; background: none; box-shadow: none; color: var(--accent); padding: 0 2px; min-height: 28px; font-weight: 600; }
+  .linkbtn:hover { background: none; text-decoration: underline; }
+  #selbox { margin-top: 12px; padding: 10px; border: 1px solid #b9d6d8; background: #f6fbfb; border-radius: 10px; }
+  #selbox h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; }
+  #selbox .acts { display: flex; flex-direction: column; gap: 5px; }
+  #selbox .acts button { justify-content: space-between; width: 100%; white-space: normal; text-align: left; padding: 4px 8px 4px 10px; line-height: 1.25; }
+  #selbox .acts button kbd { margin-left: 8px; flex: none; }
+  #selbox .acts button.danger { color: var(--bad); }
+  #selbox .acts button.danger:hover { background: var(--bad-tint); border-color: #f2cbc7; }
+  #selbox .sub { font-size: 11.5px; color: var(--slate); margin: 6px 0 2px; }
+  #clipcard { margin-top: 12px; padding: 10px; border: 1px solid var(--seam-strong); border-radius: 10px; background: var(--sunk); }
+  #clipcard .ct { display: flex; align-items: center; gap: 7px; font-size: 12.5px; margin-bottom: 8px; }
+  #clipcard .ct i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  #clipcard .ct span { flex: 1; min-width: 0; }
+  #clipcard .x { min-height: 24px; width: 24px; padding: 0; justify-content: center; border: 0; background: none; box-shadow: none; color: var(--slate); font-size: 16px; }
+  #clipcard .x:hover { background: var(--paper); color: var(--ink); }
+  #paste { width: 100%; justify-content: space-between; }
+  #paste kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.35); color: #fff; }
+  #nosel { margin-top: 12px; padding: 10px; border: 1px dashed var(--seam-strong); border-radius: 10px; font-size: 12.5px; color: var(--slate); }
+  .legend { font-size: 12px; color: var(--slate); margin: 14px 0 0; line-height: 1.6; }
+  .legend svg { vertical-align: -2px; margin-right: 4px; }
   details.keys { margin-top: 10px; font-size: 12.5px; color: var(--slate); }
   details.keys summary { cursor: pointer; color: var(--ink); font-weight: 500; }
   details.keys p { margin: 5px 0; }
-  kbd { background: var(--paper); border: 1px solid var(--seam-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font-size: 11.5px; font-family: inherit; color: var(--ink); }
-  #tip { position: absolute; pointer-events: none; background: rgba(30,37,43,.88); color: #fff; padding: 2px 7px; border-radius: 5px; font-size: 12px; display: none; }
+
   .dlgbg { position: fixed; inset: 0; background: rgba(30,37,43,.32); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
   .dlg { background: var(--paper); border: 1px solid var(--seam); border-radius: 12px; padding: 18px 20px; max-width: 420px; width: 100%;
          box-shadow: 0 12px 32px rgba(30,37,43,.16), 0 2px 6px rgba(30,37,43,.08); }
@@ -77,48 +119,80 @@
   .dlg .opts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
   .dlg .opts button { justify-content: flex-start; }
   .dlg .row { display: flex; gap: 8px; justify-content: flex-end; }
+
+  @media (max-width: 760px) {   /* phone: the side panel goes under the picture */
+    html, body { height: auto; }
+    #main { flex-direction: column; flex: none; }
+    #wrap { flex: none; height: 52vh; }
+    #act .hint { min-width: 0; }
+    #ok { width: 100%; justify-content: center; }
+    #side { width: auto; border-left: 0; border-top: 1px solid var(--seam); }
+    #cells button { font-size: 0; }   /* too narrow for numbers: colours only */
+    #frameinfo { min-width: 0; }
+  }
 </style>
 </head>
 <body>
 <div id="bar">
   <a id="back" href="#" style="display:none">&#9664; Clip</a><span id="title"></span>
-  <button id="prev" title="Previous key frame (←)">&#9664;</button>
-  <span id="frameinfo"></span>
-  <button id="next" title="Next key frame (→)">&#9654;</button>
-  <button id="nextflag" title="Next flagged frame: where the 3D person moved suddenly (F)">Next flagged</button>
-  <span class="sep"></span>
-  <button id="ok" class="ok" title="These dots are right: the fit trusts this frame (Enter)">&#10003; Frame OK</button>
-  <span class="sep"></span>
+  <span class="nav"><button id="prev" title="Previous key frame (←)" aria-label="Previous key frame">&#9664;</button>
+    <span id="frameinfo"></span>
+    <button id="next" title="Next key frame (→)" aria-label="Next key frame">&#9654;</button></span>
+  <button id="nextflag" title="Go to the next frame where someone moved suddenly: a likely detection mistake (F)">Next flagged <span class="n" id="nflag"></span></button>
   <button id="undo" title="Undo the last change (Ctrl+Z)" disabled>&#8630; Undo</button>
-  <button id="swap" title="Swap left and right of the selected person (S)">Swap L/R</button>
-  <button id="del" title="Delete the selected person in this frame: a wrong detection (D)">Delete</button>
-  <button id="add" title="Add a person the detector missed in this frame (A)">Add person</button>
-  <button id="copy" title="Copy the selected person's dots from the key frame before (C)">Copy previous</button>
-  <button id="carry" title="Same pose in the next key frame: copies the selected person's dots there and goes there (N). For someone who barely moves.">Same pose in next &#9654;</button>
-  <button id="reset" title="Fit the picture to the window (R)">Reset view</button>
-  <span class="sep" id="savesep"></span>
-  <button id="save" class="primary" title="Save your joint fixes (Ctrl+S)">Save</button>
-  <span id="status"></span>
+  <span id="status" role="status" aria-live="polite"></span>
+  <span id="savestate"></span>
+  <button id="save" class="primary" title="Save your joint fixes (Ctrl+S)" style="display:none">Save</button>
 </div>
 <div id="main">
-  <div id="wrap"><div id="flagbar"></div><canvas id="cv" aria-label="Frame with the detected joints; drag a dot to move it"></canvas><div id="tip"></div></div>
+  <div id="stage">
+    <div id="flagbar"></div>
+    <div id="wrap"><canvas id="cv" aria-label="Frame with the detected joints; drag a dot to move it"></canvas><div id="tip"></div>
+      <div id="zoom"><button id="zin" title="Zoom in (mouse wheel)" aria-label="Zoom in">+</button><button id="zout" title="Zoom out (mouse wheel)" aria-label="Zoom out">&minus;</button><button id="fit" title="Show the whole picture (R)">Fit</button></div></div>
+    <div id="tl">
+      <div id="cells" role="group" aria-label="Key frames"></div>
+      <div id="tlinfo"><span><i style="background:var(--flag)"></i>flagged</span><span><i style="background:var(--fix-tint);box-shadow:inset 0 0 0 1px var(--fix)"></i>fixed</span><span><i style="background:var(--ok-tint);box-shadow:inset 0 0 0 1px var(--ok)"></i>looks right</span><span id="progress"></span></div>
+    </div>
+    <div id="act">
+      <span class="hint">Drag a wrong dot into place · right-click a dot = that joint is hidden in the video</span>
+      <button id="ok" class="primary" title="Every dot in this frame is right: the fit trusts this frame. Frames you neither fix nor confirm keep the detector's own confidence. (Enter)">&#10003; This frame looks right</button>
+    </div>
+  </div>
   <div id="side">
     <h3>People in this frame</h3>
     <div id="people"></div>
-    <button id="solo" class="solo" title="V">Show only the selected person</button>
-    <div class="legend"><span>solid = right side</span><span>dashed = left side</span><span>○ = joint not visible in the video</span></div>
-    <h3 style="margin-top:14px">Key frames <span id="progress" style="color:var(--slate);font-weight:400"></span></h3>
-    <div id="thumbs"></div>
-    <div class="legend"><span><i style="background:#e2f3e9;box-shadow:inset 0 0 0 1px #1d7a46"></i>OK</span><span><i style="background:#e4ecf8;box-shadow:inset 0 0 0 1px #2d63b7"></i>fixed</span><span><i style="background:#eef1f3;box-shadow:inset 0 -3px 0 #d98a0b"></i>flagged</span></div>
-    <p class="note">Only frames you fix or mark <b>OK</b> are used as corrections; the fit trusts them. Other frames keep the detector's own confidence.</p>
-    <details class="keys"><summary>Keys</summary>
-      <p>Drag a dot to move it · wheel = zoom · drag empty space = move the view</p>
-      <p><kbd>Enter</kbd> frame OK, next · <kbd>F</kbd> next flagged · <kbd>←</kbd> <kbd>→</kbd> frames</p>
-      <p>Right-click a dot or <kbd>H</kbd> = this joint is / is not visible in the video</p>
-      <p>Click a dot to select a person: <kbd>S</kbd> swap L/R · <kbd>D</kbd> delete · <kbd>A</kbd> add · <kbd>C</kbd> copy from the key frame before</p>
-      <p>Someone who barely moves: fix one frame, then <kbd>N</kbd> puts the same pose in the next key frame. Nudge only what moved. Near-equal poses are kept still between key frames, so they don't shake.</p>
-      <p>The eye beside a person stops showing them on the picture, in every frame; their joints stay as they are · <kbd>V</kbd> only the selected person / everyone</p>
-      <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>R</kbd> reset view · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
+    <button id="add" class="linkbtn" title="Add someone the detector missed in this frame (A)">+ Add a missed person</button>
+    <div id="clipcard" style="display:none">
+      <div class="ct"><i id="clipcol"></i><span id="cliptext"></span><button id="clipx" class="x" title="Forget the copied pose" aria-label="Forget the copied pose">&times;</button></div>
+      <button id="paste" class="primary" title="Replace this person's joints in this key frame with the copied pose (Ctrl+V)">Paste into this frame <kbd>Ctrl+V</kbd></button>
+    </div>
+    <div id="nosel">Click a person's dot or name to fix them: swap left and right, copy their pose to other frames, or remove a wrong detection.</div>
+    <div id="selbox" style="display:none">
+      <h3><i id="selcol" style="width:12px;height:12px;border-radius:3px;display:inline-block"></i><span id="selname"></span></h3>
+      <div class="acts">
+        <button id="swap" title="The detector mixed up this person's left and right">Swap left / right <kbd>S</kbd></button>
+        <div class="sub">Someone who barely moves</div>
+        <button id="copy" title="This person's pose from the key frame before">Pose from the frame before <kbd>C</kbd></button>
+        <button id="carry" title="Copy this pose into the next key frame and go there; nudge what moved">Same pose in next &#9654; <kbd>N</kbd></button>
+        <button id="hold" title="Copy this pose into every following key frame up to the next frame you fixed or confirmed">Hold pose until the next fix <kbd>&#8679;N</kbd></button>
+        <button id="cpose" title="Remember this person's pose; then go to any key frame and paste it there">Copy this pose <kbd>Ctrl+C</kbd></button>
+        <div class="sub">View and remove</div>
+        <button id="solo">Show only this person <kbd>V</kbd></button>
+        <button id="del" class="danger" title="A wrong detection: remove this person from this frame only">Remove from this frame <kbd>D</kbd></button>
+      </div>
+    </div>
+    <div class="legend">
+      <div><svg width="22" height="6" aria-hidden="true"><line x1="1" y1="3" x2="21" y2="3" stroke="#5e6a73" stroke-width="2"/></svg>right side &nbsp; <svg width="22" height="6" aria-hidden="true"><line x1="1" y1="3" x2="21" y2="3" stroke="#5e6a73" stroke-width="2" stroke-dasharray="5 3"/></svg>left side</div>
+      <div><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#5e6a73" stroke-width="1.6"/></svg>hollow dot = joint hidden in the video</div>
+    </div>
+    <details class="keys"><summary>All keys and mouse</summary>
+      <p>Drag a dot to move it · wheel = zoom · drag empty space = move the view · <kbd>R</kbd> whole picture</p>
+      <p><kbd>Enter</kbd> this frame looks right · <kbd>F</kbd> next flagged · <kbd>←</kbd> <kbd>→</kbd> key frames</p>
+      <p>Right-click a dot or <kbd>H</kbd> = joint hidden / visible in the video</p>
+      <p>Selected person: <kbd>S</kbd> swap · <kbd>C</kbd> pose from before · <kbd>N</kbd> same pose in next · <kbd>Shift</kbd>+<kbd>N</kbd> hold until the next fix · <kbd>V</kbd> show only them · <kbd>D</kbd> remove · <kbd>Esc</kbd> deselect</p>
+      <p>Any key frame: <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the selected person's pose · go to another key frame · <kbd>Ctrl</kbd>+<kbd>V</kbd> replaces that same person's joints there</p>
+      <p><kbd>A</kbd> add a missed person · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
+      <p>Near-equal poses in neighbouring key frames are kept still in between, so a person who barely moves does not shake.</p>
     </details>
   </div>
 </div>
@@ -202,11 +276,13 @@ let statusT = null;
 function say(t, bad) { const s = $('status'); s.textContent = t; s.style.color = bad ? 'var(--warn)' : 'var(--ok)'; clearTimeout(statusT); statusT = setTimeout(() => s.textContent = '', 4000); }
 
 // ---------------------------------------------------------------- undo: a snapshot of the frame before each change
-function remember() { UNDO.push({ i: cur, people: clone(PAGE.frames[cur].people), ok: checked.has(PAGE.frames[cur].f) }); if (UNDO.length > 60) UNDO.shift(); $('undo').disabled = false; }
+const snap = i => ({ i, people: clone(PAGE.frames[i].people), ok: checked.has(PAGE.frames[i].f) });
+function rememberMany(is) { UNDO.push(is.map(snap)); if (UNDO.length > 60) UNDO.shift(); $('undo').disabled = false; }
+function remember() { rememberMany([cur]); }
 function undo() {
   const u = UNDO.pop(); if (!u) return;
-  PAGE.frames[u.i].people = u.people; if (u.ok) checked.add(PAGE.frames[u.i].f); else checked.delete(PAGE.frames[u.i].f);
-  dirty = true; $('undo').disabled = !UNDO.length; sel = null; go(u.i); say('Undone');
+  u.forEach(x => { PAGE.frames[x.i].people = x.people; if (x.ok) checked.add(PAGE.frames[x.i].f); else checked.delete(PAGE.frames[x.i].f); });
+  dirty = true; $('undo').disabled = !UNDO.length; sel = null; go(u[0].i, true); say(u.length > 1 ? `Undone (${u.length} frames)` : 'Undone');
 }
 
 function fitView() {
@@ -260,44 +336,73 @@ let lastState = '';
 function report() {                                // the clip page shows "unsaved joint fixes" from this
   const nfix = PAGE.frames.filter((fr, i) => fixed(i)).length;
   const st = JSON.stringify({ type: 'marks_state', dirty, fixed: nfix, ok: checked.size });
-  const b = $('save'); b.disabled = !dirty; b.classList.toggle('unsaved', dirty);
-  b.textContent = dirty ? (EMBED ? 'Save joint fixes' : 'Save') : (EMBED ? 'Joint fixes saved' : 'Saved');
+  const ss = $('savestate'); ss.className = dirty ? 'unsaved' : '';
+  ss.textContent = dirty ? 'Unsaved fixes' : (nfix || checked.size ? 'All fixes saved' : '');
+  $('save').style.display = dirty ? '' : 'none'; $('save').textContent = EMBED ? 'Save fixes' : 'Save';
   if (EMBED && st !== lastState) { lastState = st; window.parent.postMessage(JSON.parse(st), '*'); }
 }
+const flagIds = i => NEAR[i].slice().sort((x, y) => y[1] - x[1]).map(x => x[0]);   // most sudden movements first
+const personFixed = (i, id) => JSON.stringify(PAGE.frames[i].people.find(p => p.id === id) || null) !==
+                               JSON.stringify(JSON.parse(ORIG[i]).find(p => p.id === id) || null);
 function ui() {
   report();
-  const f = PAGE.frames[cur].f;
-  $('frameinfo').textContent = `frame ${f} · ${cur + 1}/${PAGE.frames.length}` + (checked.has(f) ? ' ✓' : '');
-  $('ok').disabled = checked.has(f);
-  const nf = FLAGS.filter((x, i) => x.length && !checked.has(PAGE.frames[i].f)).length;
-  const fb = $('flagbar'); const anyFlag = FLAGS.some(x => x.length);
-  fb.style.display = anyFlag ? 'block' : 'none';
-  fb.textContent = (FLAGS[cur].length ? `⚠ ${FLAGS[cur].join(', ')} moved suddenly near this frame. ` : '') +
-    (nf ? `${nf} flagged frame(s) left (F = next).` : 'All flagged frames checked.');
-  $('nextflag').style.display = anyFlag ? '' : 'none'; $('nextflag').disabled = !nf;
+  const f = PAGE.frames[cur].f, n = PAGE.frames.length, isOk = checked.has(f);
+  $('frameinfo').innerHTML = `Frame ${f} <small>· ${cur + 1} of ${n}</small>` + (isOk ? ' <span style="color:var(--ok)">&#10003;</span>' : '');
+  $('prev').disabled = cur === 0; $('next').disabled = cur === n - 1;
+  const ok = $('ok'); ok.disabled = isOk; ok.innerHTML = isOk ? '&#10003; Looks right' : '&#10003; This frame looks right';
+  const nf = FLAGS.filter((x, i) => x.length && !checked.has(PAGE.frames[i].f)).length, anyFlag = FLAGS.some(x => x.length);
+  $('nextflag').style.display = anyFlag ? '' : 'none'; $('nextflag').disabled = !nf; $('nflag').textContent = nf ? nf + ' left' : 'done';
+  const fb = $('flagbar'), who = FLAGS[cur].length && !isOk ? flagIds(cur).map(id => 'P' + id) : [];
+  fb.className = who.length ? 'flag' : anyFlag && !nf ? 'done' : '';
+  fb.textContent = who.length ? `\u26A0 ${who.join(' and ')} moved suddenly here: check ${who.length > 1 ? 'their' : who[0] + '\u2019s'} dots, then press \u2713 This frame looks right.` :
+    !anyFlag ? 'No sudden movements found. Step through a few frames and fix any dot that is off.' :
+    nf ? `${nf} flagged frame${nf > 1 ? 's' : ''} left to check \u00B7 F = next flagged` : '\u2713 All flagged frames checked. Other frames only need a look if something seems off.';
+
   const pl = $('people'); pl.innerHTML = '';
   for (const p of people()) {
-    const d = document.createElement('div'), hid = HIDDEN.has(p.id);
-    d.innerHTML = `<button class="eye" aria-pressed="${!hid}" title="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture" aria-label="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture">${hid ? EYE_OFF : EYE}</button>` +
-      `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' · ' + roleOf(p.id) : ''}</span><span style="margin-left:auto;color:var(--slate)">${hid ? 'not shown' : p.kps.filter(q => q[2] > 0).length + '/17'}</span>`;
-    d.title = hid ? 'Not shown on the picture' : 'Select (then S, D…)';
-    d.className = (p.id === sel ? 'sel ' : '') + (hid ? 'off' : '');
+    const d = document.createElement('div'), hid = HIDDEN.has(p.id), gone = N_ - p.kps.filter(q => q[2] > 0).length;
+    d.innerHTML = `<button class="eye" aria-pressed="${!hid}" title="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture (nothing is changed)" aria-label="${hid ? 'Show' : 'Stop showing'} P${p.id} on the picture">${hid ? EYE_OFF : EYE}</button>` +
+      `<i style="background:${colour(p.id)}"></i><span>P${p.id}${roleOf(p.id) ? ' \u00B7 ' + roleOf(p.id) : ''}</span>` +
+      `<span class="meta">${hid ? 'not shown' : gone ? gone + ' hidden' : ''}</span>`;
+    d.title = hid ? 'Not shown on the picture' : gone ? `${gone} of P${p.id}'s joints are marked hidden in the video` : 'Click to select';
+    d.className = 'row' + (p.id === sel ? ' sel' : '') + (hid ? ' off' : '');
     d.onclick = () => { if (hid) return; sel = sel === p.id ? null : p.id; draw(); };
     d.querySelector('.eye').onclick = e => { e.stopPropagation(); setHidden(p.id, !hid); };
     pl.appendChild(d);
   }
-  if (!people().length) pl.textContent = 'Nobody detected in this frame.';
-  const solo = $('solo'); solo.style.display = people().length > 1 || HIDDEN.size ? '' : 'none';
-  solo.textContent = HIDDEN.size ? 'Show everyone' : 'Show only the selected person'; solo.disabled = !HIDDEN.size && sel == null;
-  const th = $('thumbs'); th.innerHTML = '';
+  if (!people().length) pl.innerHTML = '<div class="empty">Nobody detected in this frame.</div>';
+  if (HIDDEN.size) { const b = document.createElement('button'); b.className = 'linkbtn'; b.textContent = 'Show everyone again';
+    b.onclick = () => { HIDDEN.clear(); hover = null; draw(); }; pl.appendChild(b); }
+
+  const p = selPerson();
+  $('selbox').style.display = p ? '' : 'none'; $('nosel').style.display = p || !people().length ? 'none' : '';
+  if (p) {
+    $('selcol').style.background = colour(p.id); $('selname').textContent = `P${p.id}${roleOf(p.id) ? ' \u00B7 ' + roleOf(p.id) : ''}`;
+    $('copy').disabled = cur === 0 || !PAGE.frames[cur - 1].people.some(q => q.id === p.id);
+    $('carry').disabled = $('hold').disabled = cur === n - 1;
+    $('solo').innerHTML = (HIDDEN.size ? 'Show everyone' : 'Show only this person') + ' <kbd>V</kbd>';
+  }
+
+  $('clipcard').style.display = CLIP ? '' : 'none';
+  if (CLIP) {
+    $('clipcol').style.background = colour(CLIP.id);
+    $('cliptext').textContent = `Copied: P${CLIP.id}'s pose from frame ${CLIP.f}`;
+    const here = people().find(q => q.id === CLIP.id), same = here && JSON.stringify(here.kps) === JSON.stringify(CLIP.kps);
+    $('paste').disabled = !!same;
+    $('paste').innerHTML = (same ? 'Already this pose here' : here ? `Paste over P${CLIP.id} in this frame` : `Paste P${CLIP.id} into this frame`) + ' <kbd>Ctrl+V</kbd>';
+  }
+  const cells = $('cells'); cells.innerHTML = '';
   PAGE.frames.forEach((fr, i) => {
-    const s = document.createElement('button'); s.textContent = fr.f;
-    s.className = (i === cur ? 'cur ' : '') + (checked.has(fr.f) ? 'ok ' : fixed(i) ? 'fixed ' : '') + (FLAGS[i].length ? 'flag' : '');
-    s.title = `frame ${fr.f}` + (checked.has(fr.f) ? ' · OK' : fixed(i) ? ' · fixed' : '') + (FLAGS[i].length ? ' · ' + FLAGS[i].join(', ') + ' moved suddenly near here' : '');
-    s.onclick = () => go(i); th.appendChild(s);
+    const c = document.createElement('button'); c.textContent = fr.f;
+    const st = checked.has(fr.f) ? 'ok' : fixed(i) ? 'fixed' : '';
+    c.className = [st, FLAGS[i].length ? 'flag' : '', i === cur ? 'cur' : ''].join(' ').trim();
+    c.title = `Frame ${fr.f}` + (st === 'ok' ? ' \u00B7 looks right' : st === 'fixed' ? ' \u00B7 fixed' : '') +
+      (FLAGS[i].length ? ' \u00B7 ' + FLAGS[i].join(', ') + ' moved suddenly' : '');
+    c.setAttribute('aria-label', c.title); if (i === cur) c.setAttribute('aria-current', 'true');
+    c.onclick = () => go(i); cells.appendChild(c);
   });
   const nfix = PAGE.frames.filter((fr, i) => fixed(i) && !checked.has(fr.f)).length;
-  $('progress').textContent = `${checked.size} OK · ${nfix} fixed · ${PAGE.frames.length} in all`;
+  $('progress').textContent = `${checked.size} look right \u00B7 ${nfix} fixed \u00B7 ${n} key frames`;
 }
 function nearest(sx, sy, maxd) {
   let best = null, bd = maxd;
@@ -336,7 +441,7 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 function toggleHidden(n) { remember(); const q = n.p.kps[n.i]; q[2] = q[2] > 0 ? 0 : 1; dirty = true; draw(); }
 function selPerson() { return people().find(p => p.id === sel) || (people().length === 1 ? people()[0] : null); }
-function needSel() { say('Click one of the person\'s dots first.', true); }
+function needSel() { say('Click a person\'s dot or name first.', true); }
 function swapLR() {
   const p = selPerson(); if (!p) return needSel();
   remember(); for (let i = 1; i < N_; i += 2) { const t = p.kps[i]; p.kps[i] = p.kps[i + 1]; p.kps[i + 1] = t; }
@@ -383,10 +488,42 @@ async function copyPrev() {                        // C: the selected person's p
 function carryNext() {                             // N: the selected person's pose into the next key frame, then go there
   if (cur >= PAGE.frames.length - 1) return say('This is the last key frame.', true);
   const p = selPerson(); if (!p) return needSel();
-  go(cur + 1); remember(); putPose(p, cur); sel = p.id; dirty = true; draw();
+  go(cur + 1, true); remember(); putPose(p, cur); sel = p.id; dirty = true; draw();
   say(`P${p.id}: same pose in key frame ${PAGE.frames[cur].f}. Nudge any dot that is off, then N again.`);
 }
-function go(i) { cur = Math.max(0, Math.min(PAGE.frames.length - 1, i)); hover = null; fitView(); draw(); }
+// copy and paste a person's pose between any key frames: Paste replaces the SAME person's joints in this frame
+let CLIP = null;                                   // { id, kps, f }
+function copyPose() {
+  const p = selPerson(); if (!p) return needSel();
+  CLIP = { id: p.id, kps: clone(p.kps), f: PAGE.frames[cur].f }; draw();
+  say(`P${p.id}'s pose copied. Go to any key frame and press Paste (Ctrl+V).`);
+}
+function pastePose() {
+  if (!CLIP) return say('Copy a pose first: select a person, then Copy this pose (Ctrl+C).', true);
+  const here = people().find(q => q.id === CLIP.id);
+  if (here && JSON.stringify(here.kps) === JSON.stringify(CLIP.kps)) return say(`P${CLIP.id} already has this pose here.`);
+  remember(); putPose({ id: CLIP.id, kps: CLIP.kps }, cur); HIDDEN.delete(CLIP.id); sel = CLIP.id; dirty = true; draw();
+  say(`P${CLIP.id}: pose from frame ${CLIP.f} pasted ${here ? 'over their joints' : '(added)'} in frame ${PAGE.frames[cur].f}. Undo brings it back.`);
+}
+function holdPose() {                              // Shift+N: the selected person's pose in every following key frame up to the next fix
+  const p = selPerson(); if (!p) return needSel();
+  const to = [];
+  for (let j = cur + 1; j < PAGE.frames.length; j++) {
+    if (checked.has(PAGE.frames[j].f) || personFixed(j, p.id)) break;      // stops at a frame you already fixed or confirmed
+    to.push(j);
+  }
+  if (!to.length) return say(cur === PAGE.frames.length - 1 ? 'This is the last key frame.' : 'The next key frame is already fixed or confirmed.', true);
+  rememberMany(to); to.forEach(j => putPose(p, j)); dirty = true; draw();
+  say(`P${p.id}: pose held in ${to.length} key frame${to.length > 1 ? 's' : ''} (${PAGE.frames[to[0]].f}\u2013${PAGE.frames[to[to.length - 1]].f}). Undo brings them back.`);
+}
+function go(i, keepSel) {
+  cur = Math.max(0, Math.min(PAGE.frames.length - 1, i)); hover = null;
+  if (!keepSel && FLAGS[cur].length && !checked.has(PAGE.frames[cur].f)) {     // a flagged frame: select who moved suddenly
+    const id = flagIds(cur).find(id => !HIDDEN.has(id) && people().some(q => q.id === id)); if (id != null) sel = id;
+  }
+  fitView(); draw();
+}
+function zoomBy(k) { const sx = cv.width / 2, sy = cv.height / 2; view.ox = sx - (sx - view.ox) * k; view.oy = sy - (sy - view.oy) * k; view.s *= k; draw(); }
 function okNext() { remember(); checked.add(PAGE.frames[cur].f); dirty = true; const nf = FLAGS[cur].length ? nextFlagged(cur) : -1;  // flagged frames first
   if (nf >= 0) go(nf); else if (cur < PAGE.frames.length - 1) go(cur + 1); else draw(); }
 async function save() {
@@ -425,7 +562,13 @@ $('del').onclick = delPerson;
 $('add').onclick = addPerson;
 $('copy').onclick = copyPrev;
 $('carry').onclick = carryNext;
-$('reset').onclick = () => { fitView(); draw(); };
+$('hold').onclick = holdPose;
+$('cpose').onclick = copyPose;
+$('paste').onclick = pastePose;
+$('clipx').onclick = () => { CLIP = null; draw(); };
+$('fit').onclick = () => { fitView(); draw(); };
+$('zin').onclick = () => zoomBy(1.25);
+$('zout').onclick = () => zoomBy(0.8);
 $('solo').onclick = soloToggle;
 $('save').onclick = save;
 window.addEventListener('keydown', e => {
@@ -433,10 +576,12 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); }
   else if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); }
+  else if ((e.ctrlKey || e.metaKey) && k === 'c' && !String(window.getSelection())) { e.preventDefault(); copyPose(); }
+  else if ((e.ctrlKey || e.metaKey) && k === 'v') { e.preventDefault(); pastePose(); }
   else if (e.ctrlKey || e.metaKey || e.altKey) return;
   else if (k === 'arrowleft') go(cur - 1); else if (k === 'arrowright') go(cur + 1); else if (k === 'enter') { e.preventDefault(); okNext(); }
   else if (k === 's') swapLR(); else if (k === 'd' || k === 'delete') delPerson(); else if (k === 'a') addPerson();
-  else if (k === 'c') copyPrev(); else if (k === 'n') carryNext(); else if (k === 'r') { fitView(); draw(); }
+  else if (k === 'c') copyPrev(); else if (k === 'n') { if (e.shiftKey) holdPose(); else carryNext(); } else if (k === 'r') { fitView(); draw(); }
   else if (k === 'h' && hover) toggleHidden(hover);
   else if (k === 'f') { const i = nextFlagged(cur); if (i >= 0) go(i); }
   else if (k === 'escape') { sel = null; draw(); }
@@ -450,6 +595,7 @@ window.addEventListener('message', async e => {     // the clip page's buttons s
   save();
 });
 window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+go(cur);
 resize();
 </script>
 </body>

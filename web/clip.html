@@ -9,11 +9,12 @@
 <body>
 <header class="bar2">
   <div class="hd">
-    <a class="back" href="/">&#8592; All clips</a>
+    <nav class="hnav" aria-label="Clips">
+      <a class="back" href="/">&#8592; All clips</a>
+      <span class="pager"><a id="prevc" href="#">&#8249; Previous</a><span id="pos"></span><a id="nextc" href="#">Next &#8250;</a></span>
+    </nav>
     <div class="ttl"><h1 id="title">…</h1><span id="state"></span><span id="pkgname"></span><span class="film" id="film"></span></div>
-    <nav class="pager" aria-label="Clips"><a id="prevc" href="#">&#8249; Previous</a><span id="pos"></span><a id="nextc" href="#">Next &#8250;</a></nav>
   </div>
-  <nav class="stepper" id="stepper" aria-label="Sections"><a href="#s-people"><b>1</b> Who is who</a><a href="#s-marks"><b>2</b> Joints</a><a href="#s-objects"><b>3</b> Objects</a><a href="#s-more">More</a></nav>
 </header>
 <main class="page">
   <div id="banner" class="banner"></div>
@@ -41,7 +42,7 @@
 
   <details class="step" id="s-marks">
     <summary><span class="num">2</span>Fix joints <span id="marksum">(every 8th frame)</span><span id="marksstate" class="mstate"></span></summary>
-    <p class="hint" style="margin-top:8px">Starts on the frames where the 3D person moved suddenly (orange line; <kbd>F</kbd> = next). Drag a dot to fix it, <kbd>Enter</kbd> = frame OK. Your fixes are kept when you press any button below.</p>
+    <p class="hint" style="margin-top:8px">Check the flagged frames first: drag wrong dots, then press <b>✓ This frame looks right</b> (<kbd>Enter</kbd>).</p>
     <iframe id="marks" title="marks editor"></iframe>
   </details>
 
@@ -133,10 +134,10 @@ function fillPeople(rv) {
       ${p.not_person ? `<div class="suggest"><span><b>Not a person?</b> ${esc(p.not_person.charAt(0).toUpperCase() + p.not_person.slice(1))}</span><button class="np">Mark not a person</button></div>` : ''}
       <div class="lbl">Role</div>
       <div class="roles" role="group" aria-label="Role of person ${p.id}">${ROLES.map(([v, l, c]) => `<button data-v="${v}" aria-pressed="false">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
-      <div class="kv">
-        <label class="extra" style="display:none">Colour</label><select class="col extra" style="display:none" aria-label="Colour">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select>
-        <label for="h${p.id}">Height</label><span><input type="number" id="h${p.id}" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"> m</span>
-        <label for="n${p.id}">Name</label><input type="text" id="n${p.id}" class="nm" value="${esc(r.name)}" placeholder="optional">
+      <div class="fields">
+        <label class="f fh"><span>Height</span><span class="unit"><input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"><i>m</i></span></label>
+        <label class="f fn"><span>Name <em>optional</em></span><input type="text" class="nm" value="${esc(r.name)}" placeholder="e.g. Tom"></label>
+        <label class="f fc extra" style="display:none"><span>Colour</span><select class="col">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select></label>
       </div></div>`;
     const np = d.querySelector('.np');
     if (np) np.onclick = e => { e.stopPropagation(); d.querySelector('.roles button[data-v="ignore"]').click(); toast('Marked. Press Re-check to fit the clip again without it.'); };
@@ -403,11 +404,11 @@ async function load(first) {
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
   $('finish').title = !INFO.package ? 'Asks for the English title first (a v2.1 package needs a name), then finishes' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
-  $('pkgname').innerHTML = INFO.package ? `<span class="pkchip" title="v2.1 package name">${esc(INFO.package)}</span>` : '<span class="pkchip none">No package name</span>';
+  $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The v2.1 delivery package and its zip are named ${esc(INFO.package)}: the film's English title and this video's number">Package <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No package name yet</span>';
   if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
   $('askai').style.display = INFO.ai_ready ? '' : 'none';
   const prepared = !!INFO.status.fit;                 // not prepared: one empty state instead of empty sections
-  ['s-people', 's-marks', 's-objects', 's-more', 'stepper', 'prevbox'].forEach(id => $(id).style.display = prepared ? '' : 'none');
+  ['s-people', 's-marks', 's-objects', 's-more', 'prevbox'].forEach(id => $(id).style.display = prepared ? '' : 'none');
   $('notprepared').style.display = prepared || busy ? 'none' : '';
   document.querySelector('footer.actbar').style.display = prepared ? '' : 'none';
   envAi();
@@ -442,7 +443,8 @@ function checks() {
   $('s-check').style.display = rows.length && INFO.status.fit ? '' : 'none';
   $('checklist').innerHTML = rows.map(r => `<li><b>${esc(r.who)}</b><span>${esc(cap(r.text))}</span><a href="#${r.go}" data-go="${r.go}">${esc(r.label)}</a></li>`).join('');
   $('checklist').querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault();
-    const t = $(a.dataset.go); if (t.tagName === 'DETAILS') t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+    const t = $(a.dataset.go); if (t.tagName === 'DETAILS') t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setTimeout(() => { const y = t.getBoundingClientRect().top; if (Math.abs(y - 170) > 40) t.scrollIntoView({ block: 'start' }); }, 900); });   // pictures still loading above can move it
 }
 let SEL = null;
 function selectCard(d) { document.querySelectorAll('.person').forEach(x => x.classList.toggle('sel', x === d)); SEL = d; }
