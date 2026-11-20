@@ -481,5 +481,31 @@ class TestApi(unittest.TestCase):
         self.assertEqual(json.loads(body)["review"]["notes"], "test")
 
 
+
+class TestHeldPose(unittest.TestCase):
+    """a pose copied between key frames (Same pose in next): the frames between are blended from the fixes, not shaky"""
+    def setUp(self):
+        from common import coco_people
+        self.coco = coco_people
+        rng = np.random.default_rng(1)
+        self.base = np.c_[np.linspace(100, 160, 17), np.linspace(100, 400, 17), np.ones(17)]
+        frames = {}
+        for f in range(17):                                       # the detector: the same pose with 6 px of shake
+            k = self.base.copy(); k[:, :2] += rng.normal(0, 6, (17, 2)); frames[str(f)] = k.tolist()
+        self.pose = {"people": [{"id": 1, "frames": frames}]}
+
+    def test_still_pose_is_held(self):
+        chk = {"frames": {"0": [{"id": 1, "kps": self.base.tolist()}], "8": [{"id": 1, "kps": self.base.tolist()}]}}
+        fs, k = self.coco(self.pose, chk)[1]
+        self.assertTrue(np.allclose(k[fs.index(4)][:, :2], self.base[:, :2]))     # between the two fixes: the fixed pose
+
+    def test_moving_pose_keeps_detector_motion(self):
+        moved = self.base.copy(); moved[:, 0] += 80                               # a real move: not blended
+        chk = {"frames": {"0": [{"id": 1, "kps": self.base.tolist()}], "8": [{"id": 1, "kps": moved.tolist()}]}}
+        fs, k = self.coco(self.pose, chk)[1]
+        lin = self.base[:, :2] * 0.5 + moved[:, :2] * 0.5
+        self.assertFalse(np.allclose(k[fs.index(4)][:, :2], lin))
+
+
 if __name__ == "__main__":
     unittest.main()

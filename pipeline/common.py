@@ -214,6 +214,22 @@ class Camera:
     def K(self):
         return np.array([[self.f, 0, self.W / 2], [0, self.f, self.H / 2], [0, 0, 1.0]])
 
+def still_spans(fx, keys, gap=16, share=0.05):
+    """pairs of neighbouring fixed frames (at most `gap` apart) where the person barely moved: every joint seen in both
+    moved less than `share` of the body height (a pose copied to the next key frame and nudged a little)"""
+    out = []
+    for a, b in zip(keys, keys[1:]):
+        if b - a > gap:
+            continue
+        both = (fx[a][:, 2] > 0) & (fx[b][:, 2] > 0)
+        if both.sum() < 5:
+            continue
+        ys = fx[a][both, 1]; h = max(ys.max() - ys.min(), 1.0)
+        if np.linalg.norm(fx[a][both, :2] - fx[b][both, :2], axis=1).max() < share * h:
+            out.append((a, b))
+    return out
+
+
 def coco_people(pose, checked=None):
     """people from pose.json; marks fixed in checked.json are applied, and the fix is blended into nearby frames.
     returns {id: (frames sorted list, kps array [n,17,3])}  (full-frame pixels)"""
@@ -241,9 +257,17 @@ def coco_people(pose, checked=None):
                     d = fx[f][:, :2] - fr[f][:, :2]
                     d[(fx[f][:, 2] <= 0) | (fr[f][:, 2] <= 0)] = 0
                     deltas[f] = d
+            held = still_spans(fx, keys)
             for f in list(fr):
                 if f in fx:
                     fr[f] = fx[f].copy(); fr[f][fx[f][:, 2] > 0, 2] = np.maximum(fr[f][fx[f][:, 2] > 0, 2], 0.95)
+                    continue
+                span = next(((a, b) for a, b in held if a < f < b), None)
+                if span:                         # the person holds still between two fixes: blend the fixes, not the detector's shaky dots
+                    a, b = span; t = (f - a) / (b - a)
+                    both = (fx[a][:, 2] > 0) & (fx[b][:, 2] > 0)
+                    fr[f][both, :2] = fx[a][both, :2] * (1 - t) + fx[b][both, :2] * t
+                    fr[f][both, 2] = np.maximum(fr[f][both, 2], 0.9)
                     continue
                 if deltas:
                     ks = sorted(deltas); i = np.searchsorted(ks, f)
