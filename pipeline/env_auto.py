@@ -432,6 +432,39 @@ def classify(R, indoor):
     return "object"
 
 
+def name_regions(regs, fr, namer, indoor, min_p=0.3, max_area=0.2):
+    """CLIP names each piece (namer.py) and corrects what shape and colour got wrong: a green-painted wall is a wall,
+    not vegetation; a desk-shaped blob becomes a desk.  Sets R["label"] = (word, probability) and R["ptype"] (props.py)"""
+    if namer is None:
+        return regs
+    # huge pieces (back wall, floor) are left to the geometry: their crop shows the whole room and CLIP names the room
+    todo = [R for R in regs if R["cls"] not in ("sky", "floor", "terrain") and 0.004 <= R["area"] <= max_area and (R["mask"] & ~fr.person).any()]
+    names = namer.name(fr.img, [R["mask"] & ~fr.person for R in todo], indoor=indoor)
+    from namer import WORDS
+    for R, best in zip(todo, names):
+        word, p = best[0]; R["label"] = (word, round(p, 2))
+        if p < min_p:
+            continue
+        wc, wt = WORDS[word]
+        vertical = R["planar"] and abs(R["plane"][0][2]) < 0.35
+        was = R["cls"]
+        if wc == "person" and p < 0.6:                          # unsure: a window or a coat, not a missed person
+            continue
+        if wc == "person":                                       # a person the pose detector missed: not part of the set
+            R["cls"] = "sky"
+        elif was == "vegetation" and wc != "vegetation":
+            R["cls"] = "wall" if (wc == "wall" or vertical) and R["area"] > 0.02 else ("floor" if wc == "floor" else "object")
+        elif wc == "wall" and was == "object" and vertical:
+            R["cls"] = "wall"
+        elif wc == "vegetation" and was in ("object", "pole") and not indoor:
+            R["cls"] = "vegetation"
+        if wt and R["cls"] in ("object", "top", "vegetation"):
+            R["ptype"] = wt
+        if R["cls"] != was:
+            print("    %s -> %s (CLIP: %s %.2f)" % (was, R["cls"], word, p))
+    return regs
+
+
 def split_planes(fr, R, indoor, max_planes=4):
     """a big mask that is not one surface (SAM often takes back wall + ceiling + floor of a room as one piece) ->
     one region per plane (RANSAC on points + normals), each split again into its connected pieces"""
@@ -626,6 +659,9 @@ def make_object(R, C, indoor, fr, fpix, name):
     tol = 0.15 + 0.025 * r
     col = colour_for(cls, R, indoor)
     src = {"cls": cls, "frame": int(fr.f), "px": [int(v / fr.k) for v in R["bbox_px"]], "range": round(r, 1), "area": round(R["area"], 3)}
+    if R.get("label"):
+        src["label"] = list(R["label"])                          # what CLIP sees (namer.py), for the review page
+    pt = R.get("ptype")
     if cls in ("sky", "floor", "ceiling"):
         return None
     if cls in ("wall", "building") or (cls == "far" and R["planar"] and abs(R["plane"][0][2]) < 0.35):
@@ -706,6 +742,8 @@ def make_object(R, C, indoor, fr, fpix, name):
         cen, W, Dn, ax = oriented_box(P, C)
         u = np.array([ax[0], ax[1], 0.0])
         kind = "table" if 0.55 < ztop < 0.85 and W * Dn < 4 else ("counter" if 0.85 <= ztop < 1.15 else ("bed" if ztop < 0.6 and W > 1.4 and Dn > 1.0 else "box"))
+        if pt in ("desk", "table", "counter", "bed", "sink", "stove"):
+            kind = pt
         return {"name": name, "type": kind, "pos": rnd([cen[0], cen[1], 0.0], 2), "size": rnd([W, ztop, Dn], 2),
                 "yaw": round(yaw_front(u, cen, C), 1), "colour": col, "_src": src}
     if cls == "pole":
@@ -728,6 +766,9 @@ def make_object(R, C, indoor, fr, fpix, name):
     yaw = round(yaw_front(u, cen, C), 1)
     if max(W, h) < 0.25 or (not on_floor and R["area"] < 0.02 and cls != "vegetation"):   # specks, small floating bits
         return None
+    if cls == "vegetation" and indoor and pt in (None, "plant_pot", "bush") and h < 2.5:
+        return {"name": name, "type": "plant_pot", "pos": rnd([cen[0], cen[1], zb], 2), "size": rnd([W, h, Dn], 2), "yaw": yaw,
+                "colour": "tree", "_src": src}
     if cls == "vegetation":
         if h > 3.0 or not on_floor:
             kind = "pine" if W < 0.45 * (z95) else "tree"
@@ -755,6 +796,9 @@ def make_object(R, C, indoor, fr, fpix, name):
             kind = "bookshelf" if Dn < 0.7 else "cabinet"
     else:
         kind = "wall_cabinet" if indoor and zb > 1.2 else "box"
+    import props
+    if pt and pt in props.TYPES:                                 # CLIP's name wins over the guess from the size
+        kind = pt
     o = {"name": name, "type": kind, "pos": rnd([cen[0], cen[1], zb], 2), "size": rnd([W, h, Dn], 2), "yaw": yaw, "colour": col, "_src": src}
     if not on_floor:
         o["abs_z"] = True
@@ -951,6 +995,9 @@ def main():
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
     models = Models(a.points)
+    import namer as NM
+    models.namer = NM.Namer() if NM.available() else None
+    print("object names: %s" % ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)"))
     print("models loaded on %s in %.1f s" % (models.dev, time.time() - t_load))
     bad = []
     for n in names:
@@ -1125,7 +1172,7 @@ def run_clip(name, models, a, c):
                     else:
                         regs.append(R)
                 regs = merge_regions(regs, fr.H, fr.W)
-                regs_by_frame[f] = merge_regions(regs, fr.H, fr.W)
+                regs_by_frame[f] = name_regions(merge_regions(regs, fr.H, fr.W), fr, getattr(models, "namer", None), indoor)
         place_all(R0, gplane0)
         # walls are upright: when they say the ground the people walk on is sloped, level the world (z = up) and
         # make the ground a slope instead (build_env Ground slope_deg / slope_dir_deg)
