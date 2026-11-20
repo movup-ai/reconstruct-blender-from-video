@@ -649,25 +649,6 @@ def make_handler(app):
             if parts[0] == "clip" and len(parts) == 2:
                 app.clip(parts[1])
                 return self.page("clip.html")
-            if parts[0] == "edit" and len(parts) == 2:                  # movement editor
-                app.clip(parts[1])
-                return self.page("editor.html")
-            if parts[:2] == ["api", "clip"] and len(parts) == 4 and parts[3] == "dots":
-                from . import editor
-                try:
-                    return self.send(200, editor.payload(c, app.clip(parts[2])))
-                except FileNotFoundError as e:
-                    raise HttpError(404, str(e))
-            if parts[:2] == ["api", "clip"] and len(parts) == 4 and parts[3] == "rerender":
-                from . import editor
-                app.clip(parts[2])
-                return self.send(200, editor.status(parts[2]))
-            if parts[0] == "frame" and len(parts) == 3 and parts[2].isdigit():
-                from . import editor
-                jpg = editor.frame_jpeg(c, app.clip(parts[1]), int(parts[2]))
-                if jpg is None:
-                    raise HttpError(404, "no such frame")
-                return self.send(200, jpg, "image/jpeg")
             if parts in (["submissions"], ["settings"], ["help"]):
                 return self.page(parts[0] + ".html")
             if parts == ["favicon.ico"] or parts == ["favicon.svg"]:
@@ -886,19 +867,15 @@ def make_handler(app):
                 return
             if parts[:2] == ["api", "clip"] and len(parts) == 4:
                 cl = app.clip(parts[2]); f = folders(app.c, cl); action = parts[3]
-                if action == "dots":                                     # movement editor: save corrected dots
-                    from . import editor
-                    return self.send(200, editor.save(app.c, cl, self.body_json()))
-                if action == "rerender":                                 # movement editor: fit + set + render
-                    from . import editor
-                    return self.send(200, editor.start_render(app.c, cl))
                 if action == "marks":
                     d = self.body_json()
                     if not isinstance(d.get("frames"), dict):
                         raise HttpError(400, "marks must contain frames")
                     os.makedirs(f["marks"], exist_ok=True)
-                    with open(os.path.join(f["marks"], "checked.json"), "w", encoding="utf-8") as fh:
-                        json.dump(d, fh, ensure_ascii=False)
+                    p = os.path.join(f["marks"], "checked.json"); tmp = p + ".tmp"      # whole file or nothing:
+                    with open(tmp, "w", encoding="utf-8") as fh:                         # a half-written file would
+                        json.dump(d, fh, ensure_ascii=False)                               # lose every joint fix
+                    os.replace(tmp, p)
                     return self.send(200, {"ok": True})
                 if action == "review":
                     d = review.validate(self.body_json())

@@ -811,16 +811,22 @@ def main():
         except Exception as e:
             traceback.print_exc()
             rows.append({"clip": clip_name(v, c), "video": v, "status": "FAILED", "warnings": [str(e)[:300]]})
-    rp = os.path.join(c["work_root"], "report_%s.csv" % time.strftime("%Y%m%d_%H%M%S"))
-    with open(rp, "w", encoding="utf-8-sig") as fh:
-        fh.write("clip,status,checked,people,median_error_px,seconds,warnings,video\n")
-        for r in rows:
-            pe = r.get("people", [])
-            fh.write('%s,%s,%s,%d,%s,%s,"%s","%s"\n' % (r["clip"], r["status"], r.get("checked", ""), len(pe),
-                     "/".join(str(p["median_error_px"]) for p in pe), r.get("seconds", ""), " | ".join(r.get("warnings", [])).replace('"', "'"), r.get("video", "")))
-    log("\nreport: " + rp)
+    if len(rows) > 1:                                      # a batch from the command line: one CSV for the whole run
+        rp = os.path.join(c["work_root"], "report_%s.csv" % time.strftime("%Y%m%d_%H%M%S"))   # (the app's one-clip jobs have their log)
+        with open(rp, "w", encoding="utf-8-sig") as fh:
+            fh.write("clip,status,checked,people,median_error_px,seconds,warnings,video\n")
+            for r in rows:
+                pe = r.get("people", [])
+                fh.write('%s,%s,%s,%d,%s,%s,"%s","%s"\n' % (r["clip"], r["status"], r.get("checked", ""), len(pe),
+                         "/".join(str(p["median_error_px"]) for p in pe), r.get("seconds", ""), " | ".join(r.get("warnings", [])).replace('"', "'"), r.get("video", "")))
+        log("\nreport: " + rp)
     bad = [r for r in rows if r["status"] == "FAILED"]
     log("%d ok, %d skipped, %d failed" % (sum(r["status"] == "ok" for r in rows), sum(r["status"] == "skipped" for r in rows), len(bad)))
+    # the exit code is the result the app trusts:  0 done · 1 a clip failed · 3 the clip's review is not confirmed yet
+    if bad:
+        sys.exit(1)
+    if any(r["status"] == "waiting" for r in rows):
+        sys.exit(3)
 
 if __name__ == "__main__":
     main()

@@ -142,6 +142,48 @@ class TestFinishFingerprint(unittest.TestCase):
         self.assertFalse(clipsmod.status(c, cl)["done"])
 
 
+
+class TestJobResult(unittest.TestCase):
+    """a job's result is the pipeline's exit code: 0 done, 1 failed (tried again once), 3 review not confirmed (not retried)"""
+    def setUp(self):
+        from agent import jobs
+        self.d = tempfile.mkdtemp()
+        src = os.path.join(self.d, "src", "FilmA"); os.makedirs(src)
+        make_video(os.path.join(src, "1-1.mp4"), n=10)
+        c = dict(config.load(), source_root=os.path.join(self.d, "src"), work_root=os.path.join(self.d, "w"),
+                 submit_root=os.path.join(self.d, "s"), marks_root=os.path.join(self.d, "m"), max_attempts=2)
+        self.store = jobs.JobStore(os.path.join(self.d, "j.db"))
+        lib = clipsmod.Library(c)
+        self.cl = lib.clips[0]
+        app = mock.Mock(c=c, lib=lib, store=self.store)
+        self.r = jobs.Runner(app)
+        self.r.after = lambda *a: None
+
+    def tearDown(self):
+        self.store.db.close()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def run_job(self, code, stage="fit"):
+        self.r._cmd = lambda job, cl: [sys.executable, "-c", "print('working'); raise SystemExit(%d)" % code]
+        jid = self.store.enqueue(self.cl.id, stage)
+        self.r._run(self.store.take())
+        return jid
+
+    def test_exit_codes(self):
+        self.run_job(0)                                                     # no "0 failed" line needed any more
+        self.assertEqual(self.store.latest_for(self.cl.id)["state"], "done")
+        self.run_job(3, "all")
+        j = self.store.latest_for(self.cl.id)
+        self.assertEqual((j["state"], j["attempts"]), ("failed", 1), "not confirmed: no second attempt")
+        self.assertIn("not confirmed", j["error"])
+        self.run_job(1)
+        self.assertEqual(self.store.latest_for(self.cl.id)["state"], "queued", "a failure is tried once more")
+        self.r._run(self.store.take())
+        self.assertEqual(self.store.latest_for(self.cl.id)["state"], "failed")
+        work = clipsmod.folders(self.r.app.c, self.cl)["work"]
+        self.assertTrue(os.path.exists(os.path.join(work, "job_fit.previous.log")), "the first attempt's log is kept")
+
+
 class TestProgressAndFlags(unittest.TestCase):
     def test_progress_from_log(self):
         d = tempfile.mkdtemp()

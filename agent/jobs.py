@@ -200,6 +200,8 @@ class Runner:
         cmd = self._cmd(job, cl)
         fp = fingerprint(c, cl) if job["stage"] == "all" else None     # what this Finish is made from
         log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])
+        if job["attempts"] > 1 and os.path.exists(logp):                # a retry: keep the failed attempt's log beside it
+            os.replace(logp, logp[:-4] + ".previous.log")
         t0 = time.time()
         with open(logp, "w", encoding="utf-8", errors="replace") as lf:
             lf.write("# %s  %s  attempt %d\n$ %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), job["stage"], job["attempts"], " ".join(cmd)))
@@ -217,13 +219,14 @@ class Runner:
                 self.procs.pop(job["id"], None)
         with open(logp, encoding="utf-8", errors="replace") as fh:
             txt = fh.read()
-        ok = rc == 0 and err is None and "Traceback" not in txt and (job["stage"] == "ai" or " 0 failed" in txt)
+        ok = rc == 0 and err is None                   # the exit code is the result (run_pipeline: 1 failed, 3 not confirmed)
         if not ok and err is None:
-            err = last_error(txt) or "exit code %s" % rc
+            err = ("the review is not confirmed: press Mark reviewed or Finish now" if rc == 3 else
+                   last_error(txt) or "exit code %s" % rc)
         if self.stop.is_set():
             self.store.requeue(job["id"])                      # app closing: do it again next start
             return
-        if not ok and job["attempts"] < c.get("max_attempts", 2):
+        if not ok and rc != 3 and job["attempts"] < c.get("max_attempts", 2):     # not confirmed: trying again changes nothing
             log.warning("job %d failed (%s) - trying again", job["id"], err)
             self.store.requeue(job["id"])
             return

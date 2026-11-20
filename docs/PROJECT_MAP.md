@@ -68,7 +68,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 |---|---|---|---|
 | `automark.py` | automark.py - automatic body keypoint marking for the white-model (白模) clips. | `pipeline/batch_prepare.py`, `pipeline/common.py`, `pipeline/queue_run.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/blender_build.py` | White-model (白模) L3 rebuild - generic Blender builder of the automatic pipeline. | `pipeline/build_env.py`, `pipeline/extract_base_character.py`, `pipeline/extract_human_master.py`, `pipeline/extract_sample_character.py` +5 | Blender script |
-| `pipeline/build_env.py` | Hand-built set for one clip (the client-sample style: clean grey room / landscape made of simple recognisable | `README.md`, `agent/editor.py`, `docs/ENV_AUTHORING.md`, `docs/HINTS.md` +13 | imports |
+| `pipeline/build_env.py` | Hand-built set for one clip (the client-sample style: clean grey room / landscape made of simple recognisable | `README.md`, `docs/ENV_AUTHORING.md`, `docs/HINTS.md` +13 | imports |
 | `pipeline/camera_estimate.py` | automatic camera for one shot: rotation (+ zoom) tracking, steadying, and camera height / pitch / roll. | `pipeline/camera_solve.py`, `pipeline/ground_solve.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/camera_solve.py` | per-frame camera rotation from tracked background features (pan / tilt / roll shots). | `pipeline/camera_estimate.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/common.py` | shared settings and helpers for the automatic white-model pipeline | `Setup.bat`, `agent/config.py`, `agent/server.py`, `agent/validate.py` +43 | imports |
@@ -81,13 +81,13 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `pipeline/lens_auto.py` | The clip's lens from the picture (MoGe-2), instead of one fixed lens for every clip. | `README.md`, `pipeline/run_pipeline.py`, `tests/test_quality.py` | imports |
 | `pipeline/make_video.py` | White-model video of a rendered clip, without the client package (no package name, meta or zip needed). | `tests/test_agent.py` | imports |
 | `pipeline/motion_prior.py` | Real-world movement knowledge as a SOFT recommendation for the fitted characters. | `docs/MOTION_RESEARCH.md`, `pipeline/fit_people.py` | imports |
-| `pipeline/package.py` | Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring); | `agent/editor.py`, `agent/server.py`, `agent/validate.py`, `docs/HINTS.md` +24 | imports |
+| `pipeline/package.py` | Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring); | `agent/server.py`, `agent/validate.py`, `docs/HINTS.md` +24 | imports |
 | `pipeline/pose3d.py` | 3D pose lifting: COCO-17 2D tracks -> H36M-17 3D joints per frame (MotionBERT, GPU). | `pipeline/common.py`, `pipeline/fit_people.py` | imports |
 | `pipeline/props.py` | Library of simple, recognisable white-model objects (like the client samples: a door has a frame, a panel and a | `README.md`, `agent/ai.py`, `agent/brief.py`, `agent/review.py` +12 | imports |
 | `pipeline/quality.py` | Quality of a fitted clip in numbers, and the filter for tracks that are not worth fitting. | `README.md`, `pipeline/env_auto.py`, `pipeline/make_check_page.py`, `pipeline/run_pipeline.py` +2 | imports |
 | `pipeline/review_page.py` | One static page to review every clip: Work_auto\REVIEW.html (+ thumbnails in Work_auto\_review\). | `pipeline/queue_run.py` | imports |
 | `pipeline/rig.py` | numpy copy of the L3 mannequin in blender_build.py (same joints, same Blender XYZ euler order). | `assets/sample_character.json`, `pipeline/blender_build.py`, `pipeline/build_env.py`, `pipeline/compare.py` +15 | imports |
-| `pipeline/run_pipeline.py` | Automatic white-model pipeline:  video  ->  finished submission folder + zip, no manual steps. | `README.md`, `agent/brief.py`, `agent/clips.py`, `agent/editor.py` +26 | imports |
+| `pipeline/run_pipeline.py` | Automatic white-model pipeline:  video  ->  finished submission folder + zip, no manual steps. | `README.md`, `agent/brief.py`, `agent/clips.py` +26 | imports |
 | `pipeline/scene_depth.py` | grey set from a depth model: clean background plate (people removed) -> Depth Anything V2 -> metric depth | `agent/server.py`, `pipeline/camera_estimate.py`, `pipeline/get_model.py`, `pipeline/run_pipeline.py` +1 | imports |
 | `pipeline/scene_export.py` | Export the open Blender scene as model_3d/reconstruction/scene.json (v2.1 delivery rule: real scene data, not a | `assets/reconstruction/README.md`, `pipeline/blender_build.py` | imports |
 | `pipeline/shots.py` | hard-cut detection.  A cut is a frame whose picture has nothing in common with the frame before it: low | `README.md`, `agent/ai.py`, `agent/brief.py`, `agent/server.py` +19 | imports |
@@ -157,7 +157,6 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `agent/brief.py` | Hand-off files for Claude.  When a person confirms a clip's detection, everything Claude needs to finish the clip | `agent/server.py`, `docs/LZHD_CLIP_WORKFLOW.md` | imports |
 | `agent/clips.py` | Clip discovery, per-clip folders and status (status is read from the files, so it survives restarts). | `README.md`, `agent/__init__.py`, `agent/brief.py`, `agent/config.py` +28 | imports |
 | `agent/config.py` | Settings and folders.  One config.json next to the launcher holds both the pipeline settings and the app settings. | `README.md`, `Setup.bat`, `agent/__main__.py`, `agent/ai.py` +30 | imports |
-| `agent/editor.py` | Movement editor (/edit/<clip id>): the detected joints of a clip, 30 frames to review, every frame editable, | `README.md`, `agent/server.py`, `pipeline/make_check_page.py`, `web/app.css` +2 | imports |
 | `agent/jobs.py` | Persistent job queue (SQLite), worker pool with timeouts and retries, and the autopilot. | `README.md`, `agent/server.py`, `automark.py`, `pipeline/queue_run.py` +4 | imports |
 | `agent/media.py` | Thumbnails and crops (cached on disk).  OpenCV cannot open Chinese paths on Windows, so videos are copied to a | `agent/ai.py`, `agent/server.py`, `tests/test_agent.py`, `web/app.css` +2 | imports |
 | `agent/review.py` | The review (key points) of a clip: people roles / colours / heights, camera, set, objects, notes. | `README.md`, `agent/__init__.py`, `agent/ai.py`, `agent/brief.py` +23 | imports |
@@ -170,8 +169,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `web/app.css` | App styles | `tests/test_agent.py`, `web/clip.html`, `web/help.html`, `web/index.html` +2 | - |
 | `web/clip.html` | Clip review page | `agent/server.py` | - |
 | `web/common.js` | Shared page script (API calls, header) | `tests/test_agent.py`, `web/clip.html`, `web/help.html`, `web/index.html` +2 | - |
-| `web/editor.html` | Set objects editor | `agent/server.py` | - |
-| `web/favicon.svg` | App icon | `agent/server.py`, `tests/test_agent.py`, `web/common.js`, `web/editor.html` | - |
+| `web/favicon.svg` | App icon | `agent/server.py`, `tests/test_agent.py`, `web/common.js` | - |
 | `web/help.html` | Help page | - | - |
 | `web/index.html` | Clips page | `agent/server.py`, `docs/MOTION_RESEARCH.md` | - |
 | `web/settings.html` | Settings page | - | - |
@@ -199,7 +197,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 |---|---|---|---|
 | `.gitignore` | What git leaves out: environment, models, clips, work and results folders, config.json | - | - |
 | `README.md` | How to install, start and use the app | `assets/reconstruction/README.md`, `docs/v21/白模交付包内部格式与打包要求v2.1_text.txt`, `pipeline/package.py`, `pipeline/portal_pack.py` | - |
-| `data/package_names.json` | Clip name -> client package name (needed by the official packaging) | `agent/editor.py`, `docs/HINTS.md`, `pipeline/all_frames.py`, `pipeline/camera_check.py` +12 | - |
+| `data/package_names.json` | Clip name -> client package name (needed by the official packaging) | `docs/HINTS.md`, `pipeline/all_frames.py`, `pipeline/camera_check.py` +12 | - |
 | `data/package_tasks.json` | Client package name -> client task ID / zip (record of the 11-12 batch) | - | - |
 | `docs/ENV_AUTHORING.md` | How to hand-build a set (env_claude.json) | `docs/LZHD_CLIP_WORKFLOW.md`, `pipeline/env_auto.py` | - |
 | `docs/HINTS.md` | How to fix a character with hints.json, roles and track edits | `docs/LZHD_CLIP_WORKFLOW.md` | - |
