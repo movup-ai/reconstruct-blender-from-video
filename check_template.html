@@ -103,14 +103,19 @@
   #clipcard .ct span { flex: 1; min-width: 0; }
   #clipcard .x { min-height: 24px; width: 24px; padding: 0; justify-content: center; border: 0; background: none; box-shadow: none; color: var(--slate); font-size: 16px; }
   #clipcard .x:hover { background: var(--paper); color: var(--ink); }
-  #paste { width: 100%; justify-content: space-between; }
+  #paste, #unpaste { width: 100%; justify-content: space-between; }
+  #unpaste { margin-top: 6px; }
   #paste kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.35); color: #fff; }
   #nosel { margin-top: 12px; padding: 10px; border: 1px dashed var(--seam-strong); border-radius: 10px; font-size: 12.5px; color: var(--slate); }
   .legend { font-size: 12px; color: var(--slate); margin: 14px 0 0; line-height: 1.6; }
   .legend svg { vertical-align: -2px; margin-right: 4px; }
   details.keys { margin-top: 10px; font-size: 12.5px; color: var(--slate); }
   details.keys summary { cursor: pointer; color: var(--ink); font-weight: 500; }
-  details.keys p { margin: 5px 0; }
+  details.keys h4 { margin: 12px 0 4px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
+  details.keys dl { display: grid; grid-template-columns: 86px 1fr; gap: 3px 10px; margin: 0; align-items: baseline; }
+  details.keys dt { color: var(--ink); line-height: 1.4; }
+  details.keys dd { margin: 0; line-height: 1.4; }
+  details.keys .kfoot { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid var(--seam); line-height: 1.45; }
 
   .dlgbg { position: fixed; inset: 0; background: rgba(30,37,43,.32); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
   .dlg { background: var(--paper); border: 1px solid var(--seam); border-radius: 12px; padding: 18px 20px; max-width: 420px; width: 100%;
@@ -164,7 +169,8 @@
     <button id="add" class="linkbtn" title="Add someone the detector missed in this frame (A)">+ Add a missed person</button>
     <div id="clipcard" style="display:none">
       <div class="ct"><i id="clipcol"></i><span id="cliptext"></span><button id="clipx" class="x" title="Forget the copied pose" aria-label="Forget the copied pose">&times;</button></div>
-      <button id="paste" class="primary" title="Replace this person's joints in this key frame with the copied pose (Ctrl+V)">Paste into this frame <kbd>Ctrl+V</kbd></button>
+      <button id="paste" class="primary" title="Replace this person's joints in this key frame with the copied pose (Ctrl+V); asks first">Replace in this frame <kbd>Ctrl+V</kbd></button>
+      <button id="unpaste" style="display:none" title="Undo the replace (Ctrl+Z); asks first">&#8630; Undo replace <kbd>Ctrl+Z</kbd></button>
     </div>
     <div id="nosel">Click a person's dot or name to fix them: swap left and right, copy their pose to other frames, or remove a wrong detection.</div>
     <div id="selbox" style="display:none">
@@ -175,7 +181,7 @@
         <button id="copy" title="This person's pose from the key frame before">Pose from the frame before <kbd>C</kbd></button>
         <button id="carry" title="Copy this pose into the next key frame and go there; nudge what moved">Same pose in next &#9654; <kbd>N</kbd></button>
         <button id="hold" title="Copy this pose into every following key frame up to the next frame you fixed or confirmed">Hold pose until the next fix <kbd>&#8679;N</kbd></button>
-        <button id="cpose" title="Remember this person's pose; then go to any key frame and paste it there">Copy this pose <kbd>Ctrl+C</kbd></button>
+        <button id="cpose" title="Remember this person's pose; then go to any key frame and press Replace there">Copy this pose <kbd>Ctrl+C</kbd></button>
         <div class="sub">View and remove</div>
         <button id="solo">Show only this person <kbd>V</kbd></button>
         <button id="del" class="danger" title="A wrong detection: remove this person from this frame only">Remove from this frame <kbd>D</kbd></button>
@@ -186,13 +192,17 @@
       <div><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#5e6a73" stroke-width="1.6"/></svg>hollow dot = joint hidden in the video</div>
     </div>
     <details class="keys"><summary>All keys and mouse</summary>
-      <p>Drag a dot to move it · wheel = zoom · drag empty space = move the view · <kbd>R</kbd> whole picture</p>
-      <p><kbd>Enter</kbd> this frame looks right · <kbd>F</kbd> next flagged · <kbd>←</kbd> <kbd>→</kbd> key frames</p>
-      <p>Right-click a dot or <kbd>H</kbd> = joint hidden / visible in the video</p>
-      <p>Selected person: <kbd>S</kbd> swap · <kbd>C</kbd> pose from before · <kbd>N</kbd> same pose in next · <kbd>Shift</kbd>+<kbd>N</kbd> hold until the next fix · <kbd>V</kbd> show only them · <kbd>D</kbd> remove · <kbd>Esc</kbd> deselect</p>
-      <p>Any key frame: <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the selected person's pose · go to another key frame · <kbd>Ctrl</kbd>+<kbd>V</kbd> replaces that same person's joints there</p>
-      <p><kbd>A</kbd> add a missed person · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</p>
-      <p>Near-equal poses in neighbouring key frames are kept still in between, so a person who barely moves does not shake.</p>
+      <h4>Mouse</h4>
+      <dl><dt>Drag a dot</dt><dd>Move the joint</dd><dt>Right-click</dt><dd>Hide / show a joint</dd><dt>Wheel</dt><dd>Zoom</dd><dt>Drag empty</dt><dd>Move the view</dd></dl>
+      <h4>Frames</h4>
+      <dl><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next frame</dd><dt><kbd>F</kbd></dt><dd>Next flagged</dd><dt><kbd>Enter</kbd></dt><dd>Looks right</dd><dt><kbd>R</kbd></dt><dd>Whole picture</dd></dl>
+      <h4>Selected person</h4>
+      <dl><dt><kbd>S</kbd></dt><dd>Swap left / right</dd><dt><kbd>C</kbd></dt><dd>Pose from before</dd><dt><kbd>N</kbd></dt><dd>Same pose in next</dd><dt><kbd>Shift</kbd> <kbd>N</kbd></dt><dd>Hold until next fix</dd><dt><kbd>V</kbd></dt><dd>Show only them</dd><dt><kbd>D</kbd></dt><dd>Remove in this frame</dd><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></dl>
+      <h4>Copy a pose</h4>
+      <dl><dt><kbd>Ctrl</kbd> <kbd>C</kbd></dt><dd>Copy their pose</dd><dt><kbd>Ctrl</kbd> <kbd>V</kbd></dt><dd>Replace them in another frame</dd></dl>
+      <h4>Other</h4>
+      <dl><dt><kbd>H</kbd></dt><dd>Hide joint under mouse</dd><dt><kbd>A</kbd></dt><dd>Add a missed person</dd><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd><dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save</dd></dl>
+      <p class="kfoot">A person whose pose barely changes between neighbouring key frames is held still in between, so they don’t shake.</p>
     </details>
   </div>
 </div>
@@ -277,10 +287,13 @@ function say(t, bad) { const s = $('status'); s.textContent = t; s.style.color =
 
 // ---------------------------------------------------------------- undo: a snapshot of the frame before each change
 const snap = i => ({ i, people: clone(PAGE.frames[i].people), ok: checked.has(PAGE.frames[i].f) });
-function rememberMany(is) { UNDO.push(is.map(snap)); if (UNDO.length > 60) UNDO.shift(); $('undo').disabled = false; }
-function remember() { rememberMany([cur]); }
-function undo() {
-  const u = UNDO.pop(); if (!u) return;
+// an entry can carry `ask`: a sentence for a confirmation before undoing it (a Replace, which overwrote a whole person)
+function rememberMany(is, ask) { const u = is.map(snap); u.ask = ask || ''; UNDO.push(u); if (UNDO.length > 60) UNDO.shift(); $('undo').disabled = false; }
+function remember(ask) { rememberMany([cur], ask); }
+async function undo() {
+  const last = UNDO[UNDO.length - 1]; if (!last) return;
+  if (last.ask && await dialog(last.ask, [[false, 'Cancel'], [true, 'Undo', true]]) !== true) return;
+  const u = UNDO.pop(); if (u !== last) return;
   u.forEach(x => { PAGE.frames[x.i].people = x.people; if (x.ok) checked.add(PAGE.frames[x.i].f); else checked.delete(PAGE.frames[x.i].f); });
   dirty = true; $('undo').disabled = !UNDO.length; sel = null; go(u[0].i, true); say(u.length > 1 ? `Undone (${u.length} frames)` : 'Undone');
 }
@@ -389,7 +402,9 @@ function ui() {
     $('cliptext').textContent = `Copied: P${CLIP.id}'s pose from frame ${CLIP.f}`;
     const here = people().find(q => q.id === CLIP.id), same = here && JSON.stringify(here.kps) === JSON.stringify(CLIP.kps);
     $('paste').disabled = !!same;
-    $('paste').innerHTML = (same ? 'Already this pose here' : here ? `Paste over P${CLIP.id} in this frame` : `Paste P${CLIP.id} into this frame`) + ' <kbd>Ctrl+V</kbd>';
+    const top = UNDO[UNDO.length - 1];              // the last change was a Replace in this frame: offer to undo it right here
+    $('unpaste').style.display = top && top.ask && top[0].i === cur ? '' : 'none';
+    $('paste').innerHTML = (same ? 'Already this pose here' : here ? `Replace P${CLIP.id} in this frame` : `Add P${CLIP.id} to this frame`) + ' <kbd>Ctrl+V</kbd>';
   }
   const cells = $('cells'); cells.innerHTML = '';
   PAGE.frames.forEach((fr, i) => {
@@ -491,19 +506,24 @@ function carryNext() {                             // N: the selected person's p
   go(cur + 1, true); remember(); putPose(p, cur); sel = p.id; dirty = true; draw();
   say(`P${p.id}: same pose in key frame ${PAGE.frames[cur].f}. Nudge any dot that is off, then N again.`);
 }
-// copy and paste a person's pose between any key frames: Paste replaces the SAME person's joints in this frame
+// copy a person's pose and put it in any key frame: Replace overwrites the SAME person's joints there (after asking)
 let CLIP = null;                                   // { id, kps, f }
 function copyPose() {
   const p = selPerson(); if (!p) return needSel();
   CLIP = { id: p.id, kps: clone(p.kps), f: PAGE.frames[cur].f }; draw();
-  say(`P${p.id}'s pose copied. Go to any key frame and press Paste (Ctrl+V).`);
+  say(`P${p.id}'s pose copied. Go to any key frame and press Replace (Ctrl+V).`);
 }
-function pastePose() {
+async function pastePose() {
   if (!CLIP) return say('Copy a pose first: select a person, then Copy this pose (Ctrl+C).', true);
-  const here = people().find(q => q.id === CLIP.id);
+  const here = people().find(q => q.id === CLIP.id), f = PAGE.frames[cur].f;
   if (here && JSON.stringify(here.kps) === JSON.stringify(CLIP.kps)) return say(`P${CLIP.id} already has this pose here.`);
-  remember(); putPose({ id: CLIP.id, kps: CLIP.kps }, cur); HIDDEN.delete(CLIP.id); sel = CLIP.id; dirty = true; draw();
-  say(`P${CLIP.id}: pose from frame ${CLIP.f} pasted ${here ? 'over their joints' : '(added)'} in frame ${PAGE.frames[cur].f}. Undo brings it back.`);
+  const q = here ? `Replace P${CLIP.id}'s joints in frame ${f} with the pose copied from frame ${CLIP.f}? P${CLIP.id}'s current joints in this frame are removed. Ctrl+Z brings them back.`
+                 : `Add P${CLIP.id} to frame ${f} with the pose copied from frame ${CLIP.f}? Ctrl+Z removes them again.`;
+  if (await dialog(q, [[false, 'Cancel'], [true, here ? 'Replace' : 'Add', true]]) !== true) return;
+  remember(here ? `Undo the replace? P${CLIP.id}'s own joints in frame ${f} come back, and the copied pose is removed from this frame.`
+                : `Undo adding P${CLIP.id} to frame ${f}? They are removed from this frame again.`);
+  putPose({ id: CLIP.id, kps: CLIP.kps }, cur); HIDDEN.delete(CLIP.id); sel = CLIP.id; dirty = true; draw();
+  say(`P${CLIP.id}: ${here ? 'joints replaced' : 'added'} in frame ${f} with the pose from frame ${CLIP.f}. Ctrl+Z undoes it.`);
 }
 function holdPose() {                              // Shift+N: the selected person's pose in every following key frame up to the next fix
   const p = selPerson(); if (!p) return needSel();
@@ -565,6 +585,7 @@ $('carry').onclick = carryNext;
 $('hold').onclick = holdPose;
 $('cpose').onclick = copyPose;
 $('paste').onclick = pastePose;
+$('unpaste').onclick = undo;
 $('clipx').onclick = () => { CLIP = null; draw(); };
 $('fit').onclick = () => { fitView(); draw(); };
 $('zin').onclick = () => zoomBy(1.25);
