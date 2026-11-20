@@ -66,7 +66,7 @@ class Models:
     def moge_run(self, rgb, fov_x=None):
         t = self.torch.tensor(rgb, dtype=self.torch.float32, device=self.dev).permute(2, 0, 1) / 255.0
         with self.torch.inference_mode():
-            out = self.moge.infer(t, fov_x=fov_x)
+            out = self.moge.infer(t, fov_x=fov_x, use_fp16=(self.dev == "cuda"))   # half precision only on the GPU
         return {k: v.float().cpu().numpy() for k, v in out.items() if hasattr(v, "cpu")}
 
     def sam_auto(self, rgb, n=None, iou_t=0.7, stab_t=0.86, nms_t=0.6, min_area=0.002):
