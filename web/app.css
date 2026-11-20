@@ -88,6 +88,17 @@ input[type=checkbox] { accent-color:var(--accent); width:16px; height:16px; }
 .banner.run { display:block; background:var(--run-tint); color:#1d3f75; border-color:#cbdaf1; }
 .banner.done { display:block; background:var(--ok-tint); color:#14512f; border-color:#c6e6d3; }
 .banner.fail { display:block; background:var(--bad-tint); color:#7a221c; border-color:#f2cbc7; }
+.tocheck { margin-top:14px; padding:14px 18px; background:var(--warn-tint); border:1px solid #efdcb4; border-radius:var(--r-lg); }
+.tocheck h2 { margin:0 0 8px; font-size:15px; font-weight:650; color:#6b4507; }
+.tocheck ul { list-style:none; margin:0; padding:0; }
+.tocheck li { display:grid; grid-template-columns:64px 1fr auto; gap:4px 12px; align-items:baseline; padding:6px 0; font-size:14px; color:var(--ink); }
+.tocheck li + li { border-top:1px solid #efdcb4; }
+.tocheck li b { color:#6b4507; font-weight:650; }
+.tocheck li a { font-size:13px; white-space:nowrap; }
+@media (max-width:600px) { .tocheck li { grid-template-columns:52px 1fr; } .tocheck li a { grid-column:2; } }
+.banner.note { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; justify-content:space-between; background:var(--paper); color:var(--slate); border-color:var(--seam); }
+.banner.note b { color:var(--ink); font-weight:600; }
+.banner.note button { flex:none; }
 .banner.info { display:block; background:var(--info-tint); color:#3d3175; border-color:#dad3f2; }
 .banner a { color:inherit; text-decoration:underline; text-underline-offset:2px; }
 .toast { position:fixed; left:50%; bottom:92px; transform:translateX(-50%) translateY(12px); background:var(--ink); color:#fff; padding:10px 16px;

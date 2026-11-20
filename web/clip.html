@@ -28,6 +28,11 @@
   </div>
   <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p></div>
 
+  <section class="tocheck" id="s-check" style="display:none" aria-labelledby="chk-h">
+    <h2 id="chk-h">Things to check</h2>
+    <ul id="checklist"></ul>
+  </section>
+
   <section class="step" id="s-people">
     <h2><span class="num">1</span>Who is who?</h2>
     <p class="hint">Give each person a role. Mark statues, pictures and false detections <b>Not a person</b>, then press <b>Re-check</b> (about a minute). The same character in two shots gets the same role.</p>
@@ -224,18 +229,18 @@ async function finish(force) {
   toast(r.result === 'queued' ? 'Finishing: fit, set, Blender, videos and the v2.1 zip. You can review other clips meanwhile.' : 'This clip is already working'); refresh();
 }
 $('finish').onclick = async () => {
-  if (!INFO.package && !(await nameHere())) return;
+  if (!INFO.package && !(await nameHere(true))) return;
   await saveAll(true); await finish(false);
 };
-async function nameHere() {          // v2.1 packages need a name: one English title names every video of SOURCE without one
+async function nameHere(thenFinish) {   // v2.1 packages need a name: one English title names every video of SOURCE without one
   const src = (await api('/api/settings')).source_root;
   return new Promise(resolve => {
     const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nmt' });
-    bg.innerHTML = `<div class="modal"><h3 id="nmt" style="margin:0 0 6px">Package name needed</h3>
-      <p class="small muted" style="margin:0 0 12px">A v2.1 package needs a name. Type the film's English title once: every video in SOURCE without a name gets one, numbered in file-name order. Existing names never change.</p>
+    bg.innerHTML = `<div class="modal"><h3 id="nmt" class="m-title">${thenFinish ? 'Package name needed' : 'Name the package'}</h3>
+      <p class="small muted" style="margin:0 0 12px">Type the film's English title once. Every video in SOURCE without a name gets one, numbered in file-name order. Existing names never change.</p>
       <label style="display:flex;gap:8px;align-items:center">English title <input type="text" id="nmtitle" style="flex:1" placeholder="e.g. the hidden blade"></label>
       <p class="small" id="nmhint" style="margin:10px 0 14px;min-height:20px"></p>
-      <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes" disabled>Save the name and finish</button></div></div>`;
+      <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes" disabled>${thenFinish ? 'Save the name and finish' : 'Save the name'}</button></div></div>`;
     document.body.appendChild(bg);
     const close = v => { bg.remove(); resolve(v); };
     bg.querySelector('.m-no').onclick = () => close(false);
@@ -248,7 +253,7 @@ async function nameHere() {          // v2.1 packages need a name: one English t
       bg.querySelector('.m-yes').disabled = !(me && me.package); }, 250); };
     bg.querySelector('.m-yes').onclick = async () => {
       await post('/api/use_folder', { path: src, title: $('nmtitle').value });
-      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Package name saved: ' + INFO.package); close(true); };
+      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Package name saved: ' + INFO.package); close(true); if (!thenFinish) refresh(); };
     $('nmtitle').focus();
   });
 }
@@ -358,7 +363,9 @@ function banner() {
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
-  else if (!INFO.package && s.fit) { b.className = 'banner fail'; b.innerHTML = 'This clip has no v2.1 package name yet. <i>Finish now</i> asks for the film’s English title and names it.'; }
+  else if (!INFO.package && s.fit) { b.className = 'banner note';
+    b.innerHTML = '<span>No package name yet. It is made from the film’s English title, for example <b>the_hidden_blade-1</b>. Finish asks for it if you skip this.</span><button id="namenow">Name it now</button>';
+    $('namenow').onclick = () => nameHere(false); }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
   else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
   else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
@@ -382,13 +389,14 @@ async function load(first) {
   }
   const sh = (INFO.camera && INFO.camera.shots) || [];
   $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${s.shot}: frames ${s.frames[0]}–${s.frames[1]} · turns ${(+s.max_rotation_deg).toFixed(1)}°${s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : ''}</span>`).join('') : '<span>Not measured yet</span>';
-  $('camwarn').innerHTML = (INFO.warnings || []).map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
+  checks();
+  $('camwarn').innerHTML = (INFO.warnings || []).filter(w => !/^quality - /.test(w)).map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
   $('envdet').textContent = INFO.set ? 'Built: ' + Object.entries(INFO.set).map(([k, n]) => `${n} ${k}${n > 1 ? 's' : ''}`).join(', ') + (sh.length > 1 ? ` across ${sh.length} shots` : '') : 'Not built yet.';
   $('blocks').innerHTML = (INFO.blocks || []).map(b => `<img src="/media/blocks/${CID}/${b}?v=${INFO.job ? INFO.job.id : 0}" alt="set">`).join('');
   $('prev').src = INFO.status.fit ? `/media/preview/${CID}.jpg?v=${INFO.job ? INFO.job.id : 0}` : '';
   $('prevbox').style.visibility = INFO.status.fit ? 'visible' : 'hidden';
   if (INFO.outputs.comparison) { $('outbox').style.display = ''; if (!$('cmp').getAttribute('src')) $('cmp').src = '/media/comparison/' + CID + '.mp4'; }
-  if (INFO.job) { $('jobbox').style.display = ''; $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
+  if (INFO.job) { $('jobbox').style.display = INFO.job.state === 'failed' ? '' : 'none';   // the raw log only matters when a job failed $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
@@ -412,6 +420,29 @@ async function load(first) {
   }
   lastState = state;
   return busy;
+}
+// the quality warnings of the last run, in plain words, with the step that fixes them
+function plain(w) {
+  const r = [[/^jerky \((\d+) sudden movements per 100 frames\)/, 'moves jerkily ($1 jumps per 100 frames)'],
+             [/^feet not seen in most frames.*/, 'feet hidden in most frames, so size and distance are guessed'],
+             [/^joints (\d+)% of the body off the detected ones/, 'joints $1% off the detected ones'],
+             [/^pose never changes.*/, 'never moves: a statue or a picture?'],
+             [/^camera ZOOMS \(focal x([\d.]+).*/, 'the camera zooms slightly (×$1), so size and distance may drift']];
+  for (const [a, b] of r) if (a.test(w)) return w.replace(a, b);
+  return w.charAt(0).toLowerCase() + w.slice(1);
+}
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+function checks() {
+  const rows = [];
+  (INFO.people || []).filter(p => p.flags && p.flags.length).forEach(p => {
+    const still = p.flags.some(f => /^pose never changes/.test(f));
+    rows.push({ who: 'P' + p.id, text: p.flags.map(plain).join(' · '), go: still ? 's-people' : 's-marks', label: still ? 'Who is who' : 'Fix joints' }); });
+  (INFO.warnings || []).filter(w => !/^quality - /.test(w)).forEach(w =>
+    rows.push({ who: 'Camera', text: plain(w), go: 's-more', label: 'Camera settings' }));
+  $('s-check').style.display = rows.length && INFO.status.fit ? '' : 'none';
+  $('checklist').innerHTML = rows.map(r => `<li><b>${esc(r.who)}</b><span>${esc(cap(r.text))}</span><a href="#${r.go}" data-go="${r.go}">${esc(r.label)}</a></li>`).join('');
+  $('checklist').querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault();
+    const t = $(a.dataset.go); if (t.tagName === 'DETAILS') t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
 }
 let SEL = null;
 function selectCard(d) { document.querySelectorAll('.person').forEach(x => x.classList.toggle('sel', x === d)); SEL = d; }
