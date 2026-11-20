@@ -45,9 +45,10 @@ def setup():
 
 
 class Models:
-    def __init__(self, points_per_side=32, device="cuda"):
+    def __init__(self, points_per_side=32, device=None):
         setup()
         import torch
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")    # no NVIDIA card: the processor (slower)
         self.torch, self.dev = torch, device
         from moge.model.v2 import MoGeModel
         self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, "moge2", "model.pt")).to(device).eval()
@@ -56,6 +57,11 @@ class Models:
         sam = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", os.path.join(MODELS, "sam2", "sam2.1_hiera_large.pt"), device=device)
         self.pps = points_per_side
         self.pred = SAM2ImagePredictor(sam)
+
+    def amp(self):
+        """half precision on the GPU; full precision on the processor"""
+        import contextlib
+        return self.torch.autocast("cuda", dtype=self.torch.bfloat16) if self.dev == "cuda" else contextlib.nullcontext()
 
     def moge_run(self, rgb, fov_x=None):
         t = self.torch.tensor(rgb, dtype=self.torch.float32, device=self.dev).permute(2, 0, 1) / 255.0
@@ -70,7 +76,7 @@ class Models:
         torch = self.torch; F = torch.nn.functional
         n = n or self.pps
         H, W = rgb.shape[:2]
-        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.inference_mode(), self.amp():
             self.pred.set_image(rgb)
             g = (np.arange(n) + 0.5) / n
             pts = np.array([(x * W, y * H) for y in g for x in g], np.float32)
@@ -103,7 +109,7 @@ class Models:
     def sam_boxes(self, rgb, boxes):
         if not len(boxes):
             return np.zeros(rgb.shape[:2], bool)
-        with self.torch.inference_mode(), self.torch.autocast("cuda", dtype=self.torch.bfloat16):
+        with self.torch.inference_mode(), self.amp():
             self.pred.set_image(rgb)
             m, _, _ = self.pred.predict(box=np.asarray(boxes, np.float32), multimask_output=False)
         m = np.asarray(m).reshape(len(boxes), -1, *rgb.shape[:2])[:, 0]
@@ -892,7 +898,7 @@ def main():
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
     models = Models(a.points)
-    print("models loaded in %.1f s" % (time.time() - t_load))
+    print("models loaded on %s in %.1f s" % (models.dev, time.time() - t_load))
     bad = []
     for n in names:
         try:
