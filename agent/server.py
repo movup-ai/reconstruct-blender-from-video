@@ -202,7 +202,7 @@ class App:
         if not st["fit"]:
             raise HttpError(409, "prepare the clip first")
         if not pkg.package_name(cl.name):
-            raise HttpError(409, "%s has no v2.1 package name yet: press Name them… on the Clips page and type a title" % cl.name)
+            raise HttpError(409, "%s has no delivery name yet: press Name videos… on the Clips page and type the film's English title" % cl.name)
         if not st["confirmed"]:
             raise HttpError(409, "mark the clip reviewed first")
         if st["done"] and not force:
@@ -654,7 +654,8 @@ def make_handler(app):
             if parts == ["favicon.ico"] or parts == ["favicon.svg"]:
                 return self.file(os.path.join(config.WEB, "favicon.svg"), "image/svg+xml")
             if parts == ["api", "submissions"]:
-                return self.send(200, submissions(c))
+                tm, ids = app.store.timing(), {cl.name: cl.id for cl in app.lib.clips}
+                return self.send(200, [dict(r, took=(tm.get(ids.get(r["name"])) or {}).get("done")) for r in submissions(c)])
             if parts[0] == "static" and len(parts) == 2 and re.match(r"^[\w.-]+$", parts[1]):
                 return self.file(os.path.join(config.WEB, parts[1]))
             if parts == ["api", "health"]:
@@ -662,8 +663,9 @@ def make_handler(app):
             if parts == ["api", "clips"]:
                 if time.time() - app.lib.scanned > 10:                  # new videos in SOURCE appear by themselves
                     app.lib.rescan()
-                names = pkg.package_names()
-                return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name)) for cl, st in app.status_all()],
+                names, tm = pkg.package_names(), app.store.timing()
+                return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name), took=tm.get(cl.id))
+                                                 for cl, st in app.status_all()],
                                        "queue": app.queue_summary(), "ai_ready": app.ai_ready(),
                                        "source": {"path": c["source_root"], "exists": os.path.isdir(c["source_root"]),
                                                   "clashes": app.lib.clashes},

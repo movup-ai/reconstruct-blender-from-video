@@ -14,7 +14,7 @@
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Copy the videos into the SOURCE folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays in SOURCE, and <i>Removed from the list</i> below the cards puts it back). Give the videos their v2.1 package names once with <i>Name them…</i>: type an English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
+      <li><b>Copy the videos into the SOURCE folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays in SOURCE, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
       <li><b>Start</b>: step 1 on the Clips page. Nothing runs until you press <i>Start</i>, also after restarting the app. The local models then find people, joints, lens, camera, cuts, ground and set; the Clips page shows each video's step and progress. About 3–5 minutes per video on this PC. <i>Pause</i> lets the running video finish and starts nothing new.</li>
       <li><b>Review</b> each clip marked <span class="chip g-ready">ready for review</span> (step 2, <i>Review next clip</i>):
         <ul>
@@ -24,7 +24,7 @@
         </ul>
         Then press <b>✓ Mark reviewed</b> (finish later, together with others) or <b>▶ Finish now</b>. Camera, set, held objects and the description are filled in automatically; change them under <i>More</i> only if they are wrong.</li>
       <li><b>Finish</b>: <i>Finish all reviewed</i> on the Clips page (or <i>Finish now</i> on a clip) runs the final fit, set, Blender, videos and the v2.1 zip into SUBMIT. A clip with no changes since its last Finish is skipped, so nothing renders twice.</li>
-      <li><b>Deliver</b>: on the Submissions page, press <i>Check packages</i>. Then download each zip with its <i>Zip</i> button: it is saved under its package name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. For a whole batch with the manifest, run <code>pipeline\deliver.py</code>; it writes the correctly named zips to <code>DELIVERY\UPLOAD</code>.</li>
+      <li><b>Deliver</b>: on the Submissions page, press <i>Check packages</i>. Then download each zip with its <i>Zip</i> button: it is saved under its delivery name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. For a whole batch with the manifest, run <code>pipeline\deliver.py</code>; it writes the correctly named zips to <code>DELIVERY\UPLOAD</code>.</li>
     </ol>
     <p>Settings → Autopilot <b>Full auto</b> does steps 3–4 by itself after Start, <span class="warn">without your review</span>. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
   </section>
@@ -60,8 +60,8 @@
 
   <section class="step">
     <h2>Questions</h2>
-    <h3>A clip says "no package name"</h3>
-    <p>It cannot be finished without a v2.1 package name. On the Clips page, press <i>Name them…</i> and type an English title: only videos without a name get one, existing names never change.</p>
+    <h3>A clip says "no delivery name"</h3>
+    <p>The client's delivery rules (v2.1) require every zip to be named after the film's English title and a number, for example <code>the_hidden_blade-3</code>. A video without one cannot be finished. On the Clips page, press <i>Name videos…</i> and type the film's English title: only videos without a name get one, and existing names never change.</p>
     <h3>A clip says "changed since Finish"</h3>
     <p>Its roles, joints, objects or description changed after its last Finish, so its package is out of date. <i>Finish all reviewed</i> makes it again.</p>
     <h3>When can I add videos?</h3>

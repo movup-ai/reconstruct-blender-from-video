@@ -237,8 +237,8 @@ async function nameHere(thenFinish) {   // v2.1 packages need a name: one Englis
   const src = (await api('/api/settings')).source_root;
   return new Promise(resolve => {
     const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nmt' });
-    bg.innerHTML = `<div class="modal"><h3 id="nmt" class="m-title">${thenFinish ? 'Package name needed' : 'Name the package'}</h3>
-      <p class="small muted" style="margin:0 0 12px">Type the film's English title once. Every video in SOURCE without a name gets one, numbered in file-name order. Existing names never change.</p>
+    bg.innerHTML = `<div class="modal"><h3 id="nmt" class="m-title">${thenFinish ? 'Delivery name needed' : 'Delivery name'}</h3>
+      <p class="small muted" style="margin:0 0 12px">The client requires a delivery name for each zip. Type the film's English title once: every video in SOURCE without a name gets it with a number, in file-name order. Existing names never change.</p>
       <label style="display:flex;gap:8px;align-items:center">English title <input type="text" id="nmtitle" style="flex:1" placeholder="e.g. the hidden blade"></label>
       <p class="small" id="nmhint" style="margin:10px 0 14px;min-height:20px"></p>
       <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes" disabled>${thenFinish ? 'Save the name and finish' : 'Save the name'}</button></div></div>`;
@@ -254,7 +254,7 @@ async function nameHere(thenFinish) {   // v2.1 packages need a name: one Englis
       bg.querySelector('.m-yes').disabled = !(me && me.package); }, 250); };
     bg.querySelector('.m-yes').onclick = async () => {
       await post('/api/use_folder', { path: src, title: $('nmtitle').value });
-      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Package name saved: ' + INFO.package); close(true); if (!thenFinish) refresh(); };
+      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Delivery name saved: ' + INFO.package); close(true); if (!thenFinish) refresh(); };
     $('nmtitle').focus();
   });
 }
@@ -365,7 +365,7 @@ function banner() {
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
   else if (!INFO.package && s.fit) { b.className = 'banner note';
-    b.innerHTML = '<span>No package name yet. It is made from the film’s English title, for example <b>the_hidden_blade-1</b>. Finish asks for it if you skip this.</span><button id="namenow">Name it now</button>';
+    b.innerHTML = '<span>No delivery name yet. The client needs one for the zip; it is made from the film’s English title, for example <b>the_hidden_blade-1</b>. Finish asks for it if you skip this.</span><button id="namenow">Name it now</button>';
     $('namenow').onclick = () => nameHere(false); }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
   else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
@@ -402,9 +402,9 @@ async function load(first) {
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
-  $('finish').title = !INFO.package ? 'Asks for the English title first (a v2.1 package needs a name), then finishes' :
+  $('finish').title = !INFO.package ? 'Asks for the film\'s English title first (the zip needs a delivery name), then finishes' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
-  $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The v2.1 delivery package and its zip are named ${esc(INFO.package)}: the film's English title and this video's number">Package <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No package name yet</span>';
+  $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The client requires this name for the zip: the film's English title and this video's number">Delivery name <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No delivery name yet</span>';
   if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
   $('askai').style.display = INFO.ai_ready ? '' : 'none';
   const prepared = !!INFO.status.fit;                 // not prepared: one empty state instead of empty sections

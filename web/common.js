@@ -27,6 +27,15 @@ function toast(msg, bad) {
   clearTimeout(toastT); toastT = setTimeout(() => t.className = 'toast', bad ? 6000 : 3000);
 }
 function chip(st) { return `<span class="chip g-${st.group}">${esc(st.label)}</span>`; }
+// a run's length: "45 s", "12 min", "1 h 05 min"
+function fmtDur(s) { s = Math.max(0, Math.round(s)); if (s < 60) return s + ' s'; const m = Math.round(s / 60);
+  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; }
+// how long a video took from its first job (Start) to a submittable package; took = {done, open} from /api/clips
+function tookText(t) {
+  if (t && t.done) return { text: 'done in ' + fmtDur(t.done.wall), tip: `From Start to the finished zip: ${fmtDur(t.done.wall)}. The computer worked ${fmtDur(t.done.machine)} of it; the rest was waiting in the queue and your review.` };
+  if (t && t.open) return { text: fmtDur(t.open.so_far) + ' so far', tip: `Started ${fmtDur(t.open.so_far)} ago; no finished zip yet. The computer has worked ${fmtDur(t.open.machine)} of it.` };
+  return null;
+}
 function fmtTime(s) { s = Math.max(0, Math.round(s)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; }
 function segInit(box, onPick) { box.querySelectorAll('button').forEach(b => b.onclick = () => { segSet(box, b.dataset.v); onPick && onPick(b.dataset.v); }); }
 function segSet(box, v) { box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); }

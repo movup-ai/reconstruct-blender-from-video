@@ -133,6 +133,20 @@ class TestJobStore(unittest.TestCase):
         self.s.db.close()
         shutil.rmtree(self.d, ignore_errors=True)
 
+    def test_timing_from_start_to_package(self):
+        def row(stage, state, started, ended):
+            self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, started, ended) VALUES ('a',?,?,0,?,?,?)",
+                              (stage, state, started, started, ended))
+        row("fit", "done", 100, 400)                  # prepare: 300 s
+        row("all", "done", 1000, 1200)                # review in between, then Finish: 200 s
+        t = self.s.timing(now=5000)["a"]
+        self.assertEqual(t["done"], {"start": 100, "end": 1200, "wall": 1100, "machine": 500})
+        self.assertIsNone(t["open"])
+        row("fit", "running", 2000, None)             # prepared again after the package: a new run, still going
+        t = self.s.timing(now=2600)["a"]
+        self.assertEqual(t["done"]["wall"], 1100, "the last finished run stays")
+        self.assertEqual(t["open"], {"start": 2000, "so_far": 600, "machine": 600})
+
     def test_dedupe_priority_recover(self):
         self.assertIsNotNone(self.s.enqueue("a", "fit"))
         self.assertIsNone(self.s.enqueue("a", "fit"), "one job per clip at a time")
