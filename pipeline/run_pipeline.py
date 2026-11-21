@@ -721,6 +721,27 @@ SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(A
               os.path.join(AGENT, "third_party", "sam2", "sam2"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
 
 
+def set_inputs(work, drawn):
+    """what the automatic set was measured from: the fitted lens and camera (scene_data.json) and the drawn objects"""
+    import hashlib
+    d = jload(os.path.join(work, "scene_data.json"))
+    ea = hashlib.md5(open(drawn, "rb").read()).hexdigest() if os.path.exists(drawn) else ""
+    return {"lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
+            "env_ai": ea}
+
+
+def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
+    """the set still fits: same frames and drawn objects, lens within 0.3 mm, camera within 5 cm / 0.5 deg every frame"""
+    if not a or not b or a.get("frames") != b.get("frames") or a.get("env_ai") != b.get("env_ai"):
+        return False
+    if abs(float(a.get("lens") or 0) - float(b.get("lens") or 0)) > lens or len(a.get("cam", [])) != len(b.get("cam", [])):
+        return False
+    for p, q in zip(a["cam"], b["cam"]):
+        if max(abs(x - y) for x, y in zip(p[:3], q[:3])) > pos or max(abs((x - y + 180.0) % 360.0 - 180.0) for x, y in zip(p[3:], q[3:])) > ang:
+            return False
+    return True
+
+
 def make_set(name, video, work, c, stage, hand_set):
     """the set the render uses, built into scene_data.json by build_env.py (people and camera stay as fitted):
     a hand-built set (env_claude.json) when there is one; otherwise the automatic set of env_auto.py (MoGe-2 + SAM 2.1,
@@ -737,16 +758,31 @@ def make_set(name, video, work, c, stage, hand_set):
             return "depth set (automatic set not installed)"
         env_p = os.path.join(output_dir(), name, "env_auto.json")
         drawn = os.path.join(marks_dir(video, c), "env_ai.json")
-        fresh = stage == "all" and os.path.exists(env_p) and (not os.path.exists(drawn) or os.path.getmtime(drawn) < os.path.getmtime(env_p))
+        now = set_inputs(work, drawn)
+        fresh = False
+        if stage == "all" and os.path.exists(env_p):
+            try:
+                was = jload(env_p).get("_inputs")
+            except (OSError, ValueError):
+                was = None
+            if was is None:                                    # measured before the inputs were recorded
+                fresh = not os.path.exists(drawn) or os.path.getmtime(drawn) < os.path.getmtime(env_p)
+            else:                                              # same camera, lens and drawn boxes as when it was measured
+                fresh = same_set_inputs(was, now)
+            if not fresh:
+                log("  set: the camera, lens or drawn objects changed since Prepare - measuring the set again")
         if fresh:
             log("  set: the automatic set from Prepare (%s)" % env_p)
         else:
             log("  set: measuring the scene (MoGe-2 + SAM 2.1 + CLIP, a few minutes on the processor) ...")
             t1 = time.time()
+            if os.path.exists(env_p):                          # never fall back on an older measurement
+                os.remove(env_p)
             r = subprocess.run([py, os.path.join(here, "env_auto.py"), name], cwd=AGENT)
             if r.returncode != 0 or not os.path.exists(env_p):
                 log("  set: the automatic set failed (exit %s) - depth set kept" % r.returncode)
                 return "depth set (automatic set failed)"
+            env = jload(env_p); env["_inputs"] = now; jsave(env_p, env)
             log("    measured in %.0fs" % (time.time() - t1))
     r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT)
     if r.returncode != 0:

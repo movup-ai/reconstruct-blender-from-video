@@ -848,7 +848,29 @@ def px_iou(a, b):
     return ix * iy / u if u > 0 else 0.0
 
 
-def user_objects(env, tag, fr, C, f0):
+def drawn_frames(env, shots):
+    """{shot: {env_ai tag: absolute frame}} for the key frames the Objects step drew boxes on.  The tags are the
+    regions' tags: "<shot tag>_<key frame within the shot, 3 digits>" ("_000", "_s2_014")"""
+    import re
+    out = {}
+    one = len(shots) == 1
+    for tag, sh in ((env or {}).get("shots") or {}).items():
+        if not any(o.get("bbox") for o in (sh or {}).get("objects", [])):
+            continue
+        m = re.fullmatch(r"(?:_s(\d+))?_(\d+)", tag)
+        if not m or (m.group(1) is None) != one:
+            continue
+        sid = 1 if one else int(m.group(1))
+        s = next((x for x in shots if x["shot"] == sid), None)
+        if s is None:
+            continue
+        f = s["frames"][0] + int(m.group(2))
+        if f <= s["frames"][1]:
+            out.setdefault(sid, {})[tag] = f
+    return out
+
+
+def user_objects(env, tag, fr, C, f0, first=0):
     """the objects drawn on the clip page (Objects step, env_ai.json): each box at the distance MoGe measures inside it
     (the near side of what is there), with the type picked; build_env sizes it from the box (from_bbox "dist")"""
     out = []
@@ -863,7 +885,7 @@ def user_objects(env, tag, fr, C, f0):
             continue
         hd = np.hypot(fr.X[m][:, 0] - C[0], fr.X[m][:, 1] - C[1])
         d = float(np.percentile(hd, 30))                          # its front, not what shows through behind it
-        out.append({"name": "drawn_%d" % i, "type": o.get("type") or "box", "bbox": [float(v) for v in b], "frame": int(f0),
+        out.append({"name": "drawn_%d" % (first + i), "type": o.get("type") or "box", "bbox": [float(v) for v in b], "frame": int(f0),
                     "dist": round(max(0.3, d), 2), "colour": "orange" if o.get("colour_role") == "orange" else "set",
                     "_src": {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": o.get("what", ""), "area": 0.0}})
     return out
@@ -1000,7 +1022,10 @@ def main():
     ap.add_argument("--skip-done", action="store_true", help="skip clips that already have env_auto.json")
     ap.add_argument("--out", default=None, help="json to write (one clip only; default output\\<clip>\\env_auto.json)")
     ap.add_argument("--no-mid", action="store_true")
-    ap.add_argument("--points", type=int, default=32, help="SAM points per side")
+    ap.add_argument("--free-fov", action="store_true", help="also measure MoGe's own field of view on each shot's first "
+                    "frame (a second MoGe run; the lens step already measures it)")
+    ap.add_argument("--points", type=int, default=None, help="SAM points per side (default: 32 on an NVIDIA card, "
+                    "config.json sam_points on the processor)")
     ap.add_argument("--max-objects", type=int, default=30)
     ap.add_argument("--frame", default="fit", choices=["fit", "moge"], help="fit: build in the fit camera (lines up with env_check; MoGe ground becomes a slope); moge: MoGe-levelled camera (needs its camera hint)")
     ap.add_argument("--level", action="store_true", help="level the world with the walls (true vertical) and make the ground a slope; off by default: leaning retaining walls fool it")
@@ -1022,7 +1047,10 @@ def main():
     if not names:
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
-    models = Models(a.points)
+    import torch
+    pts = a.points or (32 if torch.cuda.is_available() else int(c.get("sam_points", 16)))
+    models = Models(pts)
+    print("SAM: %dx%d points" % (pts, pts))
     import namer as NM
     models.namer = NM.Namer() if NM.available() else None
     print("object names: %s" % ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)"))
@@ -1045,6 +1073,15 @@ def main():
         sys.exit(1)
 
 
+def lens_fov(work):
+    """MoGe's own field of view of the clip, as the lens step measured it (lens_auto.json): not measured again here"""
+    try:
+        mm = jload(os.path.join(work, "lens_auto.json"))["lens_mm"]
+        return round(2 * math.degrees(math.atan(18.0 / float(mm))), 1)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def run_clip(name, models, a, c):
     T0 = time.time()
     work = os.path.join(c["work_root"], name)
@@ -1063,6 +1100,9 @@ def run_clip(name, models, a, c):
     for s in shots:
         a0, a1 = s["frames"]
         want[s["shot"]] = [a0] + ([] if a.no_mid or a1 - a0 < 24 else [(a0 + a1) // 2])
+    drawn = drawn_frames(user_env, shots)                     # frames the Objects step drew boxes on: measured too
+    for sid_, fs_ in drawn.items():
+        want[sid_] = sorted(set(want.get(sid_, [])) | set(fs_.values()))
     frames = read_frames_at(ci["video"], [f for v in want.values() for f in v])
     acam = AutoCam(W, Hp, f_full)
     out_shots, report, sheet_rows = {}, {}, []
@@ -1078,7 +1118,7 @@ def run_clip(name, models, a, c):
         fits = {}
         for f in want[sid]:
             t1 = time.time()
-            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_x, free_fov=(f == a0))
+            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_x, free_fov=bool(a.free_fov) and f == a0)
             fr.t_start = t1
             Rp, Cp = cam_mats(data["cam"][f])
             up0 = unit(D @ (Rp.T @ np.array([0, 0, 1.0])))
@@ -1112,7 +1152,7 @@ def run_clip(name, models, a, c):
             h_m = gfit["h"] * h_c / float(Cl_b[2])               # MoGe's camera height over the ground (metres)
             rep["moge_camera"] = {"height": round(h_m, 3), "pitch_down_deg": round(p_m, 2), "roll_deg": round(roll, 2), "from_frame": fb,
                                   "ground_inliers": round(gfit["frac"], 2), "feet_on_plane": "%d/%d" % (gfit["feet_ok"], gfit["feet"]),
-                                  "fov_free_deg": round(frs[a0].fov_free, 1) if frs[a0].fov_free else None}
+                                  "fov_free_deg": round(frs[a0].fov_free, 1) if frs[a0].fov_free else lens_fov(work)}
             dp = p_m - p_c; hr = h_m / h_c
             rep["disagreement"] = {"pitch_deg": round(dp, 2), "height_ratio": round(hr, 3)}
             strong = gfit["frac"] > 0.6 or gfit["feet_ok"] >= 3          # MoGe ground well seen (weak fits mislead: hills, banks)
@@ -1294,9 +1334,12 @@ def run_clip(name, models, a, c):
             keep.append(o)
         keep, rep["dropped_on_people"] = off_people(keep, data, want[sid], dx)
         keep = keep[:a.max_objects]
-        mine = user_objects(user_env, "_s%d" % sid if len(shots) > 1 else "", frs[a0], fits[a0][4], a0)
+        mine = []
+        for tag, f in sorted(drawn.get(sid, {}).items()):        # each key frame's boxes, at that frame's view
+            mine += user_objects(user_env, tag, frs[f], fits[f][4], f, first=len(mine))
         if mine:                                                 # the boxes drawn on the clip page win over what is found there
-            keep = [o for o in keep if not any(px_iou(o["_src"]["px"], u["bbox"]) > 0.3 for u in mine)] + mine
+            keep = [o for o in keep if not any(o["_src"].get("frame", u["frame"]) == u["frame"] and
+                                               px_iou(o["_src"]["px"], u["bbox"]) > 0.3 for u in mine)] + mine
             print("  %d object(s) drawn on the clip page" % len(mine))
         for o in keep:
             o.pop("_R", None)

@@ -27,7 +27,10 @@ DEFAULT_CFG = {
     "pose_mode": "performance",              # automark models: "performance" (YOLOX-x + RTMPose-x) or "balanced" (-m models:
                                              # several times faster on a processor, joints less exact)
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
-    "detect_stride": "auto"                  # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
+    "detect_stride": "auto",                 # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
+    "detect_stride_cpu": "track",            # on the processor: "track" = person detector on every 4th frame, RTMPose follows
+                                             # the people in between (~4x faster); "auto" = as detect_stride
+    "sam_points": 16,                        # automatic set (env_auto): SAM point grid per side (32 = more small pieces, ~3x slower)
 }
 
 def cfg():

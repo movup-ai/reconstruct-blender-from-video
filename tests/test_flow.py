@@ -169,6 +169,15 @@ class TestJobResult(unittest.TestCase):
         self.r._run(self.store.take())
         return jid
 
+    def test_one_job_per_clip(self):
+        """a forced job queued while its clip's job runs waits for it (both would write scene_data.json)"""
+        self.store.enqueue(self.cl.id, "fit")
+        first = self.store.take()
+        self.assertIsNotNone(self.store.enqueue(self.cl.id, "all", force=True))
+        self.assertIsNone(self.store.take(), "the clip is busy")
+        self.store.finish(first["id"], True)
+        self.assertEqual(self.store.take()["stage"], "all")
+
     def test_exit_codes(self):
         self.run_job(0)                                                     # no "0 failed" line needed any more
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "done")

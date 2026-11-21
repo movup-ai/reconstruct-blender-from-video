@@ -59,7 +59,9 @@ class JobStore:
     def take(self):
         with self.lock:
             ai_busy = self.db.execute("SELECT 1 FROM jobs WHERE state='running' AND stage='ai'").fetchone()
-            q = "SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") + " ORDER BY priority, id LIMIT 1"
+            # one job per clip at a time: a job queued behind its clip's running one (a forced Finish during Prepare) waits
+            q = ("SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") +
+                 " AND clip NOT IN (SELECT clip FROM jobs WHERE state='running') ORDER BY priority, id LIMIT 1")
             row = self.db.execute(q).fetchone()                  # one AI job at a time
             if not row:
                 return None

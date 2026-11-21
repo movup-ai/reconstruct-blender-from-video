@@ -538,6 +538,54 @@ class TestHeldPose(unittest.TestCase):
 
 
 
+class TestSpeedAndSet(unittest.TestCase):
+    """Prepare on the processor: people followed between detector frames; the set's drawn objects and freshness"""
+    def test_track_frames_detects_every_4th(self):
+        import automark as am
+        n, H, W = 13, 100, 160
+        frames = [np.zeros((H, W, 3), np.uint8) for _ in range(n)]
+        def person(x):                                     # one standing person at x (17 joints, all confident)
+            k = np.array([[x, 20 + 4 * j] for j in range(17)], float)
+            return k, np.full(17, 0.9)
+        pos = {f: 40 + 2 * f for f in range(n)}            # walks right 2 px a frame
+        seen, res = [], {}
+        class Marker:                                      # RTMPose: the person where they are in that frame
+            def poses(self, items):
+                out = []
+                for img, bxs in items:
+                    f = next(i for i, fr in enumerate(frames) if img.base is fr)
+                    k, sc = person(pos[f])
+                    out.append((np.array([k] * len(bxs)).reshape(-1, 17, 2), np.array([sc] * len(bxs)).reshape(-1, 17)))
+                return out
+        def run(idx):                                      # the detector
+            for f in idx:
+                if f not in res:
+                    seen.append(f); k, sc = person(pos[f]); res[f] = [(k, sc, [k[:, 0].min() - 5, k[:, 1].min() - 5, k[:, 0].max() + 5, k[:, 1].max() + 5])]
+        m = Marker()
+        out, interp, posed = am.track_frames(frames, 0, H, m, run, res, [0.0] * n)
+        self.assertEqual(sorted(seen), [0, 4, 8, 12], "the detector only on every 4th frame and the last")
+        self.assertEqual(len(posed), n - 4)
+        self.assertTrue(all(len(p) == 1 for p in out))
+        self.assertAlmostEqual(out[5][0][0][0][0], pos[5])
+
+    def test_drawn_objects_found_by_key_frame(self):
+        import env_auto as ea
+        env = {"shots": {"_000": {"objects": [{"bbox": [1, 2, 3, 4]}]}, "_014": {"objects": [{"bbox": [1, 2, 3, 4]}]},
+                         "_020": {"objects": [{"what": "no box"}]}}}
+        self.assertEqual(ea.drawn_frames(env, [{"shot": 1, "frames": [0, 99]}]), {1: {"_000": 0, "_014": 14}})
+        two = [{"shot": 1, "frames": [0, 49]}, {"shot": 2, "frames": [50, 99]}]
+        env2 = {"shots": {"_s2_000": {"objects": [{"bbox": [1, 2, 3, 4]}]}, "_000": {"objects": [{"bbox": [1, 2, 3, 4]}]}}}
+        self.assertEqual(ea.drawn_frames(env2, two), {2: {"_s2_000": 50}}, "shot tags, frame within the shot")
+
+    def test_set_measured_again_when_camera_changes(self):
+        a = {"lens": 40.0, "frames": 2, "cam": [[0, 0, 1.2, 91.0, 0, 0], [0, 0, 1.2, 91.0, 0, 179.9]], "env_ai": ""}
+        same = dict(a, cam=[[0.01, 0, 1.21, 91.2, 0, 0], [0, 0, 1.2, 91.0, 0, -179.9]])
+        self.assertTrue(rp.same_set_inputs(a, same))
+        self.assertFalse(rp.same_set_inputs(a, dict(a, lens=42.0)), "lens changed")
+        self.assertFalse(rp.same_set_inputs(a, dict(a, cam=[[0, 0, 1.2, 91.0, 0, 0], [0, 0, 1.2, 0.0, 0, 0]])), "static camera")
+        self.assertFalse(rp.same_set_inputs(a, dict(a, env_ai="x")), "drawn objects changed")
+
+
 class TestFrameDepth(unittest.TestCase):
     """the set's depth comes from the real frames: people and pillarbox bars cut out, each frame's scale matched"""
     def test_people_filled_from_other_frames(self):

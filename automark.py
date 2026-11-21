@@ -513,6 +513,58 @@ def interpolate_people(a, b, d, check_motion=True, why=None):
         return "box", boxes
     return "kp", out
 
+DETECT_EVERY = 4        # stride "track": the person detector on every 4th frame (and cuts); RTMPose follows people between
+TRACK_JUMP_REL = 0.12  # stride "track": median joint move from the frame before above this x body height -> detect that frame
+TRACK_MIN = 0.3         # stride "track": a followed person whose head / shoulders / hips score below this -> detect that frame
+
+def track_frames(frames, y0, y1, marker, run, res, diff, every=DETECT_EVERY):
+    """stride "track" (for the processor, where the detector is ~95% of the time and RTMPose ~0.06 s a person):
+    the detector on every 4th frame, the last frame and every cut; in between RTMPose measures each person in their
+    box from the frame before, and the box moves on with their joints.  A frame is detected after all when the picture changes a lot, a person
+    is lost (weak head / shoulders / hips), two followed people become one or a skeleton jumps away from where it was.  When a detected frame finds more
+    people than the frame before (someone walked in or came out from behind), the frames before it are detected too."""
+    n = len(frames)
+    anchors = sorted(set(range(0, n, every)) | {n - 1} | {f for f in range(1, n) if diff[f] > CUT_DIFF})
+    run(anchors)
+    posed, why = set(), {}
+    def no(r, f):
+        why[r] = why.get(r, 0) + 1; run([f])
+    for f in range(1, n):
+        if f in res:
+            continue
+        prev = res[f - 1]
+        if diff[f] > MOTION_DIFF:
+            no("picture change", f); continue
+        if not prev:                                      # nobody to follow: the next detected frame looks again
+            res[f] = []; posed.add(f); continue
+        pic = frames[f][y0:y1]; H, W = pic.shape[:2]
+        bxs = [[b[0], b[1] - y0, b[2], b[3] - y0] for _, _, b in prev]     # each person's box from the frame before
+        kps, scs = marker.poses([(pic, bxs)])[0]
+        ppl = [(k, sc, b) for k, sc, b in zip(kps, scs, bxs)]
+        if not all(core_score(p) >= TRACK_MIN for p in ppl):
+            no("person lost", f); continue
+        if len(drop_same_skeletons(ppl)) < len(ppl):
+            no("two became one", f); continue
+        # overlapping people are followed too: each one's box comes from their own joints; a skeleton that jumps from
+        # where that person was (RTMPose locked on the other one, or a mix of both) -> detect
+        if any(skeleton_dist((k - [0, y0], sc, b), q) > TRACK_JUMP_REL for (k, sc, b), q in zip(prev, ppl)):
+            no("joints jumped", f); continue
+        res[f] = []                    # the box moves with the joints (keeps the detector's box shape for the tracker)
+        for (k0, s0, b0), (k, sc, _) in zip(prev, ppl):
+            vis = (s0 > 0.3) & (sc > 0.3)
+            dx, dy = np.median((k + [0, y0])[vis] - k0[vis], axis=0) if vis.sum() >= 3 else (0.0, 0.0)
+            b = [min(W - 1, max(0, b0[0] + dx)), b0[1] + dy, min(W - 1, max(0, b0[2] + dx)), b0[3] + dy]
+            b[1], b[3] = max(y0, b[1]), min(y1 - 1, b[3])
+            res[f].append((k + [0, y0], sc, [float(v) for v in b]))
+        posed.add(f)
+    for a in anchors:                                     # a person appeared at a detected frame: look back for them
+        g = a - 1
+        while g > 0 and g in posed and len(res[g]) < len(res[g + 1]) and a - g < every:
+            del res[g]; posed.discard(g); why["someone appeared"] = why.get("someone appeared", 0) + 1; run([g]); g -= 1
+    if why:
+        log("  frames detected where following stopped: " + ", ".join("%s %d" % kv for kv in sorted(why.items())))
+    return [res[f] for f in range(n)], [], sorted(posed)
+
 def detect_frames(frames, y0, y1, marker, stride="auto"):
     """per frame list of (kps(17,2), scores(17), box) in full-frame pixels, the frames whose keypoints were interpolated,
     and the frames where only RTMPose ran (in interpolated boxes).
@@ -540,6 +592,8 @@ def detect_frames(frames, y0, y1, marker, stride="auto"):
     th = [cv2.resize(cv2.cvtColor(fr[y0:y1], cv2.COLOR_BGR2GRAY), (96, 54), interpolation=cv2.INTER_AREA).astype(np.float32)
           for fr in frames]
     diff = [0.0] + [float(np.mean(np.abs(th[f] - th[f - 1]))) for f in range(1, n)]     # change f-1 -> f
+    if stride == "track":
+        return track_frames(frames, y0, y1, marker, run, res, diff)
     run(list(range(0, n, 2)) + [n - 1])
     todo, interp, posed, why = [], {}, {}, {}
     for f in range(1, n - 1, 2):
@@ -683,12 +737,13 @@ def main():
                     help="old box merging: a box mostly inside another is always the same person")
     ap.add_argument("--split-wide", action="store_true",
                     help="probe wide boxes for two people side by side (RTMPose on each half; may add junk tracks)")
-    ap.add_argument("--detect-stride", default=None, choices=["auto", "1", "2"],
+    ap.add_argument("--detect-stride", default=None, choices=["auto", "1", "2", "track"],
                     help="1 = model on every frame; 2 / auto = every 2nd frame, in-between frames interpolated when safe "
                          "(auto also detects on fast motion). default: config.json detect_stride")
     ap.add_argument("--engine", default=None, choices=["tensorrt", "cuda"],
                     help="GPU engine (tensorrt falls back to cuda). default: config.json pose_engine")
     args = ap.parse_args()
+    stride_set = args.detect_stride is not None              # given on the command line: used as it is
     if args.detect_stride is None or args.engine is None or args.mode is None:
         try:
             sys.path.insert(0, os.path.join(HERE, "pipeline"))
@@ -708,6 +763,10 @@ def main():
         if args.device == "cpu" and not args.no_tiles and not cfg().get("cpu_tiles", False):
             args.no_tiles = True
             log("  processor: tiles off (faster; small far-away people may be missed - \"cpu_tiles\": true turns them on)")
+        # on the processor the person detector is ~95% of the time: it runs on every 4th frame, RTMPose follows people
+        if args.device == "cpu" and not stride_set and args.detect_stride == "auto" and cfg().get("detect_stride_cpu", "track") == "track":
+            args.detect_stride = "track"
+            log("  processor: person detector on every %dth frame, joints followed in between (\"detect_stride_cpu\": \"auto\" turns this off)" % DETECT_EVERY)
     except ImportError:
         pass
     global KEEP_OVERLAPPING, SPLIT_WIDE
