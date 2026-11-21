@@ -1333,6 +1333,14 @@ def run_clip(name, models, a, c):
                 continue
             keep.append(o)
         keep, rep["dropped_on_people"] = off_people(keep, data, want[sid], dx)
+        gone = [d for sh_ in (user_env.get("shots") or {}).values() for d in (sh_ or {}).get("dropped", []) if len(d.get("bbox") or []) == 4]
+        if gone:                                                 # found objects deleted or replaced on the clip page
+            n0 = len(keep)
+            keep = [o for o in keep if not any(int(d.get("frame", -1)) == o["_src"].get("frame") and px_iou(o["_src"]["px"], d["bbox"]) > 0.5
+                                               for d in gone)]
+            rep["dropped_on_page"] = n0 - len(keep)
+            if n0 > len(keep):
+                print("  %d found object(s) deleted or replaced on the clip page" % (n0 - len(keep)))
         keep = keep[:a.max_objects]
         mine = []
         for tag, f in sorted(drawn.get(sid, {}).items()):        # each key frame's boxes, at that frame's view

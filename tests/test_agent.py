@@ -422,6 +422,38 @@ class TestApi(unittest.TestCase):
             self.app.runner.pause()
             self.post("/api/cancel_queued")
 
+    def test_found_objects_listed_and_deleted(self):
+        """the Objects step lists what the set step found; a deleted one is remembered with its frame and box"""
+        from unittest import mock
+        from agent import clips as clipsmod
+        import cv2, numpy as np
+        cl = self.app.lib.clips[0]; f = clipsmod.folders(self.app.c, cl)
+        sb = os.path.join(self.d, "sb")
+        os.makedirs(f["work"], exist_ok=True); os.makedirs(os.path.join(sb, "output", cl.name))
+        try:
+            with open(os.path.join(f["work"], "regions_000.json"), "w") as fh:
+                json.dump({"tag": "_000", "size": [64, 48], "regions": [], "added": []}, fh)
+            with open(os.path.join(f["work"], "plate_000.jpg"), "wb") as fh:
+                fh.write(cv2.imencode(".jpg", np.zeros((48, 64, 3), np.uint8))[1].tobytes())
+            env = {"objects": [{"name": "object_0", "type": "chair", "_src": {"cls": "object", "frame": 0, "px": [5, 6, 20, 30], "label": ["office_chair", 0.8]}},
+                               {"name": "object_1", "type": "box", "_src": {"cls": "object", "frame": 9, "px": [30, 6, 50, 30]}},
+                               {"name": "drawn_0", "type": "box", "_src": {"cls": "drawn", "frame": 0, "px": [1, 1, 9, 9]}}]}
+            with open(os.path.join(sb, "output", cl.name, "env_auto.json"), "w") as fh:
+                json.dump(env, fh)
+            with mock.patch.dict(os.environ, {"BA_SANDBOX": sb}):
+                sh = json.loads(self.get("/api/clip/%s/objects" % self.cid)[1])["shots"][0]
+                self.assertEqual([(o["what"], o["type"], o["here"]) for o in sh["found"]],
+                                 [("office chair", "chair", True), ("object", "box", False)], "own boxes are not listed as found")
+                code, d = self.post("/api/clip/%s/objects?rebuild=0" % self.cid, {"shots": {"_000": {
+                    "objects": [{"what": "desk", "type": "table", "bbox": [30, 6, 50, 30]}],
+                    "dropped": [{"frame": 0, "bbox": [5, 6, 20, 30]}]}}})
+                self.assertEqual((code, d["objects"]), (200, 1))
+                sh = json.loads(self.get("/api/clip/%s/objects" % self.cid)[1])["shots"][0]
+                self.assertEqual(sh["dropped"], [{"frame": 0, "bbox": [5.0, 6.0, 20.0, 30.0], "why": "deleted"}])
+                self.assertEqual([o["what"] for o in sh["objects"]], ["desk"])
+        finally:
+            shutil.rmtree(f["work"], ignore_errors=True); shutil.rmtree(f["marks"], ignore_errors=True); shutil.rmtree(sb, ignore_errors=True)
+
     def test_take_out_of_line_and_add_back(self):
         try:
             self.app.store.enqueue(self.cid, "fit")

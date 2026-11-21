@@ -85,3 +85,5 @@ Desktop.ini
 .claude/settings.local.json
 .claude/worktrees/
 data/removed.json
+
+data/held.json

@@ -281,6 +281,11 @@ pre.log { background:var(--sunk); color:var(--ink); border:1px solid var(--seam)
 .objprops { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:8px; padding-left:20px; }
 .objprops label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--slate); font-weight:500; min-width:0; }
 .objprops select { width:100%; min-width:0; font-size:13px; min-height:32px; padding:4px 6px; }
+.objhead { margin:10px 0 4px; }
+.objrow.found { background:var(--sunk); border-style:dashed; }
+.objrow.found.osel { background:#fbfdfd; border-style:solid; }
+.objtag { flex:none; font-size:11px; color:var(--slate); background:var(--paper); border:1px solid var(--seam-strong); border-radius:999px; padding:0 7px; line-height:18px; white-space:nowrap; }
+.objprops select:disabled, .objtop input:disabled { opacity:.6; }
 .objempty { color:var(--slate); font-size:13.5px; padding:14px; border:1px dashed var(--seam-strong); border-radius:var(--r); text-align:center; }
 
 /* ---------------------------------------------------------------- tables, forms, help */

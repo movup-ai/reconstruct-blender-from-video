@@ -429,10 +429,34 @@ def advice(err, log_txt=""):
     return "Retry the clip. If it fails again, open the technical log below and send it to support."
 
 
+PLATE_TAG = re.compile(r"(?:_s(\d+))?_(\d{3})$")
+
+
+def found_objects(c, cl):
+    """the objects the set step found by itself (output/<clip>/env_auto.json) -> [{shot, frame, what, type, bbox}]:
+    bbox in the pixels of the background pictures (the video frame without its black bars)"""
+    from common import output_dir                                     # pipeline
+    env = read_json(os.path.join(output_dir(), cl.name, "env_auto.json"), {}) or {}
+    per = env.get("shots") if isinstance(env.get("shots"), dict) else {"1": env}
+    out = []
+    for sid, sh in per.items():
+        for o in (sh or {}).get("objects", []):
+            s = o.get("_src") or {}
+            if s.get("cls") == "drawn" or len(s.get("px") or []) != 4 or o.get("off"):
+                continue                                              # boxes drawn on this page are listed as such
+            lab = s.get("label")
+            out.append({"shot": int(sid), "frame": int(s.get("frame", 0)), "type": o.get("type") or "box",
+                        "what": (lab[0] if lab else s.get("cls", "")).replace("_", " "), "bbox": [float(v) for v in s["px"]]})
+    return out
+
+
 def object_shots(c, cl):
-    """per shot: background picture, picture size and the object list (from DeepSeek or edited by hand)"""
+    """per background picture: the picture, its size, the objects drawn here (or by DeepSeek), the objects the set step
+    found by itself on it ("found") and the found ones the person deleted or replaced ("dropped": [{frame, bbox}])"""
     f = folders(c, cl)
     env = (read_json(os.path.join(f["marks"], "env_ai.json"), {}) or {})
+    cam = read_json(os.path.join(f["work"], "camera.json"), {}) or {}
+    starts = {int(s["shot"]): int(s["frames"][0]) for s in (cam.get("shots") or []) if s.get("frames")}
     shots = []
     for rp in sorted(glob.glob(os.path.join(f["work"], "regions*.json"))):
         r = read_json(rp) or {}
@@ -440,9 +464,18 @@ def object_shots(c, cl):
         if not os.path.exists(os.path.join(f["work"], "plate%s.jpg" % tag)):
             continue
         sh = (env.get("shots") or {}).get(tag, {})
-        shots.append({"tag": tag, "size": r.get("size"), "plate": "/media/plate/%s/%s" % (cl.id, tag),
+        m = PLATE_TAG.match(tag)
+        sid = int(m.group(1)) if m and m.group(1) else 1
+        frame = starts.get(sid, 0) + (int(m.group(2)) if m else 0)
+        shots.append({"tag": tag, "size": r.get("size"), "plate": "/media/plate/%s/%s" % (cl.id, tag), "shot": sid, "frame": frame,
                       "scene": sh.get("scene", ""), "objects": [o for o in sh.get("objects", []) if "bbox" in o],
-                      "placed": sum(1 for o in sh.get("objects", []) if "pos" in o), "built": r.get("added", [])})
+                      "dropped": [d for d in sh.get("dropped", []) if len(d.get("bbox") or []) == 4],
+                      "found": [], "placed": sum(1 for o in sh.get("objects", []) if "pos" in o), "built": r.get("added", [])})
+    for o in found_objects(c, cl):                     # each found object on the picture of its own frame, else the nearest
+        cand = [s for s in shots if s["shot"] == o["shot"]] or shots
+        if cand:
+            s = min(cand, key=lambda s: abs(s["frame"] - o["frame"]))
+            s["found"].append(dict(o, here=s["frame"] == o["frame"]))
     return {"shots": shots, "source": env.get("provider", ""), "edited": bool(env.get("edited"))}
 
 
@@ -474,6 +507,10 @@ def save_objects(c, cl, body):
                          "size": o.get("size") if isinstance(o.get("size"), list) and len(o.get("size")) == 3 else None,
                          "colour_role": "orange" if o.get("interactive") or o.get("colour_role") == "orange" else None})
         cur = shots.setdefault(tag, {"scene": "", "labels": {}, "drop": []})
+        if "dropped" in sh:                                           # found objects deleted or replaced on this page
+            cur["dropped"] = [{"frame": int(d["frame"]), "bbox": [round(float(v), 1) for v in d["bbox"]],
+                               "why": "changed" if d.get("why") == "changed" else "deleted"}
+                              for d in sh["dropped"][:200] if len(d.get("bbox") or []) == 4 and "frame" in d]
         placed = [o for o in cur.get("objects", []) if "pos" in o]      # objects Claude placed in metres stay
         cur["objects"] = placed + objs
         n += len(objs)
