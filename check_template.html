@@ -112,9 +112,10 @@
   details.keys { margin-top: 10px; font-size: 12.5px; color: var(--slate); }
   details.keys summary { cursor: pointer; color: var(--ink); font-weight: 500; }
   details.keys h4 { margin: 12px 0 4px; font-size: 11.5px; font-weight: 600; color: var(--ink); }
-  details.keys dl { display: grid; grid-template-columns: 86px 1fr; gap: 3px 10px; margin: 0; align-items: baseline; }
+  details.keys dl { display: grid; grid-template-columns: 98px 1fr; gap: 3px 10px; margin: 0; align-items: baseline; }
   details.keys dt { color: var(--ink); line-height: 1.4; }
   details.keys dd { margin: 0; line-height: 1.4; }
+  details.keys dt .on { color: var(--slate); font-size: 11.5px; }
   details.keys .kfoot { margin: 12px 0 0; padding-top: 8px; border-top: 1px solid var(--seam); line-height: 1.45; }
 
   .dlgbg { position: fixed; inset: 0; background: rgba(30,37,43,.32); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
@@ -159,7 +160,7 @@
       <div id="tlinfo"><span><i style="background:var(--flag)"></i>flagged</span><span><i style="background:var(--fix-tint);box-shadow:inset 0 0 0 1px var(--fix)"></i>fixed</span><span><i style="background:var(--ok-tint);box-shadow:inset 0 0 0 1px var(--ok)"></i>looks right</span><span id="progress"></span></div>
     </div>
     <div id="act">
-      <span class="hint">Drag a wrong dot into place · right-click a dot = that joint is hidden in the video</span>
+      <span class="hint">Drag a wrong dot into place · drag on empty space to select several · right-click a dot = hidden in the video</span>
       <button id="ok" class="primary" title="Every dot in this frame is right: the fit trusts this frame. Frames you neither fix nor confirm keep the detector's own confidence. (Enter)">&#10003; This frame looks right</button>
     </div>
   </div>
@@ -193,11 +194,11 @@
     </div>
     <details class="keys"><summary>All keys and mouse</summary>
       <h4>Mouse</h4>
-      <dl><dt>Drag a dot</dt><dd>Move the joint</dd><dt>Right-click</dt><dd>Hide / show a joint</dd><dt>Wheel</dt><dd>Zoom</dd><dt>Drag empty</dt><dd>Move the view</dd></dl>
+      <dl><dt><kbd>Drag</kbd> <span class="on">dot</span></dt><dd>Move the joint</dd><dt><kbd>Drag</kbd> <span class="on">empty</span></dt><dd>Select joints in a box</dd><dt><kbd>Drag</kbd> <span class="on">selected</span></dt><dd>Move them all</dd><dt><kbd>Shift</kbd> <kbd>Drag</kbd></dt><dd>Add to selection</dd><dt><kbd>Right-click</kbd></dt><dd>Hide / show a joint</dd><dt><kbd>Wheel</kbd></dt><dd>Zoom</dd><dt><kbd>Space</kbd> <kbd>Drag</kbd></dt><dd>Move the view</dd></dl>
       <h4>Frames</h4>
       <dl><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next frame</dd><dt><kbd>F</kbd></dt><dd>Next flagged</dd><dt><kbd>Enter</kbd></dt><dd>Looks right</dd><dt><kbd>R</kbd></dt><dd>Whole picture</dd></dl>
       <h4>Selected person</h4>
-      <dl><dt><kbd>S</kbd></dt><dd>Swap left / right</dd><dt><kbd>C</kbd></dt><dd>Pose from the frame before (after, on the first frame)</dd><dt><kbd>N</kbd></dt><dd>Same pose in next</dd><dt><kbd>Shift</kbd> <kbd>N</kbd></dt><dd>Hold until next fix</dd><dt><kbd>V</kbd></dt><dd>Show only them</dd><dt><kbd>D</kbd></dt><dd>Remove in this frame</dd><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></dl>
+      <dl><dt><kbd>S</kbd></dt><dd>Swap left / right</dd><dt><kbd>C</kbd></dt><dd>Pose from the frame before (after, on the first frame)</dd><dt><kbd>N</kbd></dt><dd>Same pose in next</dd><dt><kbd>Shift</kbd> <kbd>N</kbd></dt><dd>Hold until next fix</dd><dt><kbd>V</kbd></dt><dd>Show only them</dd><dt><kbd>D</kbd></dt><dd>Remove in this frame</dd><dt><kbd>Esc</kbd></dt><dd>Deselect (people and joints)</dd></dl>
       <h4>Copy a pose</h4>
       <dl><dt><kbd>Ctrl</kbd> <kbd>C</kbd></dt><dd>Copy their pose</dd><dt><kbd>Ctrl</kbd> <kbd>V</kbd></dt><dd>Replace them in another frame</dd></dl>
       <h4>Other</h4>
@@ -218,6 +219,7 @@ const N_ = PAGE.kp_names.length;
 const clone = o => JSON.parse(JSON.stringify(o));
 const ORIG = PAGE.frames.map(fr => JSON.stringify(fr.people));   // the detector's dots, to tell what was fixed
 let cur = 0, sel = null, view = null, drag = null, hover = null, dirty = false;
+let picked = [], pickedAt = -1, spaceDown = false;  // joints picked with a box: [{id, i}] in key frame pickedAt
 // people hidden on the picture (display only, every frame, never saved): with overlapping people, hide one to work on the other
 const HIDDEN = new Set();
 const shown = p => !HIDDEN.has(p.id);
@@ -343,6 +345,8 @@ function draw() {
         ctx.globalAlpha = sel != null && !isSel ? 0.55 : 1; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.2; ctx.stroke(); }
       else { ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.stroke(); }
       if (isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
+      if (isPicked(p.id, i)) { ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(x, y, r + 4 * lw, 0, 7); ctx.strokeStyle = '#fff'; ctx.lineWidth = 4 * lw; ctx.stroke();
+        ctx.strokeStyle = '#0f6e74'; ctx.lineWidth = 2 * lw; ctx.stroke(); }
       if (hover && hover.p === p && hover.i === i) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r + 3, 0, 7); ctx.stroke(); }
     }
     ctx.globalAlpha = 1;
@@ -445,11 +449,25 @@ function evPos(e) {                                 // mouse -> canvas pixels, b
 }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('mouseenter', resize);
+function isPicked(id, i) { return pickedAt === cur && picked.some(q => q.id === id && q.i === i); }
+function pickedJoints() {                          // the picked joints still on screen in this frame
+  if (pickedAt !== cur) return [];
+  return picked.map(q => ({ p: people().find(p => p.id === q.id && shown(p)), i: q.i })).filter(q => q.p);
+}
+function unpick() { picked = []; pickedAt = -1; }
 cv.addEventListener('mousedown', e => {
-  const [sx, sy] = evPos(e); const n = nearest(sx, sy, 14 * devicePixelRatio);
+  const [sx, sy] = evPos(e);
+  if (e.button === 1 || (e.button === 0 && spaceDown)) {          // Space + drag (or the middle button): move the view
+    e.preventDefault(); drag = { kind: 'pan', sx, sy, ox: view.ox, oy: view.oy }; cv.style.cursor = 'grabbing'; return;
+  }
+  const n = nearest(sx, sy, 14 * devicePixelRatio);
   if (e.button === 2) { if (n) { toggleHidden(n); } return; }
-  if (n) { sel = n.p.id; drag = { kind: 'pt', moved: false, ...n }; }
-  else { drag = { kind: 'pan', sx, sy, ox: view.ox, oy: view.oy }; }
+  if (e.button !== 0) return;
+  if (n && isPicked(n.p.id, n.i)) {                                // a picked joint: they all move together
+    sel = n.p.id;
+    drag = { kind: 'group', moved: false, start: toImage(sx, sy), pts: pickedJoints().map(q => ({ q: q.p.kps[q.i], x: q.p.kps[q.i][0], y: q.p.kps[q.i][1] })) };
+  } else if (n) { if (!e.shiftKey) unpick(); sel = n.p.id; drag = { kind: 'pt', moved: false, ...n }; }
+  else { drag = { kind: 'box', sx, sy, x: sx, y: sy, add: e.shiftKey }; }
   draw();
 });
 window.addEventListener('mousemove', e => {
@@ -457,7 +475,16 @@ window.addEventListener('mousemove', e => {
   if (drag && drag.kind === 'pt') {
     if (!drag.moved) { remember(); drag.moved = true; }
     const [x, y] = toImage(sx, sy); const q = drag.p.kps[drag.i]; q[0] = +x.toFixed(1); q[1] = +y.toFixed(1); q[2] = 1; dirty = true; draw();
-  } else if (drag && drag.kind === 'pan') { view.ox = drag.ox + sx - drag.sx; view.oy = drag.oy + sy - drag.sy; draw(); }
+  } else if (drag && drag.kind === 'group') {
+    if (!drag.moved) {                               // the undo snapshot first, then point at the joints of the live frame again
+      remember(); drag.moved = true;
+      drag.pts = pickedJoints().map(q => ({ q: q.p.kps[q.i], x: q.p.kps[q.i][0], y: q.p.kps[q.i][1] }));
+    }
+    const [x, y] = toImage(sx, sy), dx = x - drag.start[0], dy = y - drag.start[1];
+    for (const o of drag.pts) { o.q[0] = +(o.x + dx).toFixed(1); o.q[1] = +(o.y + dy).toFixed(1); }
+    dirty = true; draw();
+  } else if (drag && drag.kind === 'box') { drag.x = sx; drag.y = sy; draw(); drawBox(); }
+  else if (drag && drag.kind === 'pan') { view.ox = drag.ox + sx - drag.sx; view.oy = drag.oy + sy - drag.sy; draw(); }
   else {
     const n = nearest(sx, sy, 14 * devicePixelRatio); const ch = (n?.p !== hover?.p) || (n?.i !== hover?.i); hover = n;
     if (n) { const r = cv.getBoundingClientRect(); tip.style.display = 'block'; tip.style.left = (e.clientX - r.left + 14) + 'px'; tip.style.top = (e.clientY - r.top + 10) + 'px';
@@ -465,7 +492,33 @@ window.addEventListener('mousemove', e => {
     if (ch) draw();
   }
 });
-window.addEventListener('mouseup', () => { drag = null; });
+function drawBox() {                               // the selection box while it is dragged
+  const x = Math.min(drag.sx, drag.x), y = Math.min(drag.sy, drag.y), w = Math.abs(drag.x - drag.sx), h = Math.abs(drag.y - drag.sy);
+  ctx.save(); ctx.fillStyle = 'rgba(15,110,116,.12)'; ctx.fillRect(x, y, w, h);
+  ctx.setLineDash([6, 4]); ctx.strokeStyle = '#0f6e74'; ctx.lineWidth = 1.5 * devicePixelRatio ** 0.5; ctx.strokeRect(x, y, w, h); ctx.restore();
+}
+window.addEventListener('mouseup', () => {
+  if (drag && drag.kind === 'box') {
+    const x0 = Math.min(drag.sx, drag.x), x1 = Math.max(drag.sx, drag.x), y0 = Math.min(drag.sy, drag.y), y1 = Math.max(drag.sy, drag.y);
+    const keep = drag.add && pickedAt === cur ? picked : [];
+    if (x1 - x0 < 4 && y1 - y0 < 4) { if (!drag.add) { unpick(); sel = null; } }   // a click on empty space: deselect
+    else {
+      const got = [];
+      for (const p of people().filter(shown)) for (let i = 0; i < N_; i++) {
+        const [x, y] = toScreen(p.kps[i][0], p.kps[i][1]);
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1 && !keep.some(q => q.id === p.id && q.i === i)) got.push({ id: p.id, i });
+      }
+      picked = keep.concat(got); pickedAt = picked.length ? cur : -1;
+      const ids = [...new Set(picked.map(q => q.id))]; if (ids.length === 1) sel = ids[0];
+      say(picked.length ? `${picked.length} joint${picked.length > 1 ? 's' : ''} selected: drag one to move them all` : 'No joints in that box');
+    }
+    drag = null; draw(); return;
+  }
+  if (drag && drag.kind === 'pan') cv.style.cursor = spaceDown ? 'grab' : '';
+  drag = null;
+});
+window.addEventListener('keyup', e => { if (e.key === ' ') { spaceDown = false; if (!drag) cv.style.cursor = ''; } });
+window.addEventListener('blur', () => { spaceDown = false; cv.style.cursor = ''; });
 cv.addEventListener('wheel', e => {
   e.preventDefault(); const [sx, sy] = evPos(e); const k = Math.exp(-e.deltaY * 0.0015);
   view.ox = sx - (sx - view.ox) * k; view.oy = sy - (sy - view.oy) * k; view.s *= k; draw();
@@ -611,6 +664,10 @@ $('solo').onclick = soloToggle;
 $('save').onclick = save;
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || document.querySelector('.dlgbg')) return;
+  if (e.key === ' ') {                               // held: dragging moves the view (and Space never presses a focused button)
+    e.preventDefault(); if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    if (!spaceDown) { spaceDown = true; if (!drag) cv.style.cursor = 'grab'; } return;
+  }
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); undo(); }
   else if ((e.ctrlKey || e.metaKey) && k === 's') { e.preventDefault(); save(); }
@@ -622,7 +679,7 @@ window.addEventListener('keydown', e => {
   else if (k === 'c') copyPrev(); else if (k === 'n') { if (e.shiftKey) holdPose(); else carryNext(); } else if (k === 'r') { fitView(); draw(); }
   else if (k === 'h' && hover) toggleHidden(hover);
   else if (k === 'f') { const i = nextFlagged(cur); if (i >= 0) go(i); }
-  else if (k === 'escape') { sel = null; draw(); }
+  else if (k === 'escape') { sel = null; unpick(); draw(); }
   else if (k === 'v') soloToggle();
 });
 window.addEventListener('message', async e => {     // the clip page's buttons save the editor first
