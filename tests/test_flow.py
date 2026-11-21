@@ -184,6 +184,48 @@ class TestJobResult(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(work, "job_fit.previous.log")), "the first attempt's log is kept")
 
 
+
+class TestStartOver(unittest.TestCase):
+    """Start over deletes what preparing, review and Finish left for one clip, and nothing else"""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        src = os.path.join(self.d, "src", "FilmA"); os.makedirs(src)
+        make_video(os.path.join(src, "1-1.mp4"), n=10); make_video(os.path.join(src, "1-2.mp4"), n=10)
+        self.c = dict(config.load(), source_root=os.path.join(self.d, "src"), work_root=os.path.join(self.d, "w"),
+                      submit_root=os.path.join(self.d, "s"), marks_root=os.path.join(self.d, "m"))
+        self.a, self.b = clipsmod.Library(self.c).clips
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def fill(self, cl):
+        f = clipsmod.folders(self.c, cl)
+        for p in (f["pose"], f["review"], os.path.join(f["marks"], "checked.json"), f["preview"], f["scene"],
+                  os.path.join(f["work"], "finished.json"), os.path.join(f["submit"], "meta", "meta.json"), f["zip"]):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as fh:
+                fh.write("{}")
+        return f
+
+    def test_reset_one_clip(self):
+        fa, fb = self.fill(self.a), self.fill(self.b)
+        self.assertEqual(clipsmod.status(self.c, self.a)["label"], "finished")
+        self.assertEqual(len(clipsmod.prepared_paths(self.c, self.a)), 4)        # marks, work, submit folder, zip
+        r = clipsmod.reset(self.c, self.a)
+        self.assertEqual((len(r["removed"]), r["failed"]), (4, []))
+        self.assertEqual(clipsmod.prepared_paths(self.c, self.a), [])
+        self.assertEqual(clipsmod.status(self.c, self.a)["label"], "not prepared")
+        self.assertTrue(os.path.exists(self.a.video), "the video stays")
+        self.assertTrue(os.path.exists(fb["pose"]) and os.path.exists(fb["zip"]), "the other clip is untouched")
+        for root in (self.c["work_root"], self.c["submit_root"], self.c["marks_root"]):
+            self.assertTrue(os.path.isdir(root), "the folders themselves stay")
+
+    def test_never_outside_the_app_folders(self):
+        self.assertFalse(clipsmod._inside(self.c["work_root"], [self.c["work_root"]]), "a root itself is not inside")
+        self.assertFalse(clipsmod._inside(self.a.video, [self.c["work_root"], self.c["submit_root"]]))
+        self.assertTrue(clipsmod._inside(os.path.join(self.c["work_root"], "x"), [self.c["work_root"]]))
+
+
 class TestProgressAndFlags(unittest.TestCase):
     def test_progress_from_log(self):
         d = tempfile.mkdtemp()

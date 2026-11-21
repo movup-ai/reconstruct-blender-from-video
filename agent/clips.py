@@ -174,6 +174,51 @@ def folders(c, cl):
             "scene": os.path.join(work, "scene_data.json")}
 
 
+def prepared_paths(c, cl):
+    """everything preparing, reviewing and finishing a clip left on disk -> [(path, what)] that exist.
+    Not included: the video, its delivery name, its thumbnail, the film's cast notes (shared by its clips)."""
+    from common import output_dir                                     # pipeline
+    f = folders(c, cl)
+    out = [(f["marks"], "detected joints, roles, joint fixes, objects, AI suggestions, description"),
+           (os.path.join(output_dir(), cl.name), "hints and a hand-built set"),
+           (f["work"], "fit, set, preview, renders and job logs"),
+           (f["submit"], "the finished package"),
+           (f["zip"], "the finished zip")]
+    return [(p, what) for p, what in out if os.path.exists(p)]
+
+
+def _inside(p, roots):
+    """True when p is strictly inside one of roots (never a root itself)"""
+    p = os.path.normcase(os.path.realpath(p))
+    for r in roots:
+        r = os.path.normcase(os.path.realpath(r))
+        if p != r and p.startswith(r.rstrip("\\/") + os.sep):
+            return True
+    return False
+
+
+def reset(c, cl):
+    """Start over: delete what prepared_paths() lists, so the next Prepare detects the people again from the video.
+    Returns {"removed": [paths], "failed": [(path, reason)]}; a file another program holds open is reported, not hidden."""
+    import shutil
+    from common import output_dir                                     # pipeline
+    from run_pipeline import marks_base
+    roots = [marks_base(c), output_dir(), c["work_root"], c["submit_root"]]
+    removed, failed = [], []
+    for p, _ in prepared_paths(c, cl):
+        if not _inside(p, roots):                                     # never delete outside the app's own folders
+            failed.append((p, "outside the app's folders")); continue
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            else:
+                os.remove(p)
+            removed.append(p)
+        except OSError as e:
+            failed.append((p, e.strerror or str(e)))
+    return {"removed": removed, "failed": failed}
+
+
 def read_json(p, default=None):
     try:
         with open(p, encoding="utf-8") as fh:

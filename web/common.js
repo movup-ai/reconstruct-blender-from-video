@@ -67,6 +67,25 @@ function progressBar(pct, step) {
 }
 async function openFolder(path) { try { await post('/api/open', { path }); } catch (e) {} }
 
+// ---- Start over: delete what preparing left for one clip (cid) or every clip (no cid), after a confirmation
+async function startOver(cid, name) {
+  const base = cid ? `/api/clip/${cid}/reset` : '/api/reset_all';
+  const r = await post(base + '?dry=1');
+  if (cid && r.busy.length) { toast('This clip is being processed right now. Start over when that job is done.', true); return false; }
+  if (!r.clips.length) { toast(r.busy.length ? 'Every clip with files is being processed right now. Try again when those jobs are done.' : 'Nothing to delete: no clip has prepared files.'); return false; }
+  const what = [...new Set(r.clips.flatMap(c => c.paths.map(p => p.what)))].join('; ');
+  const pts = [(cid ? 'Deleted: ' : `Deleted for ${r.clips.length} clip(s): `) + what + '.',
+    'Your roles, joint fixes and objects are deleted too. This cannot be undone.',
+    cid ? 'Kept: the video, its delivery name and its thumbnail.' : 'Kept: the videos, their delivery names and their thumbnails.',
+    cid ? 'Press Prepare this clip (or Start) to detect the people again.' : 'Press Start to prepare them again from the videos.'];
+  if (r.busy.length) pts.push(`Skipped while they are being processed: ${r.busy.join(', ')}.`);
+  if (!(await ask('', 'Delete and start over', { title: cid ? 'Start this clip over?' : `Start over with ${r.clips.length} clip(s)?`, name: cid ? name : '', danger: true, points: pts }))) return false;
+  const d = await post(base);
+  if (d.failed.length) toast(`${d.failed.length} item(s) could not be deleted (${d.failed[0].reason}): close any program using them and try again.`, true);
+  else toast(cid ? 'Started over: prepare the clip again.' : `Started over with ${d.clips.length} clip(s). Press Start to prepare them.`);
+  return true;
+}
+
 // ---- app-styled confirmation dialog: await ask('Short explanation.', 'Do it', { title, name, points, danger })  -> true / false
 //      title: the question as a heading · name: the file or item it acts on · points: short facts as a list · danger: red button
 function ask(msg, okLabel, o = {}) {

@@ -107,6 +107,7 @@ input[type=checkbox] { accent-color:var(--accent); width:16px; height:16px; }
 .modal-bg { position:fixed; inset:0; background:rgba(30,37,43,.32); z-index:50; display:flex; align-items:center; justify-content:center; padding:16px; }
 .modal { background:var(--paper); border:1px solid var(--seam); border-radius:var(--r-lg); padding:20px 22px; max-width:460px; width:100%; box-shadow:var(--shadow-pop); }
 .modal p { margin:0 0 14px; font-size:15px; line-height:1.5; }
+a.dangerlink { color:var(--bad); }
 .modal .m-title { margin:0 0 6px; font-size:18px; font-weight:650; color:var(--ink); }
 .modal .m-name { margin:0 0 14px; padding:6px 10px; background:var(--sunk); border-radius:var(--r-sm); font-size:13px; color:var(--slate);
                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

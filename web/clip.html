@@ -22,6 +22,8 @@
     <h2>Not prepared yet</h2>
     <p class="hint">Preparing finds the people, joints, lens, camera and set (about 3–5 minutes). Then you can review the clip here.</p>
     <button class="primary" id="prepone">&#9654; Prepare this clip</button>
+    <p class="small muted" id="oldfiles" style="display:none;margin:12px 0 0">Files from an earlier preparation are still here and would be reused.
+      <a href="#" id="resetnp">Delete them and start fresh</a></p>
   </section>
   <div class="grid2" style="margin-top:14px">
     <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
@@ -82,6 +84,11 @@
   <div class="sub" id="s-notes">
     <h3>Description</h3>
     <textarea id="notes" aria-label="Description" placeholder="What happens in the shot (used as the description in meta.json)"></textarea>
+  </div>
+  <div class="sub" id="s-reset">
+    <h3>Start over</h3>
+    <p class="small muted" style="margin:0 0 8px">Deletes everything prepared for this clip (joints, roles, joint fixes, objects, the set, renders and the finished package), so the next Prepare detects the people again from the video. The video and its delivery name stay.</p>
+    <button class="danger" id="resetclip">Start over…</button>
   </div>
   </details>
 
@@ -210,6 +217,8 @@ function marksState() {
   if (MARKS.dirty) msg('Unsaved joint fixes: press Save (or Save joint fixes in the editor).');
 }
 window.addEventListener('beforeunload', e => { if (MARKS.dirty) { e.preventDefault(); e.returnValue = ''; } });
+const doReset = async e => { if (e) e.preventDefault(); if (await startOver(CID, INFO.clip.name)) { MARKS.dirty = false; dirty = false; location.reload(); } };
+$('resetclip').onclick = doReset; $('resetnp').onclick = doReset;
 $('prepone').onclick = async () => { const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Preparing this clip…' : 'This clip is already being prepared'); refresh(); };
 $('rerun').onclick = async () => { await saveMarks(); await saveObjects(); if (INFO.status.marks) await sendReview(false); dirty = false;
   const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Queued. The picture updates when it’s done.' : 'This clip is already being processed'); refresh(); };
@@ -410,6 +419,7 @@ async function load(first) {
   const prepared = !!INFO.status.fit;                 // not prepared: one empty state instead of empty sections
   ['s-people', 's-marks', 's-objects', 's-more', 'prevbox'].forEach(id => $(id).style.display = prepared ? '' : 'none');
   $('notprepared').style.display = prepared || busy ? 'none' : '';
+  $('oldfiles').style.display = !prepared && !busy && INFO.status.marks ? '' : 'none';     // joints from an earlier run would be reused
   document.querySelector('footer.actbar').style.display = prepared ? '' : 'none';
   envAi();
 

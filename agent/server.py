@@ -91,6 +91,26 @@ class App:
         return {"app": APP_NAME, "version": __version__, "uptime_s": round(time.time() - self.started),
                 "ok": all(x["ok"] for x in checks if not x.get("optional")), "checks": checks}
 
+    def reset(self, cls, dry=False):
+        """Start over for these clips: what would be deleted (dry), or delete it.  A clip with a running job is
+        skipped (its program is writing those files); its waiting jobs are cancelled first."""
+        from . import clips as clipsmod
+        running = {j["clip"] for j in self.store.running()}
+        busy = [cl.name for cl in cls if cl.id in running]
+        todo = [cl for cl in cls if cl.id not in running]
+        if dry:
+            items = [{"clip": cl.name, "paths": [{"path": p, "what": w} for p, w in clipsmod.prepared_paths(self.c, cl)]} for cl in todo]
+            return {"ok": True, "dry": True, "busy": busy, "clips": [x for x in items if x["paths"]]}
+        removed, failed, done = 0, [], []
+        for cl in todo:
+            self.store.clear_clip(cl.id)
+            r = clipsmod.reset(self.c, cl)
+            removed += len(r["removed"]); failed += [{"clip": cl.name, "path": p, "reason": why} for p, why in r["failed"]]
+            if r["removed"]:
+                done.append(cl.name)
+        log.info("start over: %d clip(s), %d item(s) deleted, %d failed, %d busy", len(done), removed, len(failed), len(busy))
+        return {"ok": not failed, "clips": done, "removed": removed, "failed": failed, "busy": busy}
+
     def next_to_review(self, after_id):
         items = self.status_all()
         i = next((k for k, (cl, _) in enumerate(items) if cl.id == after_id), -1)
@@ -852,6 +872,8 @@ def make_handler(app):
                         n += 1
                 app.runner.resume()
                 return self.send(200, {"ok": True, "queued": n})
+            if parts == ["api", "reset_all"]:                            # Start over with every clip on the list
+                return self.send(200, app.reset(list(app.lib.clips), dry=(q.get("dry") or ["0"])[0] == "1"))
             if parts == ["api", "cancel_queued"]:
                 return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued()})
             if parts == ["api", "rescan"]:
@@ -929,6 +951,8 @@ def make_handler(app):
                     return self.send(200, {"ok": True, "removed": cl.name})
                 if action == "cancel":
                     return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})
+                if action == "reset":                                    # Start over: delete what preparing left
+                    return self.send(200, app.reset([cl], dry=(q.get("dry") or ["0"])[0] == "1"))
             raise HttpError(404, "not found")
 
     return H

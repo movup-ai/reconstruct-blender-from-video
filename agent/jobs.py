@@ -80,6 +80,13 @@ class JobStore:
             q = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'" + (" AND clip=?" if clip else "")
             return self.db.execute(q, (time.time(), clip) if clip else (time.time(),)).rowcount
 
+    def clear_clip(self, clip):
+        """Start over: the clip's waiting jobs are cancelled and its failed ones set aside, so the fresh clip shows
+        "not prepared" instead of an old failure.  Finished jobs stay as history."""
+        with self.lock:
+            return self.db.execute("UPDATE jobs SET state='cancelled', ended=COALESCE(ended, ?) WHERE clip=? AND state IN ('queued','failed')",
+                                   (time.time(), clip)).rowcount
+
     def latest(self):
         """{clip: latest job (not cancelled)}"""
         with self.lock:

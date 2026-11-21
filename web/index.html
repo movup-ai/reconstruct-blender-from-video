@@ -38,7 +38,7 @@
     <p class="hint">These videos are not prepared or finished. Their files are still in SOURCE; <b>Add back</b> puts one on the list again.</p>
     <div class="grid" id="removedlist"></div>
   </section>
-  <p class="small muted" id="csv" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a></p>
+  <p class="small muted" id="csv" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a> · <a href="#" id="resetall" class="dangerlink">Start over with every clip…</a></p>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/common.js"></script>
@@ -157,6 +157,7 @@ $('startbtn').onclick = async () => {
 $('renderall').onclick = async () => { const r = await post('/api/finish_reviewed');
   toast(`${r.queued} clip(s) queued to finish` + (r.unchanged ? ` · ${r.unchanged} unchanged since their last Finish, skipped` : '') +
         (r.no_name ? ` · ${r.no_name} without a delivery name` : '') + (r.busy ? ` · ${r.busy} already working` : ''), !!r.no_name); load(); };
+$('resetall').onclick = async e => { e.preventDefault(); if (await startOver()) load(); };
 $('nameall').onclick = async () => {
   try { PICK = await api('/api/folder?path=' + encodeURIComponent(DATA.source.path)); } catch (e) { toast(e.message, true); return; }
   folderDialog();

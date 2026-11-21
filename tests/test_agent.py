@@ -365,6 +365,21 @@ class TestApi(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def test_start_over_routes(self):
+        from agent import clips as clipsmod
+        cl = self.app.lib.clips[0]; f = clipsmod.folders(self.app.c, cl)
+        os.makedirs(f["work"], exist_ok=True)
+        with open(os.path.join(f["work"], "old.txt"), "w") as fh:
+            fh.write("x")
+        st, d = self.post("/api/clip/%s/reset?dry=1" % self.cid)
+        self.assertEqual(st, 200); self.assertTrue(d["dry"])
+        self.assertIn(f["work"], [p["path"] for x in d["clips"] for p in x["paths"]])
+        self.assertTrue(os.path.exists(f["work"]), "a dry run deletes nothing")
+        st, d = self.post("/api/reset_all")
+        self.assertEqual(st, 200); self.assertTrue(d["ok"])
+        self.assertFalse(os.path.exists(f["work"]))
+        self.assertTrue(os.path.exists(cl.video))
+
     def test_new_pages_and_endpoints(self):
         for p in ("/submissions", "/settings", "/help", "/favicon.svg"):
             self.assertEqual(self.get(p)[0], 200, p)
