@@ -197,7 +197,7 @@
       <h4>Frames</h4>
       <dl><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next frame</dd><dt><kbd>F</kbd></dt><dd>Next flagged</dd><dt><kbd>Enter</kbd></dt><dd>Looks right</dd><dt><kbd>R</kbd></dt><dd>Whole picture</dd></dl>
       <h4>Selected person</h4>
-      <dl><dt><kbd>S</kbd></dt><dd>Swap left / right</dd><dt><kbd>C</kbd></dt><dd>Pose from before</dd><dt><kbd>N</kbd></dt><dd>Same pose in next</dd><dt><kbd>Shift</kbd> <kbd>N</kbd></dt><dd>Hold until next fix</dd><dt><kbd>V</kbd></dt><dd>Show only them</dd><dt><kbd>D</kbd></dt><dd>Remove in this frame</dd><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></dl>
+      <dl><dt><kbd>S</kbd></dt><dd>Swap left / right</dd><dt><kbd>C</kbd></dt><dd>Pose from the frame before (after, on the first frame)</dd><dt><kbd>N</kbd></dt><dd>Same pose in next</dd><dt><kbd>Shift</kbd> <kbd>N</kbd></dt><dd>Hold until next fix</dd><dt><kbd>V</kbd></dt><dd>Show only them</dd><dt><kbd>D</kbd></dt><dd>Remove in this frame</dd><dt><kbd>Esc</kbd></dt><dd>Deselect</dd></dl>
       <h4>Copy a pose</h4>
       <dl><dt><kbd>Ctrl</kbd> <kbd>C</kbd></dt><dd>Copy their pose</dd><dt><kbd>Ctrl</kbd> <kbd>V</kbd></dt><dd>Replace them in another frame</dd></dl>
       <h4>Other</h4>
@@ -303,13 +303,22 @@ function fitView() {
   const s = Math.min(cv.width / im.width, cv.height / im.height);
   view = { s, ox: (cv.width - im.width * s) / 2, oy: (cv.height - im.height * s) / 2 };
 }
-function resize() { const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; fitView(); draw(); }
+function fitCanvas() {                             // the drawing buffer = the canvas's size on screen; true when it changed
+  const r = cv.getBoundingClientRect(), w = Math.round(r.width * devicePixelRatio), h = Math.round(r.height * devicePixelRatio);
+  if (!w || !h || (w === cv.width && h === cv.height)) return false;
+  cv.width = w; cv.height = h; fitView(); return true;
+}
+function resize() { if (fitCanvas()) draw(); }
 window.addEventListener('resize', resize);
+// the canvas also changes size without a window resize (the flag strip, the timeline or the side panel appear):
+// re-measure then, or the drawing is squeezed and the dots no longer sit where the mouse picks them
+if (window.ResizeObserver) new ResizeObserver(resize).observe(cv);
 const toScreen = (x, y) => [view.ox + x * view.s, view.oy + (y - Y0) * view.s];
 const toImage = (sx, sy) => [(sx - view.ox) / view.s, (sy - view.oy) / view.s + Y0];
 const people = () => PAGE.frames[cur].people;
 
 function draw() {
+  fitCanvas();                                       // a size change caught on every redraw (the observer may not fire in a frame)
   if (!view) fitView(); if (!view) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#e7ebee'; ctx.fillRect(0, 0, cv.width, cv.height);
   const im = imgs[cur]; ctx.imageSmoothingEnabled = view.s < 2;
@@ -391,7 +400,10 @@ function ui() {
   $('selbox').style.display = p ? '' : 'none'; $('nosel').style.display = p || !people().length ? 'none' : '';
   if (p) {
     $('selcol').style.background = colour(p.id); $('selname').textContent = `P${p.id}${roleOf(p.id) ? ' \u00B7 ' + roleOf(p.id) : ''}`;
-    $('copy').disabled = cur === 0 || !PAGE.frames[cur - 1].people.some(q => q.id === p.id);
+    const sf = PAGE.frames[srcFrame()];
+    $('copy').disabled = !sf || !sf.people.some(q => q.id === p.id);
+    $('copy').innerHTML = `Pose from the frame ${cur === 0 ? 'after' : 'before'} <kbd>C</kbd>`;
+    $('copy').title = `P${p.id}'s pose from key frame ${sf ? sf.f : ''}` + (cur === 0 ? ' (the first frame has none before it)' : '');
     $('carry').disabled = $('hold').disabled = cur === n - 1;
     $('solo').innerHTML = (HIDDEN.size ? 'Show everyone' : 'Show only this person') + ' <kbd>V</kbd>';
   }
@@ -427,8 +439,12 @@ function nearest(sx, sy, maxd) {
   }
   return best;
 }
-function evPos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * devicePixelRatio, (e.clientY - r.top) * devicePixelRatio]; }
+function evPos(e) {                                 // mouse -> canvas pixels, by the canvas's real on-screen scale
+  const r = cv.getBoundingClientRect();
+  return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height];
+}
 cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('mouseenter', resize);
 cv.addEventListener('mousedown', e => {
   const [sx, sy] = evPos(e); const n = nearest(sx, sy, 14 * devicePixelRatio);
   if (e.button === 2) { if (n) { toggleHidden(n); } return; }
@@ -488,9 +504,10 @@ function putPose(p, to) {                          // p's dots into key frame `t
   const ppl = PAGE.frames[to].people, k = ppl.findIndex(q => q.id === p.id);
   if (k >= 0) ppl[k] = clone(p); else ppl.push(clone(p));
 }
-async function copyPrev() {                        // C: the selected person's pose from the key frame before
-  if (cur === 0) return say('This is the first key frame.', true);
-  const from = PAGE.frames[cur - 1];
+const srcFrame = () => cur === 0 ? 1 : cur - 1;    // where C copies from: the key frame before, or after on the first one
+async function copyPrev() {                        // C: the selected person's pose from the key frame before (after, on the first)
+  if (PAGE.frames.length < 2) return say('This clip has only one key frame.', true);
+  const from = PAGE.frames[srcFrame()];
   const id = sel ?? (people().length === 1 ? people()[0].id : (from.people.length === 1 ? from.people[0].id : null));
   if (id != null) {
     const p = from.people.find(q => q.id === id);
