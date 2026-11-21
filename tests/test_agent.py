@@ -537,5 +537,63 @@ class TestHeldPose(unittest.TestCase):
         self.assertFalse(np.allclose(k[fs.index(4)][:, :2], lin))
 
 
+
+class TestFrameDepth(unittest.TestCase):
+    """the set's depth comes from the real frames: people and pillarbox bars cut out, each frame's scale matched"""
+    def test_people_filled_from_other_frames(self):
+        import scene_depth as sd
+        H, W = 120, 200
+        class Cam:
+            pass
+        class World:                                        # a still camera: every frame sees the same view
+            cam = Cam()
+            def R_cw(self, i):
+                return np.eye(3)
+        w = World(); w.cam.H, w.cam.W = H, W; w.cam.K = lambda: np.array([[100.0, 0, W / 2], [0, 100.0, H / 2], [0, 0, 1]])
+        truth = np.tile(np.linspace(0.2, 2.0, H, dtype=np.float32)[:, None], (1, W)); truth[40:80, 60:100] = 3.0   # a box nearer
+        frames, boxes = [], {}
+        for j in range(5):                                  # a person walks across the room
+            img = np.repeat((truth / 3.0 * 200 + 20).astype(np.uint8)[:, :, None], 3, axis=2)
+            img[:, :20] = 0; img[:, -20:] = 0                # pillarbox bars
+            x0 = 30 + 30 * j
+            img[20:110, x0:x0 + 25] = 250                     # the person (would read as very near)
+            frames.append(img); boxes[j] = [[x0, 20, x0 + 25, 110]]
+        calls = []
+        def model(bgr):                                     # relative depth: a different scale and offset every call
+            n = len(calls); calls.append(bgr.shape)
+            return (bgr[..., 0].astype(np.float32) - 20) / 200 * 3.0 * (1 + 0.5 * n) + 0.3 * n
+        disp, hidden = sd.frame_depth(frames, 0, w, 2, boxes, model, nmax=5)
+        self.assertEqual(calls[0][1], W - 40, "the bars are not shown to the model")
+        inner = (slice(5, H - 5), slice(25, W - 25))
+        self.assertFalse(hidden[inner].any(), "everywhere was free in some frame")
+        ref_scale = 1 + 0.5 * 2                              # frame 2 is the reference (k)
+        err = np.abs(disp[inner] - (truth[inner] * ref_scale + 0.6))
+        self.assertLess(np.percentile(err, 95), 0.05, "depth matches the room, not the person")
+
+
+
+class TestTrackGaps(unittest.TestCase):
+    """a person the detector lost for a few frames is still there: the gap is filled, at lower confidence, never across a cut"""
+    def test_fill(self):
+        k = lambda x, sc: [[x, 100.0, sc]] * 17
+        pose = {"people": [{"id": 1, "frames": {"0": k(0.0, 0.9), "4": k(40.0, 0.8), "30": k(0.0, 0.9)}}]}
+        filled = rp.fill_track_gaps(pose, [(0, 10), (10, 40)])
+        self.assertEqual(filled, {1: [1, 2, 3]}, "4 -> 30 crosses the cut at 10: left alone")
+        self.assertEqual(pose["people"][0]["frames"]["2"][0], [20.0, 100.0, 0.4])
+
+    def test_long_gap_left(self):
+        pose = {"people": [{"id": 1, "frames": {"0": [[0, 0, 1]] * 17, "40": [[0, 0, 1]] * 17}}]}
+        self.assertEqual(rp.fill_track_gaps(pose, [(0, 50)]), {}, "more than 15 frames missing: not guessed")
+
+
+    def test_hold_boxes_over_missed_frames(self):
+        b = rp.hold_boxes({"33": [100, 100, 200, 300], "40": [110, 100, 210, 300]}, 120)
+        self.assertEqual(b[33], [100, 100, 200, 300])
+        self.assertIn(0, b, "missed for the first 33 frames: the first box is held")
+        self.assertLess(b[0][0], 100, "a held box is a little wider")
+        self.assertEqual(b[36][0] < 100, True)
+        self.assertNotIn(119, b, "more than 45 frames from any detection: not held")
+
+
 if __name__ == "__main__":
     unittest.main()

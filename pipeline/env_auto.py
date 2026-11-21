@@ -841,6 +841,34 @@ def off_people(objs, data, frames, dx=0.0):
     return keep, gone
 
 
+def px_iou(a, b):
+    """overlap of two picture boxes [x0, y0, x1, y1] (intersection over union)"""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
+    return ix * iy / u if u > 0 else 0.0
+
+
+def user_objects(env, tag, fr, C, f0):
+    """the objects drawn on the clip page (Objects step, env_ai.json): each box at the distance MoGe measures inside it
+    (the near side of what is there), with the type picked; build_env sizes it from the box (from_bbox "dist")"""
+    out = []
+    for i, o in enumerate(((env.get("shots") or {}).get(tag) or {}).get("objects", [])):
+        b = o.get("bbox")
+        if not b or len(b) != 4:
+            continue
+        x0, y0, x1, y1 = [int(round(v * fr.k)) for v in b]
+        m = np.zeros((fr.H, fr.W), bool); m[max(0, y0):max(0, y1) + 1, max(0, x0):max(0, x1) + 1] = True
+        m &= fr.valid & ~fr.person & ~fr.bars
+        if m.sum() < 20:
+            continue
+        hd = np.hypot(fr.X[m][:, 0] - C[0], fr.X[m][:, 1] - C[1])
+        d = float(np.percentile(hd, 30))                          # its front, not what shows through behind it
+        out.append({"name": "drawn_%d" % i, "type": o.get("type") or "box", "bbox": [float(v) for v in b], "frame": int(f0),
+                    "dist": round(max(0.3, d), 2), "colour": "orange" if o.get("colour_role") == "orange" else "set",
+                    "_src": {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": o.get("what", ""), "area": 0.0}})
+    return out
+
+
 def obj_box(o):
     """rough world footprint (x0, x1, y0, y1, z1) of an object for duplicate tests"""
     if "pts3" in o:
@@ -1027,6 +1055,7 @@ def run_clip(name, models, a, c):
     pp = os.path.join(marks_dir(ci["video"], c), "pose.json")
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
     W, Hp = ci["W"], ci["Hpic"]
+    user_env = jload(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) if os.path.exists(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) else {}
     f_full = data["lens"] / data["sensor"] * W
     fov_x = 2 * math.degrees(math.atan(W / 2 / f_full))
     shots = camj.get("shots") or [{"shot": 1, "frames": [0, data["frames"] - 1], "ground": {}}]
@@ -1265,6 +1294,10 @@ def run_clip(name, models, a, c):
             keep.append(o)
         keep, rep["dropped_on_people"] = off_people(keep, data, want[sid], dx)
         keep = keep[:a.max_objects]
+        mine = user_objects(user_env, "_s%d" % sid if len(shots) > 1 else "", frs[a0], fits[a0][4], a0)
+        if mine:                                                 # the boxes drawn on the clip page win over what is found there
+            keep = [o for o in keep if not any(px_iou(o["_src"]["px"], u["bbox"]) > 0.3 for u in mine)] + mine
+            print("  %d object(s) drawn on the clip page" % len(mine))
         for o in keep:
             o.pop("_R", None)
         for i, o in enumerate(keep):

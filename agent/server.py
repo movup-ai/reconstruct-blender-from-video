@@ -344,6 +344,16 @@ def check_page(c, cl):
         with open(tp, encoding="utf-8") as fh:
             tpl = fh.read()
         data = html[a + len("const PAGE = "):b].rstrip().rstrip(";")
+        pose = read_json(f.get("pose") or os.path.join(f["marks"], "pose.json"))
+        if pose:                       # the people of every frame from the CURRENT pose.json: joined tracks (one person =
+            try:                       # one id) and filled gaps, as the fit sees them; check.html keeps the pictures
+                page = json.loads(data)
+                for fr in page["frames"]:
+                    k = str(fr["f"])
+                    fr["people"] = [{"id": p["id"], "kps": p["frames"][k]} for p in pose["people"] if k in p["frames"]]
+                data = json.dumps(page, ensure_ascii=False)
+            except (ValueError, KeyError, TypeError):
+                pass
         if "__PAGE_DATA__" in tpl:
             html = tpl.replace("__PAGE_DATA__", data, 1)
     return html

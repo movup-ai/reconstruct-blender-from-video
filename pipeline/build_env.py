@@ -659,6 +659,7 @@ def main():
     ap.add_argument("--frames", default="")
     ap.add_argument("--marks", default=None)
     ap.add_argument("--alpha", type=float, default=0.62)
+    ap.add_argument("--env", default=None, help="build this set file instead of env_claude.json (Prepare: output/<clip>/env_auto.json)")
     a = ap.parse_args()
     c = cfg()
     work = os.path.join(c["work_root"], a.name)
@@ -669,7 +670,7 @@ def main():
     marks = a.marks or os.path.join(output_dir(), a.name)
     if not os.path.exists(os.path.join(marks, "env_claude.json")):        # also accepted in the clip's marks folder
         marks = marks_dir(ci["video"], c)
-    env = jload(os.path.join(marks, "env_claude.json"))
+    env = jload(a.env or os.path.join(marks, "env_claude.json"))
     cam = Cam(data)
     shots = (jload(os.path.join(work, "camera.json")) if os.path.exists(os.path.join(work, "camera.json")) else {}).get("shots") or [{"shot": 1, "frames": [0, data["frames"] - 1]}]
     def people_mid(s):                                      # where the shot's people are (a slope passes through z there)

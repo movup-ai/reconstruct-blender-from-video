@@ -240,6 +240,33 @@ def edit_tracks(pose, spec):
     return msgs
 
 
+def fill_track_gaps(pose, shots, max_gap=15):
+    """a person the detector lost for a few frames (turned away, half out of the picture) is still there: the frames
+    between the two ends of the same track (after joining) get dots blended between those ends, with half the lower
+    end's confidence so the fit trusts them less than a detection.  Never across a cut.  Returns {id: [frames filled]}"""
+    shot_of = {}
+    for si, (a, b) in enumerate(shots):
+        for f in range(a, b):
+            shot_of[f] = si
+    filled = {}
+    for p in pose["people"]:
+        fs = sorted(int(f) for f in p["frames"])
+        for a, b in zip(fs, fs[1:]):
+            if b - a < 2 or b - a - 1 > max_gap or shot_of.get(a) != shot_of.get(b):
+                continue
+            A, B = np.array(p["frames"][str(a)], float), np.array(p["frames"][str(b)], float)
+            bx = p.get("boxes") or {}
+            for f in range(a + 1, b):
+                t = (f - a) / (b - a)
+                K = A * (1 - t) + B * t
+                K[:, 2] = np.minimum(A[:, 2], B[:, 2]) * 0.5
+                p["frames"][str(f)] = [[round(float(x), 1), round(float(y), 1), round(float(sc), 3)] for x, y, sc in K]
+                if str(a) in bx and str(b) in bx:
+                    bx[str(f)] = [round(float(u) * (1 - t) + float(v) * t, 1) for u, v in zip(bx[str(a)], bx[str(b)])]
+                filled.setdefault(p["id"], []).append(f)
+    return filled
+
+
 def apply_stitch(pose_p, pose, mapping, checked_p, review_p):
     """save the joined tracks so the review page shows each person once; move roles and joint fixes along"""
     if not mapping:
@@ -326,6 +353,24 @@ def slice_pose(pose, s0, s1):
         bx = {str(int(f) - s0): v for f, v in p.get("boxes", {}).items() if s0 <= int(f) < s1}
         ppl.append(dict(p, frames=fr, boxes=bx))
     out["people"] = ppl; out["frames"] = s1 - s0
+    return out
+
+def hold_boxes(bx, N, reach=45):
+    """one person's boxes {frame: box} -> {int frame: box} for every frame within `reach` frames of a detection: where the
+    detector lost them (a seated back to the camera, a turn) the nearest box is held, a little wider.  For the set only,
+    where masking too much costs nothing (other frames fill the spot) and masking too little builds the person into it."""
+    have = sorted((int(f), b) for f, b in bx.items())
+    if not have:
+        return {}
+    fs = np.array([f for f, _ in have])
+    out = {}
+    for f in range(N):
+        i = int(np.argmin(np.abs(fs - f))); g = int(fs[i])
+        if g == f:
+            out[f] = have[i][1]
+        elif abs(g - f) <= reach:
+            x0, y0_, x1, y1 = have[i][1][:4]; w, h = x1 - x0, y1 - y0_
+            out[f] = [x0 - 0.1 * w, y0_ - 0.05 * h, x1 + 0.1 * w, y1 + 0.05 * h]
     return out
 
 def slice_checked(chk, s0, s1):
@@ -451,6 +496,14 @@ def run_clip(video, c, args):
         apply_stitch(pose_p, pose, stitched, chk_p, os.path.join(marks_dir(video, c), "review.json"))
         checked = jload(chk_p) if chk_p else None
         review = load_review(video, c); c["_review"] = review or {}
+    gaps = fill_track_gaps(pose, shots)
+    if gaps:                                                       # saved, so the joint editor shows each person in every frame
+        log("  filled short gaps in tracks: %s" % ", ".join("P%s %d frame(s)" % (k, len(v)) for k, v in sorted(gaps.items())))
+        raw = pose_p.replace("pose.json", "pose_raw.json")
+        if not os.path.exists(raw):
+            shutil.copyfile(pose_p, raw)
+        pose["gap_filled"] = {str(k): sorted(set(v) | set((pose.get("gap_filled") or {}).get(str(k), []))) for k, v in gaps.items()}
+        jsave(pose_p, pose)
     if (c.get("_hints") or {}).get("tracks"):                     # hand fixes of identity swaps (hints.json "tracks")
         for msg in edit_tracks(pose, c["_hints"]["tracks"]):
             log("  tracks (hints): " + msg)
@@ -536,10 +589,10 @@ def run_clip(video, c, args):
             hc = hc2
             chars, prep = fit_all(world, y0, people, Ns, c)
         log("    people %.1fs" % (time.time() - tp0))
-        boxes = {}
+        boxes = {}                     # where people are, per frame: the set never builds from them (see hold_boxes)
         for p in spose["people"]:
-            for f, b in p.get("boxes", {}).items():
-                boxes.setdefault(int(f), []).append(b)
+            for f, b in hold_boxes(p.get("boxes", {}), Ns).items():
+                boxes.setdefault(f, []).append(b)
         log("  set ...")
         tp0 = time.time()
         if env.get("depth_set") is False or hand_set:
@@ -654,6 +707,7 @@ def run_clip(video, c, args):
     info = {"W": W, "Hfull": Hfull, "y0": y0, "Hpic": Hp, "frames": N, "fps": fps}
     jsave(os.path.join(work, "clip_info.json"), dict(info, video=video, desc_path=os.path.join(os.path.dirname(pose_p), "desc.txt")))
     frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder
+    rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
     if args.stage in ("blend", "all"):
         blender_render(c, work, dp, N)
     if args.stage == "all":
@@ -662,6 +716,44 @@ def run_clip(video, c, args):
     jsave(os.path.join(work, "report.json"), rep)
     log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
     return rep
+
+SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "models", "sam2", "sam2.1_hiera_large.pt"),
+              os.path.join(AGENT, "third_party", "sam2", "sam2"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
+
+
+def make_set(name, video, work, c, stage, hand_set):
+    """the set the render uses, built into scene_data.json by build_env.py (people and camera stay as fitted):
+    a hand-built set (env_claude.json) when there is one; otherwise the automatic set of env_auto.py (MoGe-2 + SAM 2.1,
+    pieces named by CLIP, the boxes drawn on the clip page included).  Finish reuses the set Prepare measured unless the
+    drawn boxes changed since.  Any failure keeps the depth set the fit already put in scene_data.json."""
+    if c.get("set_builder", "auto") == "depth" and not hand_set:
+        return "depth set (set_builder = depth)"
+    py, here = sys.executable, os.path.dirname(os.path.abspath(__file__))
+    env_p = None
+    if not hand_set:
+        missing = [p for p in SET_MODELS if not os.path.exists(p)]
+        if missing:
+            log("  set: automatic set not installed (%s) - depth set kept" % ", ".join(os.path.relpath(p, AGENT) for p in missing))
+            return "depth set (automatic set not installed)"
+        env_p = os.path.join(output_dir(), name, "env_auto.json")
+        drawn = os.path.join(marks_dir(video, c), "env_ai.json")
+        fresh = stage == "all" and os.path.exists(env_p) and (not os.path.exists(drawn) or os.path.getmtime(drawn) < os.path.getmtime(env_p))
+        if fresh:
+            log("  set: the automatic set from Prepare (%s)" % env_p)
+        else:
+            log("  set: measuring the scene (MoGe-2 + SAM 2.1 + CLIP, a few minutes on the processor) ...")
+            t1 = time.time()
+            r = subprocess.run([py, os.path.join(here, "env_auto.py"), name], cwd=AGENT)
+            if r.returncode != 0 or not os.path.exists(env_p):
+                log("  set: the automatic set failed (exit %s) - depth set kept" % r.returncode)
+                return "depth set (automatic set failed)"
+            log("    measured in %.0fs" % (time.time() - t1))
+    r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT)
+    if r.returncode != 0:
+        log("  set: build_env failed (exit %s) - depth set kept" % r.returncode)
+        return "depth set (build_env failed)"
+    return "hand-built set (env_claude.json)" if hand_set else "automatic set (env_auto.json)"
+
 
 def blender_render(c, work, dp, N, extra=("render",)):
     be = blender_exe(c)

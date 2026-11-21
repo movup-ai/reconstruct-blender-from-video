@@ -68,6 +68,75 @@ def H_between(world, j, k):
     K = world.cam.K()
     return K @ world.R_cw(k) @ world.R_cw(j).T @ np.linalg.inv(K)
 
+def side_bars(img, dark=16, rows=0.97):
+    """the black pillarbox bars at the left and right of a 4:3 film inside a wider frame -> (left, right) columns kept"""
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    col_dark = (g < dark).mean(axis=0) >= rows                  # a bar column is dark almost top to bottom
+    W = g.shape[1]; l = 0; r = W
+    while l < W // 3 and col_dark[l]:
+        l += 1
+    while r > W - W // 3 and col_dark[r - 1]:
+        r -= 1
+    return (l, r) if r - l > W // 3 else (0, W)
+
+def people_mask(shape, bxs, y0, pad=(0.15, 0.1, 0.05)):
+    """1 where nobody is: each person's box widened a little (arms, hair, shadows)"""
+    H, W = shape
+    m = np.ones((H, W), np.uint8)
+    for b in bxs:
+        x0, x1, ya, yb = b[0], b[2], b[1] - y0, b[3] - y0
+        w_, h_ = x1 - x0, yb - ya
+        cv2.rectangle(m, (int(x0 - pad[0] * w_), int(ya - pad[1] * h_)), (int(x1 + pad[0] * w_), int(yb + pad[2] * h_)), 0, -1)
+    return m
+
+def frame_depth(frames, y0, world, k, boxes, model, nmax=6):
+    """Depth for key frame k from the REAL video frames around it (not from the people-removed plate: its smears and
+    blur leave the depth model nothing to read, so the set came out as flat walls with no objects).  Each frame's depth
+    has the people and the pillarbox bars cut out, is brought onto frame k's view and onto frame k's depth scale, and
+    the median over the frames fills each pixel from frames where nobody stands there.
+    -> (disparity, hidden) with hidden = pixels covered by a person in every frame (filled from around them)"""
+    N = len(frames); Hp, W = world.cam.H, world.cam.W
+    near = [j for j in range(N) if np.degrees(np.arccos(np.clip(view_dir(world, j) @ view_dir(world, k), -1, 1))) < 8]
+    picks = sorted(set([k] + [near[int(round(i))] for i in np.linspace(0, len(near) - 1, min(nmax, len(near)))]))
+    layers = []
+    for j in picks:
+        img = frames[j][y0:y0 + Hp]
+        l, r = side_bars(img)
+        d = np.full((Hp, W), np.nan, np.float32)
+        d[:, l:r] = model(np.ascontiguousarray(img[:, l:r]))     # the bars are not shown to the model
+        d[people_mask((Hp, W), boxes.get(j, []), y0) == 0] = np.nan
+        if j != k:
+            d = cv2.warpPerspective(d, H_between(world, j, k), (W, Hp), flags=cv2.INTER_NEAREST, borderValue=np.nan)
+        layers.append((j, d))
+    ref = next(d for j, d in layers if j == k)
+    out = []
+    for j, d in layers:                                          # relative depth: each frame has its own scale and offset
+        if j != k:
+            both = np.isfinite(ref) & np.isfinite(d)
+            if both.sum() < 2000:
+                continue
+            x, y = d[both][::7], ref[both][::7]
+            a, b = np.polyfit(x, y, 1)
+            for _ in range(2):                                   # drop what moved (a door, a reflection) and fit again
+                res = np.abs(a * x + b - y); keep = res <= np.percentile(res, 80)
+                a, b = np.polyfit(x[keep], y[keep], 1)
+            if a <= 0:
+                continue
+            d = a * d + b
+        out.append(d)
+    import warnings
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        disp = np.nanmedian(np.stack(out), axis=0)
+    hidden = ~np.isfinite(disp)
+    if hidden.all():
+        return None, hidden
+    fill = np.nanmedian(disp)
+    disp = cv2.inpaint(np.where(hidden, fill, disp).astype(np.float32), hidden.astype(np.uint8) * 255, 9, cv2.INPAINT_TELEA)
+    l, r = side_bars(frames[k][y0:y0 + Hp])
+    hidden[:, :l] = False; hidden[:, r:] = False                 # the bars are not "a person standing still"
+    return disp, hidden
+
 def make_plate(frames, y0, world, k, boxes, nmax=15):
     N = len(frames); Hp, W = world.cam.H, world.cam.W
     near = [j for j in range(N) if np.degrees(np.arccos(np.clip(view_dir(world, j) @ view_dir(world, k), -1, 1))) < 8]
@@ -1064,8 +1133,14 @@ def build_set(frames, y0, world, people_keys, boxes, c, log_=log, fake=False):
     model = None if fake else depth_model(pick_device(c.get("device", "cuda")))
     meshes = []
     for k in plate_keys(world, N, c.get("plate_step_deg", 12.0)):
-        plate, still = make_plate(frames, y0, world, k, boxes)
-        disp = (FakeDepth(world, k) if fake else model)(plate)
+        plate, still = make_plate(frames, y0, world, k, boxes)       # colours for the set pieces
+        disp = None
+        if not fake and c.get("set_depth_from", "frames") == "frames":   # depth from the real frames, people cut out
+            disp, hidden = frame_depth(frames, y0, world, k, boxes, model)
+            if disp is not None:
+                still = hidden.astype(np.uint8)
+        if disp is None:                                             # the older way: depth of the people-removed plate
+            disp = (FakeDepth(world, k) if fake else model)(plate)
         disp = cv2.medianBlur(disp.astype(np.float32), 5)
         if still.any():                                  # people standing still: fill their depth from around them
             disp = cv2.inpaint(disp.astype(np.float32), (still > 0).astype(np.uint8) * 255, 7, cv2.INPAINT_TELEA)
