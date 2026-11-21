@@ -30,10 +30,15 @@ function chip(st) { return `<span class="chip g-${st.group}">${esc(st.label)}</s
 // a run's length: "45 s", "12 min", "1 h 05 min"
 function fmtDur(s) { s = Math.max(0, Math.round(s)); if (s < 60) return s + ' s'; const m = Math.round(s / 60);
   return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; }
-// how long a video took from its first job (Start) to a submittable package; took = {done, open} from /api/clips
-function tookText(t) {
-  if (t && t.done) return { text: 'done in ' + fmtDur(t.done.wall), tip: `From Start to the finished zip: ${fmtDur(t.done.wall)}. The computer worked ${fmtDur(t.done.machine)} of it; the rest was waiting in the queue and your review.` };
-  if (t && t.open) return { text: fmtDur(t.open.so_far) + ' so far', tip: `Started ${fmtDur(t.open.so_far)} ago; no finished zip yet. The computer has worked ${fmtDur(t.open.machine)} of it.` };
+// how long the work on a video took (computer time, not waiting): took = {done, open, last} from /api/clips, st = its status.
+// running: this job so far · prepared: how long preparing took · finished: all its jobs, from Start to the zip
+function tookText(t, st) {
+  if (!t) return null;
+  const L = t.last, what = L && L.stage === 'all' ? 'finishing' : 'preparing';
+  if (L && L.state === 'running') return { text: `${what} ${fmtDur(L.ran)}`, tip: `This job has been ${what} for ${fmtDur(L.ran)}.` };
+  if (t.done && (!st || st.done)) return { text: 'done in ' + fmtDur(t.done.machine), fin: true,
+    tip: `The computer worked ${fmtDur(t.done.machine)} to make this package. From Start to the zip took ${fmtDur(t.done.wall)}, with the queue and your review.` };
+  if (L && L.stage === 'fit' && L.state === 'done' && (!st || st.fit)) return { text: 'prepared in ' + fmtDur(L.ran), tip: `Preparing took ${fmtDur(L.ran)}.` };
   return null;
 }
 function fmtTime(s) { s = Math.max(0, Math.round(s)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; }

@@ -175,7 +175,9 @@ a.clip .pk { padding:0 11px 10px; display:flex; gap:8px; justify-content:space-b
 a.clip .pk .pkn { overflow:hidden; text-overflow:ellipsis; min-width:0; }
 a.clip .pk .took { flex:none; color:var(--slate); font-variant-numeric:tabular-nums; }
 a.clip .pk .took.fin { color:var(--ok); }
-a.clip .pbar { margin:0 11px 10px; }
+a.clip { position:relative; }
+a.clip .pbar { position:absolute; left:0; right:0; bottom:0; height:4px; margin:0; border-radius:0; box-shadow:none; }   /* along the bottom edge: every card the same height */
+a.clip .pbar i { border-radius:0 2px 2px 0; }
 
 /* ---------------------------------------------------------------- clip page */
 header.bar2 { position:sticky; top:52px; z-index:5; background:rgba(244,246,247,.94); backdrop-filter:saturate(1.4) blur(8px); border-bottom:1px solid var(--seam); }

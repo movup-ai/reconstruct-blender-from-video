@@ -146,6 +146,7 @@ class TestJobStore(unittest.TestCase):
         t = self.s.timing(now=2600)["a"]
         self.assertEqual(t["done"]["wall"], 1100, "the last finished run stays")
         self.assertEqual(t["open"], {"start": 2000, "so_far": 600, "machine": 600})
+        self.assertEqual(t["last"], {"stage": "fit", "state": "running", "ran": 600}, "the card shows this job's own time")
 
     def test_dedupe_priority_recover(self):
         self.assertIsNotNone(self.s.enqueue("a", "fit"))

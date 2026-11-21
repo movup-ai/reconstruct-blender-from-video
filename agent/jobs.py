@@ -98,13 +98,15 @@ class JobStore:
         """{clip: {"done": {...} or None, "open": {...} or None}}: how long a video took from its first job to its
         submittable package.  A run starts when the first job after the last finished package starts and ends when the
         next Finish job ("all") is done.  wall = start -> zip (queue waits and your review included); machine = the
-        time jobs actually ran.  "open": a run that has started but has no package yet (so far)."""
+        time jobs actually ran.  "open": a run that has started but has no package yet (so far).
+        "last": the clip's latest job that ran: {stage, state, ran} (seconds it ran, so far when still running)."""
         now = now or time.time()
         with self.lock:
             rows = self.db.execute("SELECT clip, stage, state, started, ended FROM jobs WHERE started IS NOT NULL ORDER BY id").fetchall()
         out = {}
         for r in rows:
-            t = out.setdefault(r["clip"], {"done": None, "open": None, "_s": None, "_m": 0.0})
+            t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "_s": None, "_m": 0.0})
+            t["last"] = {"stage": r["stage"], "state": r["state"], "ran": round(max(0.0, (r["ended"] or now) - r["started"]))}
             if t["_s"] is None:
                 t["_s"] = r["started"]
             t["_m"] += max(0.0, (r["ended"] or now) - r["started"]) if r["state"] != "queued" else 0.0
