@@ -308,6 +308,8 @@ class Runner:
                     if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
                         continue                               # busy, or failed for good: leave for a person
                     st = status(c, cl, j)
+                    if st["held"]:
+                        continue                               # taken out of the line on the Clips page
                     if not st["fit"]:
                         self.store.enqueue(cl.id, "fit")
                     elif c["autopilot"] == "full" and not st["done"]:

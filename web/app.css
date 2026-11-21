@@ -316,6 +316,18 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
 .clipcard:hover .rm, .clipcard .rm:focus-visible { opacity:1; }
 .clipcard .rm:hover { background:var(--bad); border-color:var(--bad); color:#fff; }
 .clipcard .rm:disabled { opacity:.45; background:rgba(255,255,255,.92); color:var(--faint); }
+/* in or out of the waiting line: a small button on the card's last row */
+.clipcard .qb { position:absolute; right:10px; bottom:7px; min-height:0; height:24px; padding:0 10px; font-size:12px; border-radius:999px; }
+.clipcard .qb.add { background:var(--accent-tint); border-color:#b9d6d8; color:var(--accent); font-weight:600; }
+.clipcard.hasq a.clip .pk { padding-right:96px; }
+.clipcard.hasq a.clip .pk .took { display:none; }
+.clipcard.held img { filter:grayscale(1); opacity:.55; }
+/* Start over with every clip: its own quiet block at the bottom, a clearly dangerous button */
+.resetzone { margin-top:28px; padding:14px 16px; border:1px solid var(--bad-tint); border-left:3px solid var(--bad); border-radius:10px;
+             background:var(--paper); display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.resetzone p { margin:2px 0 0; max-width:560px; }
+button.dangerline { background:var(--paper); border-color:var(--bad); color:var(--bad); font-weight:600; }
+button.dangerline:hover { background:var(--bad); color:#fff; }
 /* removed videos: greyed cards with Add back */
 .removed { margin-top:26px; padding-top:6px; border-top:1px solid var(--seam); }
 .removed h2 { margin-top:16px; }

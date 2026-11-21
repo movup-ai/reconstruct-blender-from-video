@@ -18,7 +18,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 from . import APP_NAME, __version__, config
-from .clips import Library, folders, status, read_json
+from .clips import Library, folders, status, read_json, set_held
 from .jobs import JobStore, Runner
 from . import review, media, ai, brief
 import package as pkg  # pipeline (on sys.path through config)
@@ -208,9 +208,10 @@ class App:
         return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "dropped": dropped, "clashes": self.lib.clashes}
 
     def start(self):
-        """Start: queue every video that is not prepared yet, and let the queue run"""
+        """Start: queue every video that is not prepared yet (except those taken out of the line), and let the queue run"""
         queued = sum(1 for cl, st in self.status_all()
-                     if not st["fit"] and not (st["job"] and st["job"]["state"] in ("queued", "running")) and self.store.enqueue(cl.id, "fit"))
+                     if not st["fit"] and not st["held"] and not (st["job"] and st["job"]["state"] in ("queued", "running"))
+                     and self.store.enqueue(cl.id, "fit"))
         self.runner.resume()
         log.info("start: %d video(s) queued to prepare", queued)
         return {"ok": True, "queued": queued}
@@ -961,6 +962,21 @@ def make_handler(app):
                     return self.send(200, {"ok": True, "removed": cl.name})
                 if action == "cancel":
                     return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})
+                if action == "hold":                                     # out of the waiting line (Take out on its card)
+                    job = app.store.latest_for(cl.id)
+                    if job and job["state"] == "running":
+                        raise HttpError(409, "%s is being processed right now" % cl.name)
+                    n = app.store.cancel_queued(cl.id)
+                    if not status(app.c, cl, job)["fit"]:
+                        set_held(cl.id, True)                            # Start and autopilot leave it until it is added back
+                    return self.send(200, {"ok": True, "cancelled": n})
+                if action == "unhold":                                   # back in line (Add back on its card)
+                    set_held(cl.id, False)
+                    st = status(app.c, cl, app.store.latest_for(cl.id))
+                    queued = bool(not st["fit"] and not app.runner.paused and app.store.enqueue(cl.id, "fit"))
+                    if queued:
+                        app.runner.wake()
+                    return self.send(200, {"ok": True, "queued": queued})
                 if action == "reset":                                    # Start over: delete what preparing left
                     return self.send(200, app.reset([cl], dry=(q.get("dry") or ["0"])[0] == "1"))
             raise HttpError(404, "not found")

@@ -91,6 +91,25 @@ class Library:
         return -1
 
 
+def _held_p():
+    return os.path.join(config.DATA, "held.json")
+
+
+def held_set():
+    """clips taken out of the waiting line on the Clips page (clip ids): Start and autopilot leave them until added back"""
+    return set(read_json(_held_p(), []) or [])
+
+
+def set_held(cid, on):
+    ids = held_set()
+    if (cid in ids) == bool(on):
+        return
+    ids.add(cid) if on else ids.discard(cid)
+    os.makedirs(os.path.dirname(_held_p()), exist_ok=True)
+    with open(_held_p(), "w", encoding="utf-8") as fh:
+        json.dump(sorted(ids), fh, indent=1)
+
+
 def _removed_p():
     return os.path.join(config.DATA, "removed.json")
 
@@ -230,7 +249,8 @@ def read_json(p, default=None):
 LABELS = {  # label -> group used by the start page
     "not prepared": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
     "waiting for AI": "busy", "ready for review": "ready", "reviewed": "conf", "auto-confirmed": "conf",
-    "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail"}
+    "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail",
+    "taken out": "new"}
 
 
 def status(c, cl, job=None):
@@ -250,6 +270,7 @@ def status(c, cl, job=None):
             except OSError:
                 pass
     s["changed"] = os.path.exists(f["zip"]) and not s["done"]
+    s["held"] = cl.id in held_set()
     s["job"] = job and {k: job[k] for k in ("id", "stage", "state", "attempts", "error") if k in job}
     state, stage = (job or {}).get("state"), (job or {}).get("stage")
     s["ai_failed"] = state == "failed" and stage == "ai"
@@ -266,7 +287,7 @@ def status(c, cl, job=None):
     elif s["fit"]:
         label = "ready for review"
     else:
-        label = "not prepared"
+        label = "taken out" if s["held"] else "not prepared"
     s["label"] = label
     s["group"] = LABELS[label]
     return s

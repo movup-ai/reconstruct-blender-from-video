@@ -422,6 +422,25 @@ class TestApi(unittest.TestCase):
             self.app.runner.pause()
             self.post("/api/cancel_queued")
 
+    def test_take_out_of_line_and_add_back(self):
+        try:
+            self.app.store.enqueue(self.cid, "fit")
+            code, d = self.post("/api/clip/%s/hold" % self.cid)
+            self.assertEqual((code, d["cancelled"]), (200, 1), "its waiting job leaves the line")
+            st = json.loads(self.get("/api/clips")[1])["clips"][0]["status"]
+            self.assertEqual((st["held"], st["label"]), (True, "taken out"))
+            self.assertEqual(self.post("/api/start")[1]["queued"], 0, "Start leaves a taken-out clip")
+            self.app.runner.pause()
+            code, d = self.post("/api/clip/%s/unhold" % self.cid)
+            self.assertEqual((code, d["queued"]), (200, False), "paused: back on the list, prepared at the next Start")
+            st = json.loads(self.get("/api/clips")[1])["clips"][0]["status"]
+            self.assertEqual((st["held"], st["label"]), (False, "not prepared"))
+        finally:
+            self.app.runner.pause()
+            self.post("/api/clip/%s/unhold" % self.cid)
+            self.app.runner.pause()
+            self.post("/api/cancel_queued")
+
     def test_remove_from_list_and_put_back(self):
         code, d = self.post("/api/clip/%s/remove" % self.cid)
         self.assertEqual(code, 200)

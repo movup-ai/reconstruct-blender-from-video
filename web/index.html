@@ -38,7 +38,10 @@
     <p class="hint">These videos are not prepared or finished. Their files are still in SOURCE; <b>Add back</b> puts one on the list again.</p>
     <div class="grid" id="removedlist"></div>
   </section>
-  <p class="small muted" id="csv" style="margin-top:18px"><a href="/report.csv">Download the status of every clip (CSV)</a> · <a href="#" id="resetall" class="dangerlink">Start over with every clip…</a></p>
+  <section class="resetzone" id="csv">
+    <div><b>Start over with every clip</b><p class="small muted">Deletes what preparing made for every clip, including your roles, joint fixes and objects. The videos and their delivery names stay.</p></div>
+    <button id="resetall" class="dangerline">Start over with every clip…</button>
+  </section>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/common.js"></script>
@@ -72,7 +75,7 @@ function render() {
   $('clashes').innerHTML = src.clashes.map(x => `<b>${esc(x.clip)}</b> is also the name of <code>${esc(x.other)}</code>, so this one got a short suffix.`).join('<br>');
 
   // ---- step 2: prepare
-  const todo = cs.filter(c => !c.status.fit && !(c.status.job && /queued|running/.test(c.status.job.state))).length;
+  const todo = cs.filter(c => !c.status.fit && !c.status.held && !(c.status.job && /queued|running/.test(c.status.job.state))).length;
   const failed = cnt.fail || 0;
   $('startbtn').innerHTML = !q.paused ? '&#10074;&#10074; Pause' : '&#9654; Start' + (todo ? ` · prepare ${todo} video(s)` : '') + (q.queued ? ` · ${q.queued} waiting` : '');
   $('startbtn').title = q.paused ? 'Prepare every video that is not prepared yet, and run the waiting jobs' : 'The running job finishes; nothing new starts until you press Start again.';
@@ -121,13 +124,24 @@ function render() {
     if (Object.keys(films).length > 1 || film) list.insertAdjacentHTML('beforeend', `<h2>${esc(film || 'Videos')} · ${group.length}</h2>`);
     const g = el('div', { class: 'grid' });
     group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, ''), running = c.status.job && c.status.job.state === 'running';
-      g.insertAdjacentHTML('beforeend', `<div class="clipcard"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
+      // in or out of the waiting line: Take out (Start leaves it) / Add back
+      const waiting = c.status.job && c.status.job.state === 'queued', held = !c.status.fit && c.status.held;
+      const qb = running ? '' : waiting || (!c.status.fit && !held)
+        ? `<button class="qb" data-hold="${c.id}" data-name="${esc(short)}" title="${waiting ? 'Take this job out of the waiting line' : 'Start leaves this video out'} until you add it back">Take out</button>`
+        : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${esc(short)}" title="Put this video back in line: Start prepares it with the others">Add back</button>` : '';
+      g.insertAdjacentHTML('beforeend', `<div class="clipcard${qb ? ' hasq' : ''}${held ? ' held' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
         <div class="t"><span class="n" title="${esc(c.name)}">${esc(short)}</span>${chip(c.status)}</div>
         <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
-        <button class="rm" data-rm="${c.id}" data-name="${esc(short)}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : `title="Remove from the list (the file stays in SOURCE)"`} aria-label="Remove ${esc(short)} from the list">&#10005;</button></div>`); });
+        <button class="rm" data-rm="${c.id}" data-name="${esc(short)}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : `title="Remove from the list (the file stays in SOURCE)"`} aria-label="Remove ${esc(short)} from the list">&#10005;</button>${qb}</div>`); });
     list.appendChild(g);
   }
+  list.querySelectorAll('[data-hold]').forEach(b => b.onclick = async () => {
+    const r = await post(`/api/clip/${b.dataset.hold}/hold`);
+    toast(r.cancelled ? `${b.dataset.name} is out of the waiting line` : `${b.dataset.name} is taken out: Start leaves it`); load(); });
+  list.querySelectorAll('[data-unhold]').forEach(b => b.onclick = async () => {
+    const r = await post(`/api/clip/${b.dataset.unhold}/unhold`);
+    toast(r.queued ? `${b.dataset.name} is back in the waiting line` : `${b.dataset.name} is back: Start prepares it`); load(); });
   list.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
     if (!(await ask('', 'Remove', { title: 'Remove this video?', name: b.dataset.name, danger: true, points: ['It won’t be prepared or finished. Its waiting jobs are cancelled.', 'The file stays in SOURCE. Nothing is deleted.', 'You can add it back at the bottom of this page.'] }))) return;
     await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list`); load(); });
