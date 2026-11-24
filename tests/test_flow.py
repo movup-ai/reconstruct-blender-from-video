@@ -345,6 +345,136 @@ class TestMeasuredSet(unittest.TestCase):
         self.assertEqual(m[0]["v"][1], [201.0, 3.0, 0.0], "moved with its shot"); self.assertEqual(m[0]["colour"], "tree")
 
 
+class TestAnnotations(unittest.TestCase):
+    """the clip page's object notes: the description decides how each one is built"""
+    def test_camera_zoom(self):
+        """a zooming lens: the world camera and the scene camera agree, and a point at the frame-0 edge leaves the picture"""
+        from common import Camera
+        from ground_solve import World
+        import build_env as BE
+        cam = Camera(1920, 1080, 30.0)
+        N = 3; zoom = [1.0, 1.5, 2.0]
+        w = World(cam, [np.eye(3)] * N, np.array([0, -1.0, 0]), 1.2, zoom=zoom)
+        P = w.on_ground(0, 40.0, 1000.0)                                 # near the left edge at frame 0
+        self.assertLess(abs(w.project(P, 0)[0][0, 0] - 40.0), 0.5)
+        self.assertLess(w.project(P, 2)[0][0, 0], 0)                     # zoomed x2: out of the picture
+        data = {"res": [1920, 1080], "lens": 30.0, "sensor": 36.0, "cam": [w.blender_cam(i) for i in range(N)],
+                "zoom": [w.f_at(i) / cam.f for i in range(N)]}
+        bc = BE.Cam(data)
+        for i in range(N):
+            self.assertLess(np.abs(bc.project(P, i)[0] - w.project(P, i)[0]).max(), 0.5)
+            C, d = bc.ray(700.0, 900.0, i)
+            self.assertLess(np.abs(d - w.ray(i, 700.0, 900.0)).max(), 1e-6)
+
+    def test_distance_levels(self):
+        import env_auto as EA
+        C = [0.0, 0.0, 1.5]
+        ob = lambda what, lvl, near, typ="wall": {"what": what, "type": typ, "dist": near, "_level": lvl, "_C": C,
+                                                  "_reach": [near, near + 0.5], "_az": [80.0, 100.0]}
+        wall, table, free = ob("back wall", 3, 2.0), ob("table", 1, 3.0), ob("lamp", None, 1.0)
+        mesh = dict(ob("plant", 2, 1.0), type="mesh", v=[[0.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
+        person = [np.array([[0.0, 6.0, 1.0], [0.2, 6.2, 1.2]])]            # walks 6 m out, straight ahead
+        aside = [np.array([[9.0, 0.5, 1.0]])]                              # far off to the side: not in the wall's view
+        EA.by_level([wall, table, free, mesh], person + aside)
+        self.assertAlmostEqual(table["dist"], 3.0)                         # level 1: as measured
+        self.assertAlmostEqual(mesh["_reach"][0], 3.8, places=2)           # level 2: behind the table (3.5 + 0.3)
+        self.assertAlmostEqual(mesh["v"][0][1], 3.8, places=2)             # its points pushed along the view
+        self.assertGreaterEqual(wall["dist"], 6.2 + 0.4 - 0.01)            # the back: behind the person
+        self.assertLess(wall["dist"], 8.0)                                 # (the one to the side does not count)
+        self.assertEqual(free["dist"], 1.0)
+        self.assertEqual(server.distance_level("4"), 4)
+        self.assertIsNone(server.distance_level(""))
+        self.assertIsNone(server.distance_level(12))
+
+    def test_description_decides(self):
+        import describe as D
+        p = lambda w, t="other": D.parse(w, t)
+        self.assertEqual((p("white pillar by the door")["mode"], p("white pillar by the door")["kind"]), ("model", "pillar"))
+        self.assertEqual(p("desk lamp with white shade")["kind"], "lamp", "the thing is the last noun")
+        self.assertEqual(p("the thing on the shelf")["mode"], "shape", "not the shelf it stands on")
+        self.assertEqual(p("a big potted plant next to the wall")["mode"], "shape")
+        self.assertEqual(p("old sculpture of a horse")["mode"], "shape")
+        h = p("plastic bag held in his left hand")
+        self.assertEqual((h["mode"], h["side"], h["label"]), ("held", "L", "bag"))
+        self.assertTrue(p("backpack")["worn"])
+        self.assertEqual(p("phone in her right hand")["label"], "phone")
+        self.assertEqual(p("pillar", "door")["kind"], "door", "a type picked in the list wins")
+        self.assertEqual(p("distant door")["role"], "far_i")
+        self.assertEqual(p("special thing")["role"], "special")
+
+
+class TestColourCard(unittest.TestCase):
+    def test_card_values(self):
+        import colour_card as CC
+        self.assertEqual(CC.CARD["red"], [214, 62, 61]); self.assertEqual(CC.CARD["bg"], [184, 184, 184])
+        self.assertEqual(CC.CARD["near"], [223, 135, 47]); self.assertEqual(CC.CARD["special"], [122, 78, 194])
+
+    def test_roles(self):
+        import colour_card as CC
+        from rig import JOINTS
+        N = 3
+        ch = {"height": 1.75, "style": "sample", "track_id": 1, "visible": [True] * N, "root": [[0.0, 5.0, 0.0, 0.0]] * N,
+              "pelvis_z": [0.94] * N, "rot": {j: [[0, 0, 0]] * N for j in JOINTS}, "colour": "purple"}
+        box = lambda c, s: [[c[0] + sx * s / 2, c[1] + sy * s / 2, c[2] + sz * s / 2] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+        mk = lambda obj, v, **kw: dict({"name": obj, "obj": obj, "v": v, "f": [[0, 1, 2]], "colour": "set", "layer": 2}, **kw)
+        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
+                "chars": {"P1": ch}, "palette": {}, "props": [{"name": "held_P1_bag_0", "held": True, "colour": "dark"}],
+                "meshes": [mk("wall", box((0, 9, 1.5), 3), cls="wall", kind="patch"),
+                           mk("lamp", box((3, 7, 1), 0.4), kind="lamp"),
+                           mk("table", box((0, 3.5, 0.9), 0.7), kind="table"),                 # between camera and person
+                           mk("door", box((-4, 12, 1), 1), kind="door"),                       # far from him
+                           mk("cup", box((0.45, 5.0, 0.95), 0.1), kind="box", what="cup"),     # by his hand
+                           mk("special", box((5, 9, 0.5), 1), role="special")]}
+        CC.apply(data, log=None)
+        col = {m["obj"]: m["colour"] for m in data["meshes"]}
+        self.assertEqual(col, {"wall": "bg", "lamp": "lamp", "table": "fg", "door": "far_i", "cup": "near", "special": "special"})
+        self.assertEqual(data["props"][0]["colour"], "near", "held: nearby interactive")
+        self.assertEqual(data["chars"]["P1"]["colour"], "cyan", "purple is the special colour: a person gets another")
+        self.assertEqual(data["palette"]["fg"], [154, 107, 59])
+
+
+class TestClaudeSet(unittest.TestCase):
+    """the Claude set builder's own logic (no API call): the answer it accepts, and measured shapes for plants"""
+    def test_parse_answer(self):
+        import claude_set as CS
+        env = CS.parse_set('A corridor.\n```json\n{"objects": [{"type": "pillar", "bbox": [1, 2, 3, 4], "dist": 3},'
+                           '{"type": "box"}, {"what": "no type", "pos": [0, 1, 0]}]}\n```')
+        self.assertEqual([o["type"] for o in env["objects"]], ["pillar"], "objects need a type and a placement")
+        self.assertIn("ground", env)
+        with self.assertRaises(Exception):
+            CS.parse_set("no json here")
+
+    def test_spec_leaves_out_people_fitting(self):
+        import claude_set as CS
+        s = CS.spec_text()
+        self.assertIn("## File format", s); self.assertIn("### Types", s)
+        self.assertNotIn("People on horses", s); self.assertNotIn("Wrong person tracks", s)
+
+    def test_plants_get_their_measured_shape(self):
+        import claude_set as CS
+        se = {"objects": [{"type": "plant_pot", "what": "potted fig", "bbox": [300, 400, 700, 1000], "dist": 2.5},
+                          {"type": "pillar", "what": "white pillar", "bbox": [0, 0, 200, 1000], "dist": 3}]}
+        auto = {"objects": [{"type": "mesh", "name": "object_3", "v": [[0, 0, 0]], "f": [], "_src": {"frame": 0, "px": [320, 420, 690, 990]}},
+                            {"type": "mesh", "name": "object_9", "v": [[0, 0, 0]], "f": [], "_src": {"frame": 40, "px": [320, 420, 690, 990]}}]}
+        self.assertEqual(CS.measured_shapes(se, auto, 0), 1)
+        self.assertEqual([(o["type"], o.get("what")) for o in se["objects"]], [("mesh", "potted fig"), ("pillar", "white pillar")])
+
+    def test_settings_validation(self):
+        from agent import config as cfgmod
+        d = tempfile.mkdtemp(); p = cfgmod.CFG_PATH
+        try:
+            cfgmod.CFG_PATH = os.path.join(d, "config.json")
+            c = cfgmod.save({"set_builder": "claude", "set_model": "claude-opus-5-5", "set_rounds": 2})
+            self.assertEqual((c["set_builder"], c["set_model"]), ("claude", "claude-opus-5-5"))
+            for bad in ({"set_builder": "gpt"}, {"set_model": "claude-x"}, {"set_rounds": 9}, {"anthropic_key": "short"}):
+                with self.assertRaises(ValueError):
+                    cfgmod.save(bad)
+            self.assertIn("anthropic_key", cfgmod.SECRETS)
+        finally:
+            cfgmod.CFG_PATH = p
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class TestFinishFingerprint(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()

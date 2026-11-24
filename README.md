@@ -23,6 +23,49 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
   at Prepare (`output\<clip>\held.json`); the set leaves them out. `"held_objects": false` in `config.json` or a
   clip's `hints.json` switches it off.
 
+## Processing upgrades
+
+Settings now includes foot contact, adaptive set views, the pose backend and the camera backend.
+The tracker compares clothing colour, uses confident poses before weak candidates, checks joint confidence in
+both observations and resets identities at hard cuts. Foot contact adds a soft world-space constraint when
+visible ankles agree with a planted foot in the fitted camera. Per-person hints can disable it with
+`"foot_contact": false`. Keyed leg joints take precedence.
+
+Adaptive set sampling keeps the first and middle views and adds views when the camera travels 0.5 m, turns
+12 degrees or changes zoom by 15 percent relative to the nearest selected view. `set_max_frames` defaults to five.
+For nearly fixed views it also looks for background uncovered when people move away.
+Frames explicitly annotated by an operator are always included. Set caches and completed-job fingerprints
+include the new settings, so a changed configuration can trigger rebuilding.
+
+The default pose backend is `rtmpose`. The optional `rtmo` backend accepts a COCO-17, 640x640 RTMO ONNX checkpoint
+at `rtmo_model`, and measures every frame. It also supports the overlapping tiles used to find small people.
+Use the clip's reset/re-check workflow to generate fresh joint marks with a different model.
+This command compares models on the same footage.
+
+```powershell
+.venv\Scripts\python tools\benchmark_pose.py SOURCE\edward\two_men.mp4 --frames 24 --out downloads\pose_benchmark.json
+```
+
+The optional `da3` camera backend uses Depth Anything 3 multi-view extrinsics and interpolates between sampled views.
+It scales translation from visible floor contacts, or from the DA3 translation scale in Settings (`da3_meters_per_unit`). When scale cannot be
+estimated, a warning is recorded and the camera uses the predicted rotations. A static-camera review or a hand-authored
+camera path takes precedence. `da3_max_views` defaults to 12 and `da3_resolution` to 504.
+Set `da3_model` to a downloaded checkpoint folder and `da3_python` to a Python executable with DA3 and CUDA PyTorch.
+The worker exchanges NumPy files with the main process. This allows DA3's NumPy 1.x dependencies to live in an
+isolated environment under `downloads\da3-venv`. The upstream package and model are available from
+[Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3).
+`requirements-da3.txt` lists the camera worker's dependencies. For a fresh installation, install CUDA PyTorch 2.8
+and torchvision 0.23 in a Python 3.12 virtual environment at `downloads\da3-venv`, then run these commands.
+
+```powershell
+uv pip install --python downloads\da3-venv\Scripts\python.exe --target third_party\da3 --no-deps https://github.com/ByteDance-Seed/Depth-Anything-3/archive/refs/heads/main.zip
+uv pip install --python downloads\da3-venv\Scripts\python.exe -r requirements-da3.txt
+```
+
+Each pipeline run writes `Work_auto\<clip>\profile_<stage>.json`, including a failed run. It records wall time and
+call count for marks, lens, camera, people fitting, the depth set, carried objects, environment building, Blender,
+and encoding/packaging. These timings include model startup and subprocess work.
+
 ## Start
 
 Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.1:8765.
@@ -76,13 +119,79 @@ With a key, every prepared clip gets one DeepSeek check:
 The environment check needs a DeepSeek model that accepts images. **Test** tells you whether yours does. Frames of the
 clips are sent to DeepSeek when AI suggestions are on.
 
+## Colours (colour card)
+
+Every video follows the colour card in [docs/COLOUR_CARD.md](docs/COLOUR_CARD.md) (`pipeline\colour_card.py`):
+characters red, blue, green, yellow by role (5th on: cyan, magenta...); background grey `#B8B8B8`; foreground objects
+(in front of people) brown; things people carry or touch orange; interactive things far from people (a distant door)
+pink; lamps and lights white; special objects purple. It is applied when the set is built and again before every
+render, so older clips follow it when they are finished again.
+
+## Object notes on the clip page
+
+Draw a box, keep the type *other*, and describe the object in your own words (up to 200 characters). Prepare and
+Finish build every note at the frame it was drawn on, placed from that frame's camera and measured depth:
+- a thing the description names with a regular shape (door, pillar, table, chair, lamp, car...) -> that model;
+- a plant, curtain, statue, or anything the description does not name -> its measured shape (SAM cuts the thing out
+  of the box, the depth model gives its surface);
+- "held", "in his left hand", "carrying", "backpack", "wearing" -> on that person's hand or back for the whole clip;
+- "interactive", "distant", "special", "foreground", or a light ("ceiling lamp") -> that colour-card meaning.
+A type picked in the list wins over the description. The job log lists what each note became.
+
 ## Objects in the set (like the client sample)
 
 Each clip page has an **Objects in the set** editor. Drag a box on the shot's background, pick the type (door, window,
 cabinet, shelf, counter, sink, table, chair, sofa, bed, fridge, car, van, tree, bush, fence, lamp post, stairs, building
-and more), set floor or wall and the facing direction, then save. Every object is built from `pipeline/props.py` as a
+and more), optionally its **Kind** (the colour card's set meanings: background grey, foreground brown, near
+interactive orange, far interactive pink, light source white, special purple; auto decides from what it is and where)
+and the facing direction (library models only), then save. The picture is the original key frame, people included, so
+things partly hidden by a person can be boxed too; one hidden in that frame stands on the floor under its box. Every object is built from `pipeline/props.py` as a
 simple recognisable model (a door has a frame, panel and handle; a car has a body, cabin and wheels), standing where it
 touches the floor and sized from the picture. With a DeepSeek key, DeepSeek fills the list in for every shot.
+
+**Distance** (auto, or 1 near .. 9 far) fixes the order when the depth measures an object at the wrong distance. In a
+shot, an object is pushed back along the camera's view until it is behind every object with a smaller number; the
+biggest number in the shot (2 or more) is the back of the set and also goes behind every person on every frame of the
+shot, so nobody walks through it. Pushing back along the view keeps it where the picture shows it (it just gets bigger).
+Objects left on auto stay where they are measured (`env_auto.by_level`).
+
+## What happens in each step
+
+**Prepare** (Start; one job per clip, about 1.5-3 minutes):
+1. *People*: the person detector (YOLOX, batched) and RTMPose find every person and 17 joints in every frame, and
+   keep each person's identity across frames (`automark.py` -> `pose.json`).
+2. *Camera and people in 3D*: cuts are found, the lens is measured (MoGe-2), the camera height / tilt / turn is
+   solved, and every person is fitted as a 3D mannequin (MotionBERT as the 3D pose prior) -> `scene_data.json`.
+   A zooming lens is tracked too (`scene_data.json` "zoom": focal scale per frame): the people, the set, the drawn
+   objects and the Blender camera (lens keyed every frame) all use each frame's own focal length, so things at the
+   picture's edge in the first frame leave it as the camera zooms in.
+3. *Carried objects*: Grounding DINO + CLIP find what people hold or wear -> `held.json`.
+4. *Background - measured*: on the first and middle frame of each shot, MoGe-2 measures depth, SAM 2.1 cuts the
+   picture into pieces and Mask2Former names them; walls, floor, furniture and plants are placed from that ->
+   `env_auto.json` (+ `env_auto.jpg`). Your object notes from the clip page are built here too.
+5. *Background - built*: with **Settings -> Background set -> Claude**, Claude now writes the set from the frames,
+   using step 4's numbers as its ruler, checks it over the film and corrects it (`pipeline\claude_set.py` ->
+   `env_claude_ai.json`); otherwise step 4's set is used. `build_env.py` turns the set into meshes, carried objects
+   go on the hands, everything gets the colour card -> `env_check.jpg`. The clip is then *ready for review*.
+
+**Review** (clip page): who is who, joint fixes, object notes. Saving changed notes makes the set be measured and
+built again at Finish.
+
+**Finish** (about 1-2 minutes): the people are fitted again with your fixes, the set from Prepare is reused unless the
+camera or your notes changed (then steps 4-5 run again), Blender renders the white model, the videos are encoded and
+the v2.1 package and zip are written to SUBMIT.
+
+## Background set by Claude
+
+The local models measure well but do not understand a room: a curtain cut into strips, a wall seen through a doorway,
+a pillar behind a person. Claude, looking at the frames like a person building the set by hand, does. In
+**Settings -> Background set** paste an Anthropic API key and choose *Claude* (model: Claude Sonnet 5.5, or Opus 5.5).
+For each shot it gets the first / middle / last frame with a pixel grid, the fitted camera, how far the floor is at
+each picture row, where every person stands, what the depth model measured, and every object you annotated; it writes
+the set (placed by picture box + distance, so it lines up with the film), sees the built set over the film, and
+corrects it once ("Check rounds"). Plants and statues keep their measured shapes. About $0.10-0.40 per clip with
+Sonnet; the cost of each clip is in `output\<clip>\env_claude_ai.json` (`_claude`). If the key is missing or the call
+fails, the local set is used. Frames of the clips are sent to the Claude API.
 
 ## How the set is built
 
