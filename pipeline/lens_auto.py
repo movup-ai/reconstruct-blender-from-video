@@ -62,14 +62,15 @@ def _worker(src, dst):
     import cv2, torch
     sys.path.insert(0, MOGE_DIR)
     from moge.model.v2 import MoGeModel
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    from common import torch_device
+    dev = torch_device()                                      # the NVIDIA card only
     m = MoGeModel.from_pretrained(MOGE_WEIGHTS).to(dev).eval()
     z = np.load(src); out = []
     for i in range(int(z["n"])):
         rgb = cv2.cvtColor(z["f%d" % i], cv2.COLOR_BGR2RGB)
         x = torch.tensor(rgb, dtype=torch.float32, device=dev).permute(2, 0, 1) / 255.0
         with torch.inference_mode():
-            o = m.infer(x, use_fp16=(dev == "cuda"))
+            o = m.infer(x, use_fp16=True)
         K = o["intrinsics"].float().cpu().numpy()                 # normalised: fx in picture widths
         out.append(float(2 * math.degrees(math.atan(0.5 / K[0, 0]))))
     with open(dst, "w") as fh:

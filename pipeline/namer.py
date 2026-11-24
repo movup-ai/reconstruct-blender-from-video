@@ -2,7 +2,7 @@
 """Names the pieces of a set from the picture: CLIP (open_clip, models\\clip\\) compares each SAM cut-out with a list
 of words ("a desk", "a wall", "a bookshelf", ...) and gives the most likely one.  env_auto.py uses the name to correct
 its shape-and-colour class (a green-painted wall is a wall, not vegetation) and to pick the object's model from
-props.py (desk, chair, bookshelf, lamp ...).  Runs on the processor; about 0.1 s per cut-out.
+props.py (desk, chair, bookshelf, lamp ...).  Runs on the NVIDIA card.
 
   python pipeline\\namer.py <picture>        print what CLIP sees in the whole picture (a quick test)"""
 import os, sys
@@ -42,8 +42,10 @@ def available():
 
 
 class Namer:
-    def __init__(self, device="cpu"):
+    def __init__(self, device="cuda"):
         import torch, open_clip
+        if device != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("CLIP runs on the NVIDIA card only - run Setup.bat (installs the NVIDIA build of PyTorch)")
         self.torch, self.dev = torch, device
         self.model, _, self.prep = open_clip.create_model_and_transforms(ARCH, pretrained=WEIGHTS, device=device)
         self.model.eval()

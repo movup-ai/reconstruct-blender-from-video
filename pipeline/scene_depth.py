@@ -11,14 +11,13 @@ MODEL_PATH = os.path.join(MODEL_DIR, "depth_anything_v2_small.onnx")
 class DepthModel:
     def __init__(self, device="cuda"):
         import onnxruntime as ort
-        if device == "cuda":
-            gpu_dlls()                                   # CUDA / cuDNN installed by pip (onnxruntime-gpu[cuda,cudnn])
-        prov = ["CUDAExecutionProvider"] if device == "cuda" else ["CPUExecutionProvider"]
-        self.s = ort.InferenceSession(MODEL_PATH, providers=prov)
-        if device == "cuda" and "CUDAExecutionProvider" not in self.s.get_providers():
+        if device != "cuda":
+            raise RuntimeError("the depth model runs on the NVIDIA card only (device %r)" % device)
+        gpu_dlls()                                       # CUDA / cuDNN installed by pip (onnxruntime-gpu[cuda,cudnn])
+        self.s = ort.InferenceSession(MODEL_PATH, providers=["CUDAExecutionProvider"])
+        if "CUDAExecutionProvider" not in self.s.get_providers():
             raise RuntimeError("depth model did not load on the NVIDIA card - run Setup.bat (installs onnxruntime-gpu)")
-        if device == "cuda":
-            self.s.disable_fallback()                    # a GPU error must stop the job, not quietly use the CPU
+        self.s.disable_fallback()                        # a GPU error must stop the job, not quietly use the CPU
         log("    depth model on %s" % self.s.get_providers()[0])
         self.inp = self.s.get_inputs()[0].name
     def __call__(self, bgr):

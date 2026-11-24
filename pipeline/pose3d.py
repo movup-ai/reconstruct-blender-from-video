@@ -44,7 +44,8 @@ def _model():
             ck = torch.load(MB_WEIGHTS, map_location="cpu", weights_only=False)
         sd = {k.replace("module.", "", 1): v for k, v in ck["model_pos"].items()}
         m.load_state_dict(sd, strict=True)
-        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        from common import torch_device
+        dev = torch_device()                                   # the NVIDIA card only
         _MODEL = (m.to(dev).eval(), dev, torch)
     return _MODEL
 

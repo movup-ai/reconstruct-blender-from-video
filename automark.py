@@ -12,9 +12,9 @@ For every video it:
              <out>/<clip>/check.html       open in Chrome/Edge to fix wrong marks, then Save -> checked.json
 
 Usage:  python automark.py VIDEO_OR_FOLDER [more ...] [--out DIR] [--step 8] [--mode balanced|performance|lightweight]
-                                                     [--device cpu|cuda] [--no-tiles] [--force]
+                                                     [--no-tiles] [--force]
                                                      [--engine tensorrt|cuda] [--detect-stride auto|1|2]
-GPU: TensorRT fp16 engines (built once, ~15 min, cached in models\\trt_cache), CUDA as fallback; RTMPose crops batched.
+GPU only (NVIDIA card): TensorRT fp16 engines (built once, ~15 min, cached in models\\trt_cache), CUDA as fallback; RTMPose crops batched.
 --detect-stride / --engine default to config.json "detect_stride" / "pose_engine".
 """
 import argparse, json, os, sys, shutil, tempfile, time, base64, math
@@ -159,6 +159,7 @@ def drop_same_skeletons(people):
 
 # ----------------------------------------------------------------------------- model
 POSE_MAX_BATCH = 32                                      # RTMPose crops per GPU call (TensorRT profile max)
+DET_MAX_BATCH = 10                                       # pictures per call of the batched person detector
 
 class Marker:
     def __init__(self, mode="performance", device="cuda", tiles=True, engine="tensorrt"):
@@ -170,8 +171,10 @@ class Marker:
             sys.exit(1)
         log("loading pose models (first run downloads them, ~100-400 MB) ...")
         backend = "onnxruntime"
-        self.engine = "cpu"
-        if device == "cuda":
+        if device != "cuda":
+            log("ERROR: the pose models run on the NVIDIA card only (device %r)." % device)
+            sys.exit(1)
+        if True:                                         # GPU sessions (there is no processor path)
             sys.path.insert(0, os.path.join(HERE, "pipeline"))
             from common import gpu_dlls, gpu_session
             gpu_dlls()                                   # CUDA / cuDNN (and TensorRT) installed by pip
@@ -195,35 +198,40 @@ class Marker:
             pose.backend, pose.device, pose.to_openpose, pose.onnx_model = backend, device, False, pose_p
             pw, ph = cfg_m["pose_input_size"]
             dw, dh = cfg_m["det_input_size"][1], cfg_m["det_input_size"][0]
-            det.session, e1 = gpu_session(det_p, engine, warm=[np.zeros((1, 3, dh, dw), np.float32)],
-                                          exclude="NonMaxSuppression,NonZero,RoiAlign,TopK")
+            # the person detector: the batched copy (pipeline/det_batch_model.py) takes the full picture and its 4 tiles
+            # in one call - same boxes as the original, which takes one picture a call; the original is the fallback
+            self.det_b = None
+            import det_batch_model as dbm
+            src = dbm.source_model()
+            if src and os.path.basename(src) == os.path.basename(det_p) and os.path.exists(dbm.OUT):
+                try:
+                    self.det_b, e1 = gpu_session(dbm.OUT, engine, warm=[np.zeros((n, 3, dh, dw), np.float32) for n in (1, 5)],
+                                                 profile=("input", (1, 3, dh, dw), (5, 3, dh, dw), (DET_MAX_BATCH, 3, dh, dw)))
+                    e1 += " batched"
+                except Exception as e:
+                    log("  batched person detector not used (%s) - one picture a call" % str(e).splitlines()[0][:200])
+                    self.det_b = None
+            if self.det_b is None:
+                det.session, e1 = gpu_session(det_p, engine, warm=[np.zeros((1, 3, dh, dw), np.float32)],
+                                              exclude="NonMaxSuppression,NonZero,RoiAlign,TopK")
             pose.session, e2 = gpu_session(pose_p, engine, warm=[np.zeros((n, 3, ph, pw), np.float32) for n in (1, 4)],
                                            profile=("input", (1, 3, ph, pw), (8, 3, ph, pw), (POSE_MAX_BATCH, 3, ph, pw)))
-            for s in (det.session, pose.session):
+            for s in ([self.det_b] if self.det_b is not None else [det.session]) + [pose.session]:
                 if "CUDAExecutionProvider" not in s.get_providers() and "TensorrtExecutionProvider" not in s.get_providers():
                     log("ERROR: the pose models did not load on the NVIDIA card (CUDA / cuDNN libraries failed to load).")
                     sys.exit(1)
                 s.disable_fallback()                     # a GPU error must stop the job, not quietly use the CPU
             self.engine = "det %s, pose %s" % (e1, e2)
-            self.body = None
             self.det, self.pose = det, pose
-        else:
-            self.body = Body(mode=mode, to_openpose=False, backend=backend, device=device)
-            self.det = getattr(self.body, "det_model", None)
-            self.pose = getattr(self.body, "pose_model", None)
         log("pose backend: %s (%s, %s; %s)" % (backend, device, mode, self.engine))
-        split = self.det is not None and self.pose is not None
-        self.tiles = tiles and split
-        if tiles and not self.tiles:
-            log("note: this rtmlib version does not expose det/pose models separately - tiles switched off")
-        # processor without tiles: the same path as with tiles (detector boxes merged and size-filtered, all crops
-        # through RTMPose in one batched call, duplicate skeletons dropped) with the full picture only - not rtmlib's
-        # Body, which runs the crops one by one and returns boxes drawn round the joints
-        self.full_only = (not tiles) and split and device == "cpu"
+        self.tiles = tiles
+        self.full_only = False                           # (was the processor's no-tiles path)
         self.n_det = self.n_pose_calls = self.n_crops = 0
 
     def detect(self, img):
         """person boxes [x0, y0, x1, y1] (rtmlib's YOLOX returns N x 4, some versions N x 5 with a score)"""
+        if self.det_b is not None:
+            return self.detect_many([img])[0]
         self.n_det += 1
         b = np.asarray(self.det(img), dtype=float)
         if b.size == 0:
@@ -231,24 +239,47 @@ class Marker:
         b = np.atleast_2d(b)
         return [list(r[:4]) for r in b if r.shape[0] >= 4]
 
+    def detect_many(self, imgs):
+        """person boxes of several pictures in one GPU call (the batched detector): [[x0, y0, x1, y1], ...] per picture,
+        the same boxes as detect() with the original model"""
+        import det_batch_model as dbm
+        xs = [self.det.preprocess(im) for im in imgs]
+        out = []
+        for i in range(0, len(xs), DET_MAX_BATCH):
+            part = xs[i:i + DET_MAX_BATCH]
+            x = np.ascontiguousarray(np.stack([p.transpose(2, 0, 1) for p, _ in part]), dtype=np.float32)
+            bo, sc = self.det_b.run(None, {"input": x})
+            out += [[list(map(float, r)) for r in dbm.person_dets(bo[k], sc[k]) / ratio] for k, (_, ratio) in enumerate(part)]
+            self.n_det += len(part)
+        return out
+
     def boxes(self, img):
         """merged person boxes of one picture area: full picture + 2 x 2 tiles"""
         h, w = img.shape[:2]
         boxes = []
+        # 2 x 2 overlapping tiles -> small far-away people become big enough for the detector
+        tw, th = int(w * 0.6), int(h * 0.6)
+        tiles = [(tx, ty) for ty in (() if self.full_only else (0, h - th)) for tx in (0, w - tw)]
+        if self.det_b is not None:                       # the picture and its tiles in one call
+            try:
+                res = self.detect_many([img] + [img[ty:ty + th, tx:tx + tw] for tx, ty in tiles])
+            except Exception as e:
+                log("  detector error:", e)
+                res = []
+            for (tx, ty), bs in zip([(0, 0)] + tiles, res):
+                boxes += [[b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty] for b in bs]
+            return [b for b in merge_boxes(boxes) if (b[3] - b[1]) > 18 and (b[2] - b[0]) > 6]
         try:
             boxes += self.detect(img)
         except Exception as e:
             log("  detector error on full picture:", e)
-        # 2 x 2 overlapping tiles -> small far-away people become big enough for the detector
-        tw, th = int(w * 0.6), int(h * 0.6)
-        for ty in (() if self.full_only else (0, h - th)):
-            for tx in (0, w - tw):
-                tile = img[ty:ty + th, tx:tx + tw]
-                try:
-                    for b in self.detect(tile):
-                        boxes.append([b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty])
-                except Exception as e:
-                    log("  detector error on tile:", e)
+        for tx, ty in tiles:
+            tile = img[ty:ty + th, tx:tx + tw]
+            try:
+                for b in self.detect(tile):
+                    boxes.append([b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty])
+            except Exception as e:
+                log("  detector error on tile:", e)
         return [b for b in merge_boxes(boxes) if (b[3] - b[1]) > 18 and (b[2] - b[0]) > 6]
 
     def poses(self, items):
@@ -340,11 +371,8 @@ class Marker:
     def __call__(self, img):
         """img = picture area (BGR). returns list of (kps(17,2), scores(17), box)"""
         if not self.tiles and not self.full_only:
-            if self.body is not None:
-                kps, sc = self.body(img)
-            else:                                        # GPU sessions: what rtmlib's Body does (detector, then pose)
-                b = self.detect(img)
-                kps, sc = self.poses([(img, b if b else [[0, 0, img.shape[1], img.shape[0]]])])[0]
+            b = self.detect(img)                         # what rtmlib's Body does (detector, then pose)
+            kps, sc = self.poses([(img, b if b else [[0, 0, img.shape[1], img.shape[0]]])])[0]
             out = []
             for k, s in zip(np.asarray(kps).reshape(-1, 17, 2), np.asarray(sc).reshape(-1, 17)):
                 x0, y0 = k[s > 0.2].min(0) if (s > 0.2).any() else k.min(0)
@@ -726,9 +754,9 @@ def main():
     ap.add_argument("--base", default=None, help="input root, used to mirror the folder layout under --out")
     ap.add_argument("--step", type=int, default=8, help="review every Nth frame")
     ap.add_argument("--mode", default=None, choices=["lightweight", "balanced", "performance"],
-                    help="pose models: performance (largest, most exact), balanced (several times faster on a processor, "
+                    help="pose models: performance (largest, most exact), balanced (faster, "
                          "less exact joints), lightweight. default: config.json pose_mode")
-    ap.add_argument("--device", default="cuda", choices=["cpu", "cuda"])
+    ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--no-tiles", action="store_true", help="faster, but may miss small far-away people")
     ap.add_argument("--min-track", type=int, default=8, help="ignore people seen in fewer frames than this")
     ap.add_argument("--force", action="store_true", help="redo clips that already have pose.json")
@@ -743,7 +771,6 @@ def main():
     ap.add_argument("--engine", default=None, choices=["tensorrt", "cuda"],
                     help="GPU engine (tensorrt falls back to cuda). default: config.json pose_engine")
     args = ap.parse_args()
-    stride_set = args.detect_stride is not None              # given on the command line: used as it is
     if args.detect_stride is None or args.engine is None or args.mode is None:
         try:
             sys.path.insert(0, os.path.join(HERE, "pipeline"))
@@ -754,21 +781,9 @@ def main():
         args.detect_stride = args.detect_stride or str(c.get("detect_stride", "auto"))
         args.engine = args.engine or str(c.get("pose_engine", "tensorrt"))
         args.mode = args.mode or str(c.get("pose_mode", "performance"))
-    try:                                                 # "cpu" on a PC without an NVIDIA card
-        sys.path.insert(0, os.path.join(HERE, "pipeline"))
-        from common import pick_device, cfg
-        args.device = pick_device(args.device)
-        # on the processor the 2 x 2 tiles make every frame ~5 detector runs (about 8 s a frame): off unless
-        # config.json has "cpu_tiles": true (tiles find small far-away people)
-        if args.device == "cpu" and not args.no_tiles and not cfg().get("cpu_tiles", False):
-            args.no_tiles = True
-            log("  processor: tiles off (faster; small far-away people may be missed - \"cpu_tiles\": true turns them on)")
-        # on the processor the person detector is ~95% of the time: it runs on every 4th frame, RTMPose follows people
-        if args.device == "cpu" and not stride_set and args.detect_stride == "auto" and cfg().get("detect_stride_cpu", "track") == "track":
-            args.detect_stride = "track"
-            log("  processor: person detector on every %dth frame, joints followed in between (\"detect_stride_cpu\": \"auto\" turns this off)" % DETECT_EVERY)
-    except ImportError:
-        pass
+    sys.path.insert(0, os.path.join(HERE, "pipeline"))
+    from common import pick_device
+    args.device = pick_device(args.device)               # stops here without a working NVIDIA card
     global KEEP_OVERLAPPING, SPLIT_WIDE
     if args.split_wide:
         SPLIT_WIDE = True
