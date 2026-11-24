@@ -20,7 +20,7 @@ fit to generate metric evidence. The Settings switches are **Shared scene geomet
   Separated fitted torso proxies provide a robust depth-scale refinement. Ratios with inconsistent depth or
   implausible disagreement are rejected. This is a mannequin approximation of the paper's body-surface method.
 - **Reusable geometry evidence.** Depth, intrinsics, rotations, camera centers, semantic labels, validity and
-  people masks are saved in one world coordinate system. The automatic SAM 2 set builder reuses these depth
+  people masks are saved in one world coordinate system. The automatic SAM 3 set builder reuses these depth
   observations at matching frames, including their metric scale. Camera edits invalidate stale evidence; evidence
   changes invalidate the environment cache. Each cut retains its own frame range and 200 m scene offset.
 - **Measured proposals and queries.** Planar semantic components yield editable surface meshes for walls,
@@ -94,10 +94,9 @@ and idempotent when verification is repeated.
 
 ## Differences from the paper
 
-SAM 3 persistent masks are now available through the optional [SAM 3 tracking backend](SAM3_TRACKING.md).
-The optional [SAM 3D Body backend](SAM3D_BODY.md) now provides dense body observations, visible-mesh depth
-calibration and per-frame neck-depth placement, driving the editable mannequin fitter. With MotionBERT selected,
-the torso-proxy calibration remains the available approximation. DA3 remains an optional camera backend;
+SAM 3 persistent masks are supplied by the [SAM 3 tracking backend](SAM3_TRACKING.md).
+The [SAM 3D Body backend](SAM3D_BODY.md) now provides dense body observations, visible-mesh depth
+calibration and per-frame neck-depth placement, driving the editable mannequin fitter. Torso proxies remain useful for scene verification. DA3 remains an optional camera backend;
 SAM 3D Body can calibrate its translation scale as well as the shared depth, while manual settings take priority.
 
 The local correction loop is deterministic and conservative. The optional existing Claude builder supplies an
@@ -112,6 +111,6 @@ of the paper's full pipeline or benchmark scores.
 Regression fixtures cover camera conventions, gravity robustness, metric resampling, outlier rejection, stale
 evidence/cache invalidation, cropped person masks, near-plane clipping, depth conflicts, support polygons,
 closed-volume penetration, accepted surface/primitive repairs, constant human scales and attached props.
-GPU smoke checks exercise the real MoGe/Mask2Former worker, Prepare, shared SAM 2 environment construction,
+GPU smoke checks exercise the real MoGe/Mask2Former worker, Prepare, shared SAM 3 environment construction,
 set rebuilding and a 12-frame Blender render in isolated `downloads/` workspaces. Smoke fixtures establish
 execution and file compatibility; they do not establish accuracy on arbitrary film shots.

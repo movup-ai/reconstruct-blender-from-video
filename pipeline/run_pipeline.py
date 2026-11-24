@@ -84,7 +84,7 @@ def find_marks(video, c, device):
     changed = old is not None and needs_tracking(old,c)
     missing_masks = old is not None and old.get('tracker_backend')=='sam3' and not os.path.isfile(os.path.join(d,'sam3_masks.npz'))
     if old is None or changed or missing_masks:
-        log("  measuring person tracks (%s) ..." % c.get('tracker_backend','geometry'))
+        log("  measuring SAM 3 person tracks ...")
         cmd = [sys.executable, os.path.join(AGENT, "automark.py"), video, "--out", out, "--device", device]
         if changed or missing_masks: cmd.append('--force')
         if c.get("source_root") and os.path.abspath(video).lower().startswith(os.path.abspath(c["source_root"]).lower()):
@@ -146,89 +146,6 @@ def preview(frames, y0, world, chars, people, meshes, path, n=6):
     rows = [np.hstack(tiles[i:i + 2]) for i in range(0, len(tiles), 2)]
     imwrite_u(path, np.vstack(rows), 85)
 
-def stitch_tracks(pose, shots, max_gap=30):
-    """one person = one track: the detector loses people when they bend, turn or pass behind something and finds them
-    again as 'new' people, sometimes with two overlapping detections.  Tracks are joined when one picks up where the
-    other stopped (same place and size, within max_gap frames) or when both follow the same body at the same time.
-    Never across a cut.  Returns {absorbed id: kept id}"""
-    if pose.get('tracker_backend') == 'sam3': return {}
-    shot_of = {}
-    for si, (a, b) in enumerate(shots):
-        for f in range(a, b):
-            shot_of[f] = si
-    T = {p["id"]: p for p in pose["people"]}
-    mapping = {}
-
-    def span(p):
-        fs = sorted(int(f) for f in p["boxes"])
-        return fs[0], fs[-1]
-
-    def box(p, f):
-        b = p["boxes"].get(str(f)); return None if b is None else np.array(b[:4], float)
-
-    def overlap(a, b):
-        x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-        inter = max(0, x1 - x0) * max(0, y1 - y0)
-        return inter / max(1e-6, min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])))
-
-    while True:
-        best = None
-        ids = sorted(T)
-        for i in ids:
-            for j in ids:
-                if i >= j:
-                    continue
-                A, B = T[i], T[j]
-                (a0, a1), (b0, b1) = span(A), span(B)
-                if a0 > b0:
-                    A, B, (a0, a1), (b0, b1) = B, A, (b0, b1), (a0, a1)
-                common = sorted(set(A["boxes"]) & set(B["boxes"]), key=int)
-                if common:                                             # both at once: the same body twice?
-                    ov = np.mean([overlap(box(A, int(f)), box(B, int(f))) for f in common])
-                    if ov < 0.45 or len(common) > 0.8 * min(len(A["boxes"]), len(B["boxes"])):
-                        continue
-                    from dedupe_roles import same_skeleton           # overlapping boxes, but two bodies (one walking
-                    if np.mean([same_skeleton(A["frames"].get(f), B["frames"].get(f), A["boxes"][f])   # behind the
-                                for f in common]) < 0.9:              # other): not the same person
-                        continue
-                    cost = 1.0 - ov
-                else:                                                  # one after the other
-                    gap = b0 - a1
-                    if gap <= 0 or gap > max_gap or shot_of.get(a1) != shot_of.get(b0):
-                        continue
-                    appearance_a, appearance_b = A.get("appearance"), B.get("appearance")
-                    if appearance_a is not None and appearance_b is not None:
-                        ha_, hb_ = np.asarray(appearance_a, float), np.asarray(appearance_b, float)
-                        if ha_.shape == hb_.shape:
-                            similarity = float(np.sqrt(ha_ * hb_).sum())
-                            if similarity < 0.4:
-                                continue
-                    ea, sb = box(A, a1), box(B, b0)
-                    ha, hb = ea[3] - ea[1], sb[3] - sb[1]
-                    if not 0.5 < hb / max(ha, 1e-6) < 2.0:
-                        continue
-                    dist = np.hypot((ea[0] + ea[2] - sb[0] - sb[2]) / 2, (ea[1] + ea[3] - sb[1] - sb[3]) / 2)
-                    if dist > 0.8 * max(ha, hb):
-                        continue
-                    cost = dist / max(ha, hb) + gap / float(max_gap)
-                if best is None or cost < best[0]:
-                    best = (cost, A["id"], B["id"])
-        if best is None:
-            break
-        _, ia, ib = best
-        keep, drop = min(ia, ib), max(ia, ib)                          # the lower number = the bigger, main person
-        K, Dr = T[keep], T.pop(drop)
-        for f, kp in Dr["frames"].items():                             # where both exist, keep the surer marks
-            if f not in K["frames"] or np.mean(np.array(kp)[:, 2]) > np.mean(np.array(K["frames"][f])[:, 2]):
-                K["frames"][f] = kp
-                if f in Dr["boxes"]:
-                    K["boxes"][f] = Dr["boxes"][f]
-        for k_, v_ in list(mapping.items()):
-            if v_ == drop:
-                mapping[k_] = keep
-        mapping[drop] = keep
-    pose["people"] = [T[i] for i in sorted(T)]
-    return mapping
 
 
 def edit_tracks(pose, spec):
@@ -268,60 +185,8 @@ def edit_tracks(pose, spec):
     return msgs
 
 
-def fill_track_gaps(pose, shots, max_gap=15):
-    """a person the detector lost for a few frames (turned away, half out of the picture) is still there: the frames
-    between the two ends of the same track (after joining) get dots blended between those ends, with half the lower
-    end's confidence so the fit trusts them less than a detection.  Never across a cut.  Returns {id: [frames filled]}"""
-    if pose.get('tracker_backend') == 'sam3': return {}
-    shot_of = {}
-    for si, (a, b) in enumerate(shots):
-        for f in range(a, b):
-            shot_of[f] = si
-    filled = {}
-    for p in pose["people"]:
-        fs = sorted(int(f) for f in p["frames"])
-        for a, b in zip(fs, fs[1:]):
-            if b - a < 2 or b - a - 1 > max_gap or shot_of.get(a) != shot_of.get(b):
-                continue
-            A, B = np.array(p["frames"][str(a)], float), np.array(p["frames"][str(b)], float)
-            bx = p.get("boxes") or {}
-            for f in range(a + 1, b):
-                t = (f - a) / (b - a)
-                K = A * (1 - t) + B * t
-                K[:, 2] = np.minimum(A[:, 2], B[:, 2]) * 0.5
-                p["frames"][str(f)] = [[round(float(x), 1), round(float(y), 1), round(float(sc), 3)] for x, y, sc in K]
-                if str(a) in bx and str(b) in bx:
-                    bx[str(f)] = [round(float(u) * (1 - t) + float(v) * t, 1) for u, v in zip(bx[str(a)], bx[str(b)])]
-                filled.setdefault(p["id"], []).append(f)
-    return filled
 
 
-def apply_stitch(pose_p, pose, mapping, checked_p, review_p):
-    """save the joined tracks so the review page shows each person once; move roles and joint fixes along"""
-    if not mapping:
-        return
-    raw = pose_p.replace("pose.json", "pose_raw.json")
-    if not os.path.exists(raw):
-        shutil.copyfile(pose_p, raw)
-    pose["stitched"] = {str(k): v for k, v in mapping.items()}
-    jsave(pose_p, pose)
-    if checked_p and os.path.exists(checked_p):
-        chk = jload(checked_p)
-        for f, ppl in chk.get("frames", {}).items():
-            seen = set()
-            for p in ppl:
-                p["id"] = mapping.get(p["id"], p["id"])
-            chk["frames"][f] = [p for p in ppl if not (p["id"] in seen or seen.add(p["id"]))]
-        jsave(checked_p, chk)
-    if review_p and os.path.exists(review_p):
-        rv = jload(review_p)
-        ppl = rv.get("people", {})
-        rank = {"main": 0, "second": 1, "third": 2, "fourth": 3, "extra": 4, "ignore": 5}
-        for old, new in mapping.items():
-            a = ppl.pop(str(old), None)
-            if a and (str(new) not in ppl or rank.get(a.get("role"), 9) < rank.get(ppl[str(new)].get("role"), 9)):
-                ppl[str(new)] = a                                     # the joined person keeps the more important role
-        jsave(review_p, rv)
 
 
 def steady_camera(camj, c):
@@ -523,7 +388,7 @@ def run_clip(video, c, args):
         log('  tracking changed: review the new person IDs before Finish')
         return {'clip':name,'status':'waiting'}
     pose = jload(pose_p); checked = jload(chk_p) if chk_p else None
-    c['_persistent_tracks'] = pose.get('tracker_backend')=='sam3'
+    c['_persistent_tracks'] = True
     log("  marks: %s%s" % (pose_p, "  + checked: " + chk_p if chk_p else "  (not checked by a person)"))
     frames, fps = read_frames(video)
     N = len(frames); Hfull, W = frames[0].shape[:2]
@@ -533,20 +398,6 @@ def run_clip(video, c, args):
         c["_set_grey"] = True
     shots = find_shots(frames, y0, Hp) if c.get("camera_estimator", "new") == "new" else split_shots(frames, y0, Hp)
     log("  shots: %s" % ", ".join("%d-%d" % (a, b - 1) for a, b in shots))
-    stitched = stitch_tracks(pose, shots)
-    if stitched:
-        log("  joined broken person tracks: %s" % ", ".join("P%s -> P%s" % kv for kv in sorted(stitched.items())))
-        apply_stitch(pose_p, pose, stitched, chk_p, os.path.join(marks_dir(video, c), "review.json"))
-        checked = jload(chk_p) if chk_p else None
-        review = load_review(video, c); c["_review"] = review or {}
-    gaps = fill_track_gaps(pose, shots)
-    if gaps:                                                       # saved, so the joint editor shows each person in every frame
-        log("  filled short gaps in tracks: %s" % ", ".join("P%s %d frame(s)" % (k, len(v)) for k, v in sorted(gaps.items())))
-        raw = pose_p.replace("pose.json", "pose_raw.json")
-        if not os.path.exists(raw):
-            shutil.copyfile(pose_p, raw)
-        pose["gap_filled"] = {str(k): sorted(set(v) | set((pose.get("gap_filled") or {}).get(str(k), []))) for k, v in gaps.items()}
-        jsave(pose_p, pose)
     if (c.get("_hints") or {}).get("tracks"):                     # hand fixes of identity swaps (hints.json "tracks")
         for msg in edit_tracks(pose, c["_hints"]["tracks"]):
             log("  tracks (hints): " + msg)
@@ -640,20 +491,19 @@ def run_clip(video, c, args):
                 camj["warnings"].append("metric evidence unavailable: %s" % str(e)[-240:])
                 log("    metric evidence unavailable: %s" % str(e)[-240:])
         body_summary = None
-        if c.get('human_backend','motionbert')=='sam3d_body':
-            import sam3d_body
-            log('  SAM 3D Body: recovering metric people ...')
-            samples = {}
-            if observation is not None:
-                samples = {int(f):{k:observation[k][i] for k in ('depth','K','valid')} for i,f in enumerate(observation['frames'])}
-            elif c.get('_da3_depth'):
-                samples = {f:{'depth':d,'K':c['_da3_intrinsics'][f],'valid':np.isfinite(d)&(d>.05)} for f,d in c['_da3_depth'].items()}
-            c['_sam3d_body'],body_summary = sam3d_body.recover(sf,spose,cam,y0,camj,samples,c)
-            ginfo['sam3d_body'] = body_summary
-            if body_summary['calibrated'] and camj.get('backend')=='da3' and not c.get('_static_camera'):
-                camj['travel_cam0'] = (c['_da3_travel']*body_summary['meters_per_unit']).tolist()
-                camj['meters_per_unit'] = body_summary['meters_per_unit']
-                camj['warnings'] = [w for w in camj['warnings'] if not w.startswith('DA3 translation scale unavailable')]
+        import sam3d_body
+        log('  SAM 3D Body: recovering metric people ...')
+        samples = {}
+        if observation is not None:
+            samples = {int(f):{k:observation[k][i] for k in ('depth','K','valid')} for i,f in enumerate(observation['frames'])}
+        elif c.get('_da3_depth'):
+            samples = {f:{'depth':d,'K':c['_da3_intrinsics'][f],'valid':np.isfinite(d)&(d>.05)} for f,d in c['_da3_depth'].items()}
+        c['_sam3d_body'],body_summary = sam3d_body.recover(sf,spose,cam,y0,camj,samples,c)
+        ginfo['sam3d_body'] = body_summary
+        if body_summary['calibrated'] and camj.get('backend')=='da3' and not c.get('_static_camera'):
+            camj['travel_cam0'] = (c['_da3_travel']*body_summary['meters_per_unit']).tolist()
+            camj['meters_per_unit'] = body_summary['meters_per_unit']
+            camj['warnings'] = [w for w in camj['warnings'] if not w.startswith('DA3 translation scale unavailable')]
         if observation is not None:
             aligned_up,metric_info = metric_scene.align(observation,camj,u,hc,c,people,cam,y0)
             if not any(k in hcam for k in ('pitch_down_deg','roll_deg','path')): u = aligned_up
@@ -803,7 +653,7 @@ def run_clip(video, c, args):
             "lens": c["lens_mm"], "sensor": 36.0, "cam": cam_all, "zoom": zoom_all,
             "palette": palette, "sky": sky or [228, 229, 232], "exposure": 1.2, "gain": {"_video": c.get("video_gain", 2.2), "_ground": c.get("ground_gain", 3.2)},
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
-    data['human_backend'] = c.get('human_backend','motionbert')
+    data['human_backend'] = 'sam3d_body'
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     chars = chars_all
     if not chars:
@@ -901,8 +751,7 @@ def held_place(name, work, video, c):
         return []
 
 
-SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "models", "sam2", "sam2.1_hiera_large.pt"),
-              os.path.join(AGENT, "third_party", "sam2", "sam2"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
+SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
 
 
 def set_inputs(work, drawn):
@@ -923,6 +772,8 @@ def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
     """the set still fits: same frames and drawn objects, lens within 0.3 mm, camera within 5 cm / 0.5 deg every frame"""
     if not a or not b or a.get("frames") != b.get("frames") or a.get("env_ai") != b.get("env_ai"):
         return False
+    if a.get("segmentation") != b.get("segmentation"):
+        return False
     if a.get("metric_evidence") != b.get("metric_evidence"):
         return False
     if abs(float(a.get("lens") or 0) - float(b.get("lens") or 0)) > lens or len(a.get("cam", [])) != len(b.get("cam", [])):
@@ -939,7 +790,7 @@ def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
 @stage("environment")
 def make_set(name, video, work, c, stage, hand_set):
     """the set the render uses, built into scene_data.json by build_env.py (people and camera stay as fitted):
-    a hand-built set (env_claude.json) when there is one; otherwise the automatic set of env_auto.py (MoGe-2 + SAM 2.1,
+    a hand-built set (env_claude.json) when there is one; otherwise the automatic set of env_auto.py (MoGe-2 + SAM 3,
     pieces named by CLIP, the boxes drawn on the clip page included).  Finish reuses the set Prepare measured unless the
     drawn boxes changed since.  Any failure keeps the depth set the fit already put in scene_data.json."""
     if c.get("set_builder", "auto") == "depth" and not hand_set:
@@ -947,13 +798,17 @@ def make_set(name, video, work, c, stage, hand_set):
     py, here = sys.executable, os.path.dirname(os.path.abspath(__file__))
     env_p = None
     if not hand_set:
-        missing = [p for p in SET_MODELS if not os.path.exists(p)]
+        paths = SET_MODELS + [p for n, p in human_model_assets(c) if n.startswith("SAM 3 ")]
+        missing = [p for p in paths if not os.path.exists(p)]
         if missing:
             log("  set: automatic set not installed (%s) - depth set kept" % ", ".join(os.path.relpath(p, AGENT) for p in missing))
             return "depth set (automatic set not installed)"
         env_p = os.path.join(output_dir(), name, "env_auto.json")
         drawn = os.path.join(marks_dir(video, c), "env_ai.json")
         now = set_inputs(work, drawn)
+        now["segmentation"] = {"backend": "sam3", "version": 1, "checkpoint": c.get("sam3_checkpoint"),
+                               "stamp": os.stat(c.get("sam3_checkpoint") or DEFAULT_CFG["sam3_checkpoint"]).st_mtime_ns,
+                               "points": c.get("sam_points", 32), "limit": c.get("sam3_image_max_masks", 256)}
         now["sampling"] = {"version": 2, "adaptive": c.get("set_adaptive_frames", True), "limit": c.get("set_max_frames", 5)}
         fresh = False
         if stage == "all" and os.path.exists(env_p):
@@ -970,7 +825,7 @@ def make_set(name, video, work, c, stage, hand_set):
         if fresh:
             log("  set: the automatic set from Prepare (%s)" % env_p)
         else:
-            log("  set: measuring the scene (MoGe-2 depth + SAM 2.1 pieces + Mask2Former names, on the NVIDIA card) ...")
+            log("  set: measuring the scene (MoGe-2 depth + SAM 3 pieces + Mask2Former names, on the NVIDIA card) ...")
             t1 = time.time()
             if os.path.exists(env_p):                          # never fall back on an older measurement
                 os.remove(env_p)

@@ -14,13 +14,13 @@ LOGS = os.path.join(ROOT, "logs")
 if PIPELINE not in sys.path:
     sys.path.insert(0, PIPELINE)
 
-from common import DEFAULT_CFG, CFG_PATH, member_cfg  # noqa: E402  (pipeline module)
+from common import DEFAULT_CFG, CFG_PATH, member_cfg, normalize_backends  # noqa: E402  (pipeline module)
 
 APP_DEFAULTS = {
     "port": 8765,
     "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app (members log in by name)
     "session_days": 30,               # a login lasts this long on one browser
-    "parallel": 3,                    # clips processed at the same time
+    "parallel": 1,                    # SAM 3 and body inference share the GPU
     "autopilot": "off",               # off | prepare | full   (full = prepare, AI fill, auto-confirm, render)
     "timeout_fit_min": 40,
     "timeout_ai_min": 20,
@@ -45,12 +45,12 @@ EDITABLE = {"parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_mod
             "set_builder": str, "set_model": str, "set_rounds": int, "anthropic_key": str,
             "source_root": str, "submit_root": str, "work_root": str, "blender_exe": str, "person_height": float, "lens_mm": float}
 AUTOPILOT_MODES = ("off", "prepare", "full")
-EDITABLE.update({"pose_backend": str, "rtmo_model": str, "camera_backend": str, "da3_model": str,
+EDITABLE.update({"camera_backend": str, "da3_model": str,
                  "da3_python": str, "da3_meters_per_unit": float,
                  "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int,
                  "metric_scene": bool, "scene_verify": bool, "scene_repair": bool,
-                 "tracker_backend": str, "sam3_checkpoint": str, "sam3_python": str,
-                 "human_backend": str, "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int})
+                 "sam3_checkpoint": str, "sam3_python": str,
+                 "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int})
 
 _lock = threading.Lock()
 
@@ -66,6 +66,7 @@ def load():
                 c.update(json.load(fh))
         except (OSError, ValueError):
             pass
+    c = normalize_backends(c)
     if os.environ.get("BA_USER"):
         c = member_cfg(c, os.environ["BA_USER"], os.environ.get("BA_SOURCE", ""))
     return c
@@ -86,14 +87,8 @@ def save(updates):
             raise ValueError("bad value for %s: %r" % (k, v))
         if k == "parallel" and not 1 <= v <= 8:
             raise ValueError("parallel must be 1-8")
-        if k == "pose_backend" and v not in ("rtmpose", "rtmo"):
-            raise ValueError("pose_backend must be rtmpose or rtmo")
         if k == "camera_backend" and v not in ("flow", "da3"):
             raise ValueError("camera_backend must be flow or da3")
-        if k == 'tracker_backend' and v not in ('geometry','sam3'):
-            raise ValueError('tracker_backend must be geometry or sam3')
-        if k == 'human_backend' and v not in ('motionbert','sam3d_body'):
-            raise ValueError('human_backend must be motionbert or sam3d_body')
         if k == 'sam3d_stride' and not 1<=v<=16:
             raise ValueError('sam3d_stride must be 1-16')
         if k == "set_max_frames" and not 2 <= v <= 12:
@@ -123,6 +118,7 @@ def save(updates):
             with open(CFG_PATH, encoding="utf-8") as fh:
                 cur = json.load(fh)
         cur.update(clean)
+        cur = normalize_backends(cur)
         tmp = CFG_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(cur, fh, ensure_ascii=False, indent=2)

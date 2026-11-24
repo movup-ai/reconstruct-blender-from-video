@@ -32,8 +32,8 @@ def profile_clip(function):
         name = getattr(args, "name", None) or function.__globals__["clip_name"](video, config)
         work = os.path.join(config["work_root"], name)
         profile = {"clip": name, "stage": args.stage, "stages": {}, "status": "failed"}
-        profile["models"] = {"pose": config.get("pose_backend", "rtmpose"), "camera": config.get("camera_backend", "flow")}
-        profile['models'].update(tracker=config.get('tracker_backend','geometry'),human=config.get('human_backend','motionbert'))
+        profile["models"] = {"pose": "rtmpose", "camera": config.get("camera_backend", "flow"),
+                             "tracker": "sam3", "human": "sam3d_body"}
         token = _active.set(profile)
         started = time.perf_counter()
         try:

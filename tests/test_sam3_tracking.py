@@ -1,5 +1,4 @@
 """Regressions for persistent mask IDs, isolated poses and safe tracking replacement."""
-import copy
 import json
 import os
 import pathlib
@@ -105,15 +104,6 @@ class PersistentIdentityTests(unittest.TestCase):
             source=SAM.FrameFolder(str(folder),1008,(.5,)*3,(.5,)*3)
             self.assertEqual((source.width,source.height,len(source)),(40,20,1))
 
-    def test_geometry_cleanup_cannot_merge_or_fill_sam3_tracks(self):
-        from dedupe_roles import duplicates
-        from test_agent import TestStitch
-        pose={'tracker_backend':'sam3','people':[TestStitch.track(1,0,40,500),TestStitch.track(2,20,60,500)]}
-        before=copy.deepcopy(pose)
-        self.assertEqual(RP.stitch_tracks(pose,[(0,60)]),{})
-        self.assertEqual(RP.fill_track_gaps(pose,[(0,60)]),{})
-        self.assertEqual(duplicates(pose,{'1','2'}),[])
-        self.assertEqual(pose,before)
 
     def test_mask_confirmed_partial_person_survives_weak_pose_filter(self):
         people={1:([0,1,2,3],np.zeros((4,17,3)))}
@@ -138,7 +128,9 @@ class PersistentIdentityTests(unittest.TestCase):
             self.assertTrue(SAM.needs_tracking(pose,dict(c,sam3_probability=.2)))
             ckpt.write_bytes(b'new checkpoint')
             self.assertTrue(SAM.needs_tracking(pose,c))
-            self.assertTrue(SAM.needs_tracking(pose,{'tracker_backend':'geometry'}))
+            # A stale saved selection cannot reactivate a retired tracker.
+            pose['tracking_signature']=SAM.signature(c)
+            self.assertFalse(SAM.needs_tracking(pose,dict(c,tracker_backend='geometry')))
 
 
 class ReplacementTests(unittest.TestCase):

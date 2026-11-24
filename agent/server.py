@@ -75,7 +75,7 @@ class App:
             w.refresh()
 
     def health(self, ws=None):
-        from common import blender_exe
+        from common import blender_exe, human_model_assets
         from scene_depth import MODEL_PATH
         be = blender_exe(self.c)
         try:
@@ -92,10 +92,12 @@ class App:
             {"name": "Depth model", "ok": os.path.exists(MODEL_PATH), "detail": "models\\depth_anything_v2_small.onnx" if os.path.exists(MODEL_PATH) else "missing - run Setup.bat"},
             {"name": "Character (%s)" % self.c.get("character_style", "master"), "ok": os.path.exists(os.path.join(config.ROOT, "assets", char_file(self.c))),
              "detail": "assets\\" + char_file(self.c)},
-            {"name": "Pose models", "ok": bool(glob.glob(os.path.join(os.path.expanduser("~"), ".cache", "rtmlib", "hub", "checkpoints", "*.onnx"))), "detail": "downloaded on first use if missing"},
+            {"name": "RTMPose joints", "ok": bool(glob.glob(os.path.join(os.path.expanduser("~"), ".cache", "rtmlib", "hub", "checkpoints", "rtmpose*.onnx"))), "detail": "masked joint model; run Setup.bat if missing"},
             {"name": "AI suggestions (optional)", "ok": ai.status(self.c)["ready"], "optional": True, "detail": ai.status(self.c)["detail"]},
             {"name": "Disk space", "ok": free is None or free > 20e9, "detail": "%.0f GB free" % (free / 1e9) if free else "?"},
         ]
+        checks += [{"name": name, "ok": os.path.isfile(path), "detail": path}
+                   for name, path in human_model_assets(self.c)]
         return {"app": APP_NAME, "version": __version__, "uptime_s": round(time.time() - self.started),
                 "ok": all(x["ok"] for x in checks if not x.get("optional")), "checks": checks}
 

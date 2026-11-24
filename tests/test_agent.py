@@ -72,30 +72,6 @@ class TestShots(unittest.TestCase):
         self.assertEqual(w["root"][5][0], 1)
 
 
-class TestStitch(unittest.TestCase):
-    @staticmethod
-    def track(pid, f0, f1, x, w=60, h=180):
-        kp = [[0, 0, 0.9]] * 17
-        return {"id": pid, "frames": {str(f): kp for f in range(f0, f1)}, "boxes": {str(f): [x, 100, x + w, 100 + h] for f in range(f0, f1)}}
-
-    def test_broken_track_is_joined(self):
-        pose = {"people": [self.track(1, 0, 40, 500), self.track(2, 46, 90, 510), self.track(3, 0, 90, 100)]}
-        m = rp.stitch_tracks(pose, [(0, 90)])
-        self.assertEqual(m, {2: 1}, "P2 continues P1 in the same place")
-        self.assertEqual(len(pose["people"]), 2)
-        self.assertEqual(len(pose["people"][0]["boxes"]), 84)
-
-    def test_duplicate_detection_is_joined(self):
-        pose = {"people": [self.track(1, 0, 80, 500), self.track(2, 50, 120, 505)]}
-        self.assertEqual(rp.stitch_tracks(pose, [(0, 120)]), {2: 1})
-
-    def test_never_across_a_cut_or_far_apart(self):
-        pose = {"people": [self.track(1, 0, 40, 500), self.track(2, 46, 90, 510)]}
-        self.assertEqual(rp.stitch_tracks(pose, [(0, 43), (43, 90)]), {}, "a cut in between")
-        pose = {"people": [self.track(1, 0, 40, 100), self.track(2, 46, 90, 900)]}
-        self.assertEqual(rp.stitch_tracks(pose, [(0, 90)]), {}, "somewhere else in the picture")
-
-
 class TestCamera(unittest.TestCase):
     def test_wandering_noise_is_locked(self):
         from scipy.spatial.transform import Rotation
@@ -659,7 +635,6 @@ class TestApi(unittest.TestCase):
         self.assertEqual(json.loads(body)["review"]["notes"], "test")
 
 
-
 class TestHeldPose(unittest.TestCase):
     """a pose copied between key frames (Same pose in next): the frames between are blended from the fixes, not shaky"""
     def setUp(self):
@@ -685,36 +660,8 @@ class TestHeldPose(unittest.TestCase):
         self.assertFalse(np.allclose(k[fs.index(4)][:, :2], lin))
 
 
-
 class TestSpeedAndSet(unittest.TestCase):
-    """Prepare on the processor: people followed between detector frames; the set's drawn objects and freshness"""
-    def test_track_frames_detects_every_4th(self):
-        import automark as am
-        n, H, W = 13, 100, 160
-        frames = [np.zeros((H, W, 3), np.uint8) for _ in range(n)]
-        def person(x):                                     # one standing person at x (17 joints, all confident)
-            k = np.array([[x, 20 + 4 * j] for j in range(17)], float)
-            return k, np.full(17, 0.9)
-        pos = {f: 40 + 2 * f for f in range(n)}            # walks right 2 px a frame
-        seen, res = [], {}
-        class Marker:                                      # RTMPose: the person where they are in that frame
-            def poses(self, items):
-                out = []
-                for img, bxs in items:
-                    f = next(i for i, fr in enumerate(frames) if img.base is fr)
-                    k, sc = person(pos[f])
-                    out.append((np.array([k] * len(bxs)).reshape(-1, 17, 2), np.array([sc] * len(bxs)).reshape(-1, 17)))
-                return out
-        def run(idx):                                      # the detector
-            for f in idx:
-                if f not in res:
-                    seen.append(f); k, sc = person(pos[f]); res[f] = [(k, sc, [k[:, 0].min() - 5, k[:, 1].min() - 5, k[:, 0].max() + 5, k[:, 1].max() + 5])]
-        m = Marker()
-        out, interp, posed = am.track_frames(frames, 0, H, m, run, res, [0.0] * n)
-        self.assertEqual(sorted(seen), [0, 4, 8, 12], "the detector only on every 4th frame and the last")
-        self.assertEqual(len(posed), n - 4)
-        self.assertTrue(all(len(p) == 1 for p in out))
-        self.assertAlmostEqual(out[5][0][0][0][0], pos[5])
+    """Drawn set objects and cache freshness"""
 
     def test_drawn_objects_found_by_key_frame(self):
         import env_auto as ea
@@ -767,19 +714,8 @@ class TestFrameDepth(unittest.TestCase):
         self.assertLess(np.percentile(err, 95), 0.05, "depth matches the room, not the person")
 
 
-
 class TestTrackGaps(unittest.TestCase):
-    """a person the detector lost for a few frames is still there: the gap is filled, at lower confidence, never across a cut"""
-    def test_fill(self):
-        k = lambda x, sc: [[x, 100.0, sc]] * 17
-        pose = {"people": [{"id": 1, "frames": {"0": k(0.0, 0.9), "4": k(40.0, 0.8), "30": k(0.0, 0.9)}}]}
-        filled = rp.fill_track_gaps(pose, [(0, 10), (10, 40)])
-        self.assertEqual(filled, {1: [1, 2, 3]}, "4 -> 30 crosses the cut at 10: left alone")
-        self.assertEqual(pose["people"][0]["frames"]["2"][0], [20.0, 100.0, 0.4])
-
-    def test_long_gap_left(self):
-        pose = {"people": [{"id": 1, "frames": {"0": [[0, 0, 1]] * 17, "40": [[0, 0, 1]] * 17}}]}
-        self.assertEqual(rp.fill_track_gaps(pose, [(0, 50)]), {}, "more than 15 frames missing: not guessed")
+    """Conservative box holding for static scene exclusion, without changing person observations"""
 
 
     def test_hold_boxes_over_missed_frames(self):

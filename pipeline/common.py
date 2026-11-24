@@ -21,16 +21,12 @@ DEFAULT_CFG = {
     "depth_model_url": "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx",
     "colours": ["red", "blue", "green", "yellow", "cyan", "magenta"],   # colour card: 5th on = a stable colour of its own (purple = special object)
     "max_people": 6,
-    "pose3d": True,                          # 3D pose lifter (MotionBERT, pose3d.py) as a prior in the fit; false = 2D marks only
-    "pose3d_weight": 1.0,                    # strength of that prior (bone directions, sigma pose3d_sigma)
+    "pose3d_weight": 1.0,                    # strength of SAM 3D Body bone-direction constraints
     "pose3d_sigma": 0.2,
-    "pose_mode": "performance",              # automark models: "performance" (YOLOX-x + RTMPose-x) or "balanced" (-m models:
-                                             # faster, joints less exact)
+    "pose_mode": "performance",              # RTMPose-x; balanced/lightweight use smaller joint models
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
-    "detect_stride": "auto",                 # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
     "sam_points": 32,                        # automatic set (env_auto): SAM point grid per side (16 = fewer small pieces, ~3x faster)
-    "pose_backend": "rtmpose",               # rtmpose or optional rtmo
-    "rtmo_model": os.path.join(AGENT, "models", "rtmo", "model.onnx"),
+    "pose_backend": "rtmpose",               # joints measured inside SAM 3 masks
     "camera_backend": "flow",               # flow or optional da3 multi-view geometry
     "da3_model": os.path.join(AGENT, "models", "da3"),
     "da3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
@@ -40,14 +36,16 @@ DEFAULT_CFG = {
     "set_max_frames": 5,
     "foot_contact": True,
     "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
-    "tracker_backend": "geometry",          # geometry or SAM 3 persistent video masks
+    "tracker_backend": "sam3",              # persistent video masks and identities
     "sam3_checkpoint": os.path.join(AGENT, "models", "sam3", "sam3.pt"),
     "sam3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
     "sam3_mask_side": 640,
     "sam3_max_objects": 16,
     "sam3_probability": 0.35,
     "sam3_timeout_min": 40,
-    "human_backend": "motionbert",          # motionbert or metric SAM 3D Body
+    "sam3_image_batch": 16,                  # independent point prompts per image decoder call
+    "sam3_image_max_masks": 256,             # bounded background proposals before geometric fitting
+    "human_backend": "sam3d_body",           # metric body reconstruction
     "sam3d_checkpoint": os.path.join(AGENT, "models", "sam3d_body", "model.ckpt"),
     "sam3d_mhr": os.path.join(AGENT, "models", "sam3d_body", "assets", "mhr_model.pt"),
     "sam3d_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
@@ -62,6 +60,34 @@ DEFAULT_CFG = {
     "scene_repair_limit": 4,
 }
 
+RETIRED_SETTINGS = ("rtmo_model", "detect_stride", "pose3d")
+FIXED_BACKENDS = {"tracker_backend": "sam3", "human_backend": "sam3d_body", "pose_backend": "rtmpose"}
+
+
+def normalize_backends(c):
+    """Migrate saved legacy selections to the supported human reconstruction flow."""
+    c = dict(c)
+    for key in RETIRED_SETTINGS:
+        c.pop(key, None)
+    c.update(FIXED_BACKENDS)
+    return c
+
+
+def human_model_assets(c):
+    """Files required by the fixed SAM 3 / SAM 3D Body processing flow."""
+    path = lambda key: c.get(key) or DEFAULT_CFG[key]
+    return [
+        ("SAM 3 checkpoint", path("sam3_checkpoint")),
+        ("SAM 3 Python", path("sam3_python")),
+        ("SAM 3 source", os.path.join(AGENT, "third_party", "sam3", "sam3", "model_builder.py")),
+        ("SAM 3D Body checkpoint", path("sam3d_checkpoint")),
+        ("SAM 3D Body config", os.path.join(os.path.dirname(path("sam3d_checkpoint")), "model_config.yaml")),
+        ("SAM 3D Body MHR", path("sam3d_mhr")),
+        ("SAM 3D Body Python", path("sam3d_python")),
+        ("SAM 3D Body source", os.path.join(AGENT, "third_party", "sam-3d-body", "sam_3d_body", "__init__.py")),
+    ]
+
+
 def cfg():
     c = dict(DEFAULT_CFG)
     if os.path.exists(CFG_PATH):
@@ -70,6 +96,7 @@ def cfg():
     else:
         with open(CFG_PATH, "w", encoding="utf-8") as fh:
             json.dump(c, fh, ensure_ascii=False, indent=2)
+    c = normalize_backends(c)
     sb = os.environ.get("BA_SANDBOX")                  # test runs: everything written goes under this folder
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
@@ -147,7 +174,7 @@ def pick_device(want="cuda"):
     return "cuda"
 
 def torch_device():
-    """ "cuda" for the PyTorch models (MotionBERT, MoGe-2, SAM 2.1, CLIP); stops when PyTorch cannot use the card"""
+    """ Return cuda for scene models; stop when PyTorch cannot use the NVIDIA card."""
     import torch
     if not torch.cuda.is_available():
         raise RuntimeError(NO_GPU)
@@ -155,7 +182,7 @@ def torch_device():
 
 TRT_CACHE = os.path.join(AGENT, "models", "trt_cache")
 
-def gpu_session(model, engine="tensorrt", warm=(), profile=None, exclude=None):
+def gpu_session(model, engine="tensorrt", warm=(), profile=None):
     """onnxruntime GPU session. engine "tensorrt": TensorRT fp16 (engines + timing cache kept in models\\trt_cache, so
     they are built once - the first build takes a few minutes per model), CUDA for anything TensorRT cannot run;
     if TensorRT fails to load / build, the plain CUDA session is used.  profile = (input name, min, opt, max shape)
@@ -172,8 +199,6 @@ def gpu_session(model, engine="tensorrt", warm=(), profile=None, exclude=None):
         o = {"trt_fp16_enable": True, "trt_engine_cache_enable": True, "trt_engine_cache_path": TRT_CACHE,
              "trt_timing_cache_enable": True, "trt_timing_cache_path": TRT_CACHE,
              "trt_max_workspace_size": 4 << 30, "trt_builder_optimization_level": 3}
-        if exclude:                                  # op types left to CUDA (e.g. YOLOX's TopK in its NMS: K > 3840)
-            o["trt_op_types_to_exclude"] = exclude
         if profile:
             nm, mn, op, mx = profile
             shp = lambda s: "%s:%s" % (nm, "x".join(str(int(v)) for v in s))

@@ -31,13 +31,12 @@ def signature(c):
     return {'version':VERSION,'checkpoint':os.path.abspath(checkpoint),'stamp':stamp,
             'mask_side':c.get('sam3_mask_side',640),'max_objects':c.get('sam3_max_objects',16),
             'probability':c.get('sam3_probability',.35),'occlusion_seconds':c.get('track_occlusion_seconds',2.),
-            'pose_backend':c.get('pose_backend','rtmpose'),'pose_mode':c.get('pose_mode','performance')}
+            'pose_backend':'rtmpose','pose_mode':c.get('pose_mode','performance')}
 
 
 def needs_tracking(pose, c):
-    backend = c.get('tracker_backend','geometry')
-    if pose.get('tracker_backend','geometry') != backend: return True
-    return backend == 'sam3' and pose.get('tracking_signature') != signature(c)
+    if pose.get('tracker_backend') != 'sam3': return True
+    return pose.get('tracking_signature') != signature(c)
 
 
 def read_masks(path):

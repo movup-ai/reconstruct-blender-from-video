@@ -1,29 +1,19 @@
 # -*- coding: utf-8 -*-
-"""
-automark.py - automatic body keypoint marking for the white-model clips.
+"""SAM 3 persistent person masks, then RTMPose joints inside each person's mask.
 
-For every video it:
-  1. finds the picture area (skips the black bars),
-  2. finds every person in every frame (small far-away people too, by also looking at zoomed tiles),
-  3. marks 17 body joints per person with RTMPose (runs locally, no internet after the first model download),
-  4. keeps the same ID for the same person across frames,
-  5. writes  <out>/<clip>/pose.json        all frames, all people (full-frame pixel coordinates)
-             <out>/<clip>/review/fNNN.jpg  every Nth frame with red marks, for a quick look
-             <out>/<clip>/check.html       open in Chrome/Edge to fix wrong marks, then Save -> checked.json
+Writes pose.json, sam3_masks.npz, review thumbnails and the editable check.html.
+SAM 3 exits before loading RTMPose, keeping GPU allocations separate.
 
-Usage:  python automark.py VIDEO_OR_FOLDER [more ...] [--out DIR] [--step 8] [--mode balanced|performance|lightweight]
-                                                     [--no-tiles] [--force]
-                                                     [--engine tensorrt|cuda] [--detect-stride auto|1|2]
-GPU only (NVIDIA card): TensorRT fp16 engines (built once, ~15 min, cached in models\\trt_cache), CUDA as fallback; RTMPose crops batched.
---detect-stride / --engine default to config.json "detect_stride" / "pose_engine".
+Usage: python automark.py VIDEO_OR_FOLDER [...] [--out DIR] [--force]
+                         [--mode performance|balanced|lightweight] [--engine tensorrt|cuda]
 """
-import argparse, json, os, sys, time, base64, math, tempfile
+import argparse, json, os, sys, time, base64, tempfile
 import numpy as np
 import cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "pipeline"))
-from common import box_iou as iou, read_frames, imwrite_u, cfg, pick_device, jload, jsave  # noqa: E402
+from common import read_frames, imwrite_u, cfg, pick_device, jload, jsave
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 KP_NAMES = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
             "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
@@ -32,12 +22,11 @@ KP_NAMES = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shou
 SKELETON = [(16, 14, "R"), (14, 12, "R"), (15, 13, "L"), (13, 11, "L"), (11, 12, "C"), (5, 11, "L"), (6, 12, "R"),
             (5, 6, "C"), (5, 7, "L"), (7, 9, "L"), (6, 8, "R"), (8, 10, "R"), (0, 1, "C"), (0, 2, "C"),
             (1, 3, "L"), (2, 4, "R")]
-LEFT = {1, 3, 5, 7, 9, 11, 13, 15}
 
 
-# ----------------------------------------------------------------------------- helpers
 def log(*a):
     print(*a, flush=True)
+
 
 def picture_area(frames):
     """(y0, y1) rows that are not black bars, from a few sample frames"""
@@ -50,217 +39,41 @@ def picture_area(frames):
         return 0, frames[0].shape[0]
     return y0, y1
 
-def contained(a, b):
-    """fraction of box a that lies inside box b"""
-    x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0, x1 - x0) * max(0, y1 - y0)
-    area = max(1e-6, (a[2] - a[0]) * (a[3] - a[1]))
-    return inter / area
 
-KEEP_OVERLAPPING = True   # a box mostly inside a bigger one but about as tall (a person walking right behind another)
-                          # is kept as a second person; same_person() drops it after RTMPose when it is the same skeleton
+POSE_MAX_BATCH = 32
 
-def merge_boxes(boxes):
-    """join duplicate detections from the full picture and the tiles"""
-    boxes = sorted([list(map(float, b)) for b in boxes], key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
-    keep = []
-    for b in boxes:
-        dup = False
-        for k in keep:
-            inside = contained(b, k) > 0.75
-            if inside and KEEP_OVERLAPPING and iou(b, k) <= 0.45:
-                # a fragment of the same person (head, upper body, a tile cut) is clearly shorter; a second person
-                # half hidden behind the first is about as tall and narrower
-                if (b[3] - b[1]) >= 0.8 * (k[3] - k[1]) and (b[2] - b[0]) <= 0.7 * (k[2] - k[0]):
-                    inside = False
-            ov = iou(b, k)
-            if KEEP_OVERLAPPING and 0.45 < ov <= 0.75 and min(b[3] - b[1], k[3] - k[1]) < 0.8 * max(b[3] - b[1], k[3] - k[1]) \
-                    and contained(b, k) <= 0.9:
-                # much the same place but clearly different heights (someone carried / held by another, a child in
-                # front of an adult): kept, drop_same_skeletons() removes it when RTMPose sees the same body twice
-                ov, inside = 0.0, False
-            if ov > 0.45 or inside:
-                # same person: grow the kept box a little towards the other one
-                k[0], k[1], k[2], k[3] = min(k[0], b[0]), min(k[1], b[1]), max(k[2], b[2]), max(k[3], b[3])
-                dup = True
-                break
-        if not dup:
-            keep.append(b)
-    return keep
-
-def same_person(p, q):
-    """two detections (kps, scores, box) that RTMPose read as the same skeleton (a duplicate box of one person)"""
-    (ka, sa, ba), (kb, sb, bb) = p, q
-    if contained(ba, bb) < 0.5 and contained(bb, ba) < 0.5:
-        return False
-    vis = (sa > 0.3) & (sb > 0.3)
-    if vis.sum() < 5:
-        return False
-    h = max(10.0, ba[3] - ba[1], bb[3] - bb[1])
-    head = vis[:5]
-    if head.sum() >= 2:
-        head_distance = np.median(np.linalg.norm(ka[:5][head] - kb[:5][head], axis=1)) / h
-        if head_distance > 0.12:
-            return False
-        if head.sum() >= 3 and head_distance < 0.03:
-            return True
-    return float(np.median(np.linalg.norm(ka[vis] - kb[vis], axis=1))) < 0.06 * h
-
-SPLIT_WIDE = False     # a wide box is probed for two people (see Marker.split_wide); off by default: on one bent /
-                       # crouching person RTMPose often finds two half skeletons (junk tracks). --split-wide turns it on
-SPLIT_ASPECT = 0.42    # box width / height above this -> probe (one standing person is ~0.25-0.45 wide)
-
-def skeleton_dist(p, q):
-    """median distance of the joints both skeletons see, x the taller box height (1.0 when they share < 5 joints)"""
-    (ka, sa, ba), (kb, sb, bb) = p, q
-    vis = (sa > 0.3) & (sb > 0.3)
-    if vis.sum() < 5:
-        return 1.0
-    return float(np.median(np.linalg.norm(ka[vis] - kb[vis], axis=1))) / max(10.0, ba[3] - ba[1], bb[3] - bb[1])
-
-def core_score(p):
-    """mean score of shoulders, hips and the head joints: a real (if half hidden) person, not a few stray joints"""
-    return float(np.mean(p[1][[0, 5, 6, 11, 12]]))
-
-def tight_box(p, around):
-    """box of a split person: its confident joints (+ a margin), inside the box it was measured in"""
-    k, s = p[0], p[1]
-    pts = k[s > 0.3] if (s > 0.3).sum() >= 3 else k
-    x0, y0 = pts.min(0); x1, y1 = pts.max(0)
-    m = 0.08 * (y1 - y0)
-    return [float(max(around[0], x0 - m)), float(around[1]), float(min(around[2], x1 + m)), float(around[3])]
-
-def drop_same_skeletons(people):
-    """keep a second (overlapping) box only when RTMPose found a second skeleton in it"""
-    order = sorted(range(len(people)), key=lambda i: -float(np.mean(people[i][1])))
-    keep = []
-    for i in order:
-        if not any(same_person(people[i], people[j]) for j in keep):
-            keep.append(i)
-    return [people[i] for i in sorted(keep)]
-
-
-# ----------------------------------------------------------------------------- model
-POSE_MAX_BATCH = 32                                      # RTMPose crops per GPU call (TensorRT profile max)
-DET_MAX_BATCH = 10                                       # pictures per call of the batched person detector
 
 class Marker:
-    def __init__(self, mode="performance", device="cuda", tiles=True, engine="tensorrt"):
-        try:
-            from rtmlib import Body, YOLOX, RTMPose
-            import onnxruntime as ort
-        except ImportError:
-            log("ERROR: rtmlib / onnxruntime-gpu is not installed. Run Setup.bat first.")
-            sys.exit(1)
-        log("loading pose models (first run downloads them, ~100-400 MB) ...")
-        backend = "onnxruntime"
-        if device != "cuda":
-            log("ERROR: the pose models run on the NVIDIA card only (device %r)." % device)
-            sys.exit(1)
-        from common import gpu_dlls, gpu_session
-        gpu_dlls()                                   # CUDA / cuDNN (and TensorRT) installed by pip
-        ort.set_default_logger_severity(3)           # errors only (TensorRT prints pages of tactic warnings)
-        if "CUDAExecutionProvider" not in ort.get_available_providers():
-            log("ERROR: the NVIDIA (CUDA) runtime is not available - run Setup.bat (installs onnxruntime-gpu).")
-            sys.exit(1)
-        # build the two rtmlib models without their own sessions, then give them GPU sessions
-        # (TensorRT fp16 with engine cache, CUDA as fallback for nodes / whole models TensorRT cannot take)
+    """Measure COCO-17 joints in supplied SAM 3 boxes; no person detector is loaded."""
+
+    def __init__(self, mode="performance", device="cuda", engine="tensorrt"):
+        from rtmlib import Body, RTMPose
         from rtmlib.tools.file import download_checkpoint
-        cfg_m = Body.MODE[mode]
-        det_p, pose_p = cfg_m["det"], cfg_m["pose"]
-        det_p = det_p if os.path.exists(det_p) else download_checkpoint(det_p)
-        pose_p = pose_p if os.path.exists(pose_p) else download_checkpoint(pose_p)
-        det = YOLOX.__new__(YOLOX)
-        det.model_input_size, det.mean, det.std = cfg_m["det_input_size"], None, None
-        det.backend, det.device, det.det_mode, det.nms_thr, det.score_thr = backend, device, "human", 0.45, 0.7
-        det.onnx_model = det_p
+        from common import gpu_dlls, gpu_session
+
+        if device != "cuda":
+            raise RuntimeError("RTMPose requires an NVIDIA GPU")
+        ort = gpu_dlls()
+        ort.set_default_logger_severity(3)
+        if "CUDAExecutionProvider" not in ort.get_available_providers():
+            raise RuntimeError("CUDA runtime unavailable; run Setup.bat")
+        model = Body.MODE[mode]
+        path = model["pose"]
+        path = path if os.path.isfile(path) else download_checkpoint(path)
         pose = RTMPose.__new__(RTMPose)
-        pose.model_input_size, pose.mean, pose.std = cfg_m["pose_input_size"], (123.675, 116.28, 103.53), (58.395, 57.12, 57.375)
-        pose.backend, pose.device, pose.to_openpose, pose.onnx_model = backend, device, False, pose_p
-        pw, ph = cfg_m["pose_input_size"]
-        dw, dh = cfg_m["det_input_size"][1], cfg_m["det_input_size"][0]
-        # the person detector: the batched copy (pipeline/det_batch_model.py) takes the full picture and its 4 tiles
-        # in one call - same boxes as the original, which takes one picture a call; the original is the fallback
-        self.det_b = None
-        import det_batch_model as dbm
-        src = dbm.source_model()
-        if src and os.path.basename(src) == os.path.basename(det_p) and os.path.exists(dbm.OUT):
-            try:
-                self.det_b, e1 = gpu_session(dbm.OUT, engine, warm=[np.zeros((n, 3, dh, dw), np.float32) for n in (1, 5)],
-                                             profile=("input", (1, 3, dh, dw), (5, 3, dh, dw), (DET_MAX_BATCH, 3, dh, dw)))
-                e1 += " batched"
-            except Exception as e:
-                log("  batched person detector not used (%s) - one picture a call" % str(e).splitlines()[0][:200])
-                self.det_b = None
-        if self.det_b is None:
-            det.session, e1 = gpu_session(det_p, engine, warm=[np.zeros((1, 3, dh, dw), np.float32)],
-                                          exclude="NonMaxSuppression,NonZero,RoiAlign,TopK")
-        pose.session, e2 = gpu_session(pose_p, engine, warm=[np.zeros((n, 3, ph, pw), np.float32) for n in (1, 4)],
-                                       profile=("input", (1, 3, ph, pw), (8, 3, ph, pw), (POSE_MAX_BATCH, 3, ph, pw)))
-        for s in ([self.det_b] if self.det_b is not None else [det.session]) + [pose.session]:
-            if "CUDAExecutionProvider" not in s.get_providers() and "TensorrtExecutionProvider" not in s.get_providers():
-                log("ERROR: the pose models did not load on the NVIDIA card (CUDA / cuDNN libraries failed to load).")
-                sys.exit(1)
-            s.disable_fallback()                     # a GPU error must stop the job, not quietly use the CPU
-        self.engine = "det %s, pose %s" % (e1, e2)
-        self.det, self.pose = det, pose
-        log("pose backend: %s (%s, %s; %s)" % (backend, device, mode, self.engine))
-        self.tiles = tiles
-        self.n_det = self.n_pose_calls = self.n_crops = 0
-
-    def detect(self, img):
-        """person boxes [x0, y0, x1, y1] (rtmlib's YOLOX returns N x 4, some versions N x 5 with a score)"""
-        if self.det_b is not None:
-            return self.detect_many([img])[0]
-        self.n_det += 1
-        b = np.asarray(self.det(img), dtype=float)
-        if b.size == 0:
-            return []
-        b = np.atleast_2d(b)
-        return [list(r[:4]) for r in b if r.shape[0] >= 4]
-
-    def detect_many(self, imgs):
-        """person boxes of several pictures in one GPU call (the batched detector): [[x0, y0, x1, y1], ...] per picture,
-        the same boxes as detect() with the original model"""
-        import det_batch_model as dbm
-        xs = [self.det.preprocess(im) for im in imgs]
-        out = []
-        for i in range(0, len(xs), DET_MAX_BATCH):
-            part = xs[i:i + DET_MAX_BATCH]
-            x = np.ascontiguousarray(np.stack([p.transpose(2, 0, 1) for p, _ in part]), dtype=np.float32)
-            bo, sc = self.det_b.run(None, {"input": x})
-            out += [[list(map(float, r)) for r in dbm.person_dets(bo[k], sc[k]) / ratio] for k, (_, ratio) in enumerate(part)]
-            self.n_det += len(part)
-        return out
-
-    def boxes(self, img):
-        """merged person boxes of one picture area: full picture + 2 x 2 tiles"""
-        h, w = img.shape[:2]
-        boxes = []
-        # 2 x 2 overlapping tiles -> small far-away people become big enough for the detector
-        tw, th = int(w * 0.6), int(h * 0.6)
-        tiles = [(tx, ty) for ty in (0, h - th) for tx in (0, w - tw)]
-        if self.det_b is not None:                       # the picture and its tiles in one call
-            try:
-                res = self.detect_many([img] + [img[ty:ty + th, tx:tx + tw] for tx, ty in tiles])
-            except Exception as e:
-                log("  detector error:", e)
-                res = []
-            for (tx, ty), bs in zip([(0, 0)] + tiles, res):
-                boxes += [[b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty] for b in bs]
-            return [b for b in merge_boxes(boxes) if (b[3] - b[1]) > 18 and (b[2] - b[0]) > 6]
-        try:
-            boxes += self.detect(img)
-        except Exception as e:
-            log("  detector error on full picture:", e)
-        for tx, ty in tiles:
-            tile = img[ty:ty + th, tx:tx + tw]
-            try:
-                for b in self.detect(tile):
-                    boxes.append([b[0] + tx, b[1] + ty, b[2] + tx, b[3] + ty])
-            except Exception as e:
-                log("  detector error on tile:", e)
-        return [b for b in merge_boxes(boxes) if (b[3] - b[1]) > 18 and (b[2] - b[0]) > 6]
+        pose.model_input_size = model["pose_input_size"]
+        pose.mean, pose.std = (123.675, 116.28, 103.53), (58.395, 57.12, 57.375)
+        pose.backend, pose.device, pose.to_openpose, pose.onnx_model = "onnxruntime", device, False, path
+        width, height = pose.model_input_size
+        pose.session, self.engine = gpu_session(path, engine,
+            warm=[np.zeros((n, 3, height, width), np.float32) for n in (1, 4)],
+            profile=("input", (1, 3, height, width), (8, 3, height, width), (POSE_MAX_BATCH, 3, height, width)))
+        if not {"CUDAExecutionProvider", "TensorrtExecutionProvider"}.intersection(pose.session.get_providers()):
+            raise RuntimeError("RTMPose did not load on the NVIDIA GPU")
+        pose.session.disable_fallback()
+        self.pose = pose
+        self.n_pose_calls = self.n_crops = 0
+        log("RTMPose ready (%s; %s)" % (mode, self.engine))
 
     def poses(self, items):
         """items = [(img, [boxes])] (several pictures). RTMPose on all crops at once (batched GPU calls) -
@@ -294,218 +107,7 @@ class Marker:
             out.append((kps[i:i + len(bxs)], vals[i:i + len(bxs)])); i += len(bxs)
         return out
 
-    def run_many(self, imgs):
-        """several picture areas (BGR) -> per picture list of (kps(17,2), scores(17), box)"""
-        if not self.tiles:
-            return [self(img) for img in imgs]
-        bxs = [self.boxes(img) for img in imgs]
-        res = self.poses(list(zip(imgs, bxs)))
-        out = [drop_same_skeletons([(k, s, b) for k, s, b in zip(kps, sc, bb)]) for (kps, sc), bb in zip(res, bxs)]
-        return self.split_wide(imgs, out) if SPLIT_WIDE else out
 
-    def split_wide(self, imgs, out):
-        """one wide box around two people walking side by side / one behind the other (the detector merges them):
-        RTMPose in its left and right part; two different, clear skeletons -> two people"""
-        jobs = []                                         # (picture, person index, [left box, right box])
-        for pi, ppl in enumerate(out):
-            for i, (k, s, b) in enumerate(ppl):
-                w, h = b[2] - b[0], b[3] - b[1]
-                if h > 0.25 * imgs[pi].shape[0] and w > SPLIT_ASPECT * h:
-                    sw = 0.5 * w
-                    jobs.append((pi, i, [[b[0], b[1], b[0] + sw, b[3]], [b[2] - sw, b[1], b[2], b[3]]]))
-        if not jobs:
-            return out
-        def masked(img, sb):                              # RTMPose widens a narrow box to its 3:4 crop: grey out the rest
-            im = img.copy(); im[:, :max(0, int(sb[0]))] = 114; im[:, max(0, int(sb[2])):] = 114
-            return im
-        items = []
-        for pi, i, sub in jobs:
-            items += [(masked(imgs[pi], sub[0]), [sub[0]]), (masked(imgs[pi], sub[1]), [sub[1]])]
-        res = self.poses(items)
-        res = [((res[2 * n][0][0], res[2 * n + 1][0][0]), (res[2 * n][1][0], res[2 * n + 1][1][0])) for n in range(len(jobs))]
-        repl = {}
-        for (pi, i, sub), (kps, sc) in zip(jobs, res):
-            a, b = (kps[0], sc[0], sub[0]), (kps[1], sc[1], sub[1])
-            if min(core_score(a), core_score(b)) < 0.55 or skeleton_dist(a, b) < 0.10:
-                continue
-            ha = (a[0][11] + a[0][12]) / 2; hb_ = (b[0][11] + b[0][12]) / 2
-            sa_ = (a[0][5] + a[0][6]) / 2; sb_ = (b[0][5] + b[0][6]) / 2
-            h = b[2][3] - b[2][1]
-            if hb_[0] - ha[0] < 0.05 * h or sb_[0] - sa_[0] < 0.03 * h:   # the right one must really be further right
-                continue
-            # two upright people side by side (one wide box around a crouching / lying / arms-out person reads as two
-            # half bodies otherwise): both torsos stand up, their shoulders at about the same height
-            if any(t_[1] < 0.2 * h or abs(t_[0]) > 0.6 * t_[1] for t_ in (ha - sa_, hb_ - sb_)) or abs(sa_[1] - sb_[1]) > 0.15 * h:
-                continue
-            others = [q for j, q in enumerate(out[pi]) if j != i]
-            if any(skeleton_dist(a, q) < 0.08 or skeleton_dist(b, q) < 0.08 for q in others):
-                continue
-            repl.setdefault(pi, {})[i] = [(a[0], a[1], tight_box(a, sub[0])), (b[0], b[1], tight_box(b, sub[1]))]
-        for pi, rp in repl.items():
-            new = []
-            for i, p in enumerate(out[pi]):
-                new += rp.get(i, [p])
-            out[pi] = new
-        return out
-
-    def __call__(self, img):
-        """img = picture area (BGR). returns list of (kps(17,2), scores(17), box)"""
-        if not self.tiles:
-            b = self.detect(img)                         # what rtmlib's Body does (detector, then pose)
-            kps, sc = self.poses([(img, b if b else [[0, 0, img.shape[1], img.shape[0]]])])[0]
-            out = []
-            for k, s in zip(np.asarray(kps).reshape(-1, 17, 2), np.asarray(sc).reshape(-1, 17)):
-                x0, y0 = k[s > 0.2].min(0) if (s > 0.2).any() else k.min(0)
-                x1, y1 = k[s > 0.2].max(0) if (s > 0.2).any() else k.max(0)
-                out.append((k, s, [float(x0), float(y0), float(x1), float(y1)]))
-            return out
-        return self.run_many([img])[0]
-
-
-# ----------------------------------------------------------------------------- tracking
-TRACK_JUMP = 0.45   # box centre farther than this x box height from where the track was predicted (per frame, more
-                    # across gaps) -> never the same person (stops a track jumping to a neighbour when its person is lost)
-
-def track(per_frame, max_gap=45, frames=None, y0=0, cuts=(), identity=None):
-    """per_frame: list over frames of [(kps, sc, box)].  returns {track_id: {frame: (kps, sc, box)}}"""
-    from scipy.optimize import linear_sum_assignment
-    tracks, last = {}, {}          # last[id] = (frame, box, kps)
-    vel = {}                       # vel[id] = box centre motion per frame (px) - the box is predicted across gaps
-    nid = 1
-    appearance = {}
-    previous_overlap = {}
-    cuts = set(cuts)
-    def descriptor(f, box, others):
-        if frames is None:
-            return None
-        img = frames[f]
-        x0, ya, x1, yb = box
-        w, h = x1 - x0, yb - ya
-        x0 = max(0, int(x0 + 0.2 * w)); x1 = min(img.shape[1], int(x1 - 0.2 * w))
-        ya = max(0, int(ya + y0 + 0.2 * h)); yb = min(img.shape[0], int(yb + y0 - 0.2 * h))
-        if x1 <= x0 or yb <= ya:
-            return None
-        hsv = cv2.cvtColor(img[ya:yb, x0:x1], cv2.COLOR_BGR2HSV)
-        mask = np.full(hsv.shape[:2], 255, np.uint8)
-        for other in others:
-            ox0, oy0, ox1, oy1 = other
-            left, right = max(0, int(ox0) - x0), min(x1 - x0, int(ox1) - x0)
-            top, bottom = max(0, int(oy0 + y0) - ya), min(yb - ya, int(oy1 + y0) - ya)
-            if right > left and bottom > top:
-                mask[top:bottom, left:right] = 0
-        if np.count_nonzero(mask) < max(24, 0.2 * mask.size):
-            return None
-        hist = cv2.calcHist([hsv], [0, 1, 2], mask, [12, 4, 4], [0, 180, 0, 256, 0, 256]).ravel()
-        return hist / max(float(hist.sum()), 1.0)
-    def ctr(b):
-        return np.array([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2])
-    for f, people in enumerate(per_frame):
-        if f in cuts:
-            if identity is not None:
-                identity.update({t: hist.tolist() for t, hist in appearance.items()})
-            last.clear(); vel.clear(); appearance.clear(); previous_overlap.clear()
-        desc = [descriptor(f, p[2], [q[2] for j, q in enumerate(people) if j != i]) for i, p in enumerate(people)]
-        occluded = [any(max(contained(p[2], q[2]), contained(q[2], p[2])) > 0.25
-                        for j, q in enumerate(people) if j != i) for i, p in enumerate(people)]
-        active = [t for t, (lf, _, _) in last.items() if f - lf <= max_gap]
-        cost = np.full((len(active), len(people)), 1e6)
-        for i, t in enumerate(active):
-            lf, lb, lk = last[t]
-            hb = max(10.0, lb[3] - lb[1])
-            v = vel.get(t, np.zeros(2)) * (f - lf)
-            for j, (k, s, b) in enumerate(people):
-                cb = ctr(lb) + v - ctr(b)
-                overlapping = occluded[j] or previous_overlap.get(t, False)
-                good = (s > 0.3) & (tracks[t][lf][1] > 0.3)
-                if overlapping and good[:5].sum() >= 2:
-                    cb = np.median(lk[:5][good[:5]], axis=0) + v - np.median(k[:5][good[:5]], axis=0)
-                dc = np.linalg.norm(cb) / hb
-                gate = 0.75 if overlapping else TRACK_JUMP
-                if dc > gate * (1 + 0.5 * (f - lf - 1)):
-                    continue                                     # the box jumped: another person, not this one
-                dh = abs(math.log(max(10.0, b[3] - b[1]) / hb))
-                if overlapping and good[:5].sum() >= 2:
-                    good[5:] = False
-                dk = np.median(np.linalg.norm(k[good] - lk[good] - v, axis=1)) / hb if good.sum() >= 2 else dc
-                c = dc + 0.7 * dk + (0.25 if overlapping else 1.5) * dh + 0.01 * (f - lf - 1)
-                if t in appearance and desc[j] is not None:
-                    distance = np.sqrt(max(0.0, 1.0 - float(np.sqrt(appearance[t] * desc[j]).sum())))
-                    if distance > 0.9 and f - lf > 5 and not occluded[j]:
-                        continue
-                    c += 0.45 * distance
-                if c < 1.0:
-                    # small extra cost for young tracks: when a duplicate box flickers next to a person, the person keeps
-                    # their long track instead of moving to the 2-frame-old one (ties otherwise go either way)
-                    cost[i, j] = c + 0.1 * (1 - min(1.0, len(tracks[t]) / 30.0))
-        used = set()
-        if len(active) and len(people):
-            # Reliable poses claim tracks first. Weak detections can recover an unmatched track.
-            reliable = [j for j, p in enumerate(people) if np.mean(p[1] > 0.5) >= 0.5]
-            weak = [j for j in range(len(people)) if j not in reliable]
-            pairs = []
-            available = list(range(len(active)))
-            for group in (reliable, weak):
-                if available and group:
-                    rr, cc = linear_sum_assignment(cost[np.ix_(available, group)])
-                    accepted = [(available[i], group[j]) for i, j in zip(rr, cc) if cost[available[i], group[j]] < 1e5]
-                    pairs.extend(accepted)
-                    assigned = {i for i, _ in accepted}
-                    available = [i for i in available if i not in assigned]
-            for i, j in pairs:
-                if cost[i, j] < 1e5:
-                    t = active[i]
-                    lf, lb = last[t][0], last[t][1]
-                    nv = (ctr(people[j][2]) - ctr(lb)) / max(1, f - lf)
-                    if not occluded[j]:
-                        vel[t] = nv if t not in vel else 0.6 * vel[t] + 0.4 * nv
-                    tracks[t][f] = people[j]; last[t] = (f, people[j][2], people[j][0]); used.add(j)
-                    previous_overlap[t] = occluded[j]
-                    if desc[j] is not None and j in reliable and not occluded[j]:
-                        appearance[t] = desc[j] if t not in appearance else 0.9 * appearance[t] + 0.1 * desc[j]
-        for j, p in enumerate(people):
-            if j not in used:
-                if np.mean(p[1] > 0.3) < 0.25:
-                    continue
-                tracks[nid] = {f: p}; last[nid] = (f, p[2], p[0]); nid += 1
-                previous_overlap[nid - 1] = occluded[j]
-                if desc[j] is not None:
-                    appearance[nid - 1] = desc[j]
-    if identity is not None:
-        identity.update({t: hist.tolist() for t, hist in appearance.items()})
-    return tracks
-
-
-GAP_FILL = 15       # a track that is lost for up to this many frames (passing behind someone) is measured in between:
-                    # RTMPose in the interpolated box, kept when it finds a skeleton that is not the other person's
-
-def fill_gaps(tr, per_frame, frames, y0, y1, marker, max_fill=GAP_FILL):
-    """short gaps inside a track -> RTMPose in the box interpolated between the two ends.  returns frames filled"""
-    jobs = {}
-    for t, d in tr.items():
-        fs = sorted(d)
-        for a, b in zip(fs, fs[1:]):
-            if 1 < b - a <= max_fill:
-                ba, bb = np.array(d[a][2], float), np.array(d[b][2], float)
-                for f in range(a + 1, b):
-                    w = (f - a) / float(b - a)
-                    jobs.setdefault(f, []).append((t, list((1 - w) * ba + w * bb)))
-    if not jobs:
-        return 0
-    n_ok, fl = 0, sorted(jobs)
-    for i in range(0, len(fl), FRAME_BATCH):
-        grp = fl[i:i + FRAME_BATCH]
-        items = [(frames[f][y0:y1], [[b[0], b[1] - y0, b[2], b[3] - y0] for _, b in jobs[f]]) for f in grp]
-        for f, (kps, sc) in zip(grp, marker.poses(items)):
-            others = list(per_frame[f])
-            for (t, b), k, s in zip(jobs[f], kps, sc):
-                p = (k + [0, y0], s, [float(v) for v in b])
-                if float(np.mean(s)) < 0.35 or any(same_person(p, q) for q in others):
-                    continue
-                tr[t][f] = p; others.append(p); n_ok += 1
-    return n_ok
-
-
-# ----------------------------------------------------------------------------- drawing
 def draw_marks(img, people, scale=1.0, selected=None):
     out = img.copy()
     r = max(3, int(round(4 * scale)))
@@ -528,185 +130,6 @@ def draw_marks(img, people, scale=1.0, selected=None):
     return out
 
 
-# ----------------------------------------------------------------------------- frames -> people (with frame skipping)
-FRAME_BATCH = 8         # frames whose person crops go to RTMPose together
-CUT_DIFF = 20.0         # mean grey change (0-255, 96x54 thumbnail) between neighbouring frames: a cut -> always detect
-MOTION_DIFF = 8.0       # stride "auto": picture change above this -> detect (fast camera move, flash; normal shots 0.3-6)
-# stride "auto": joint travel between f-1 and f+1 (90th pct of visible joints) above clip(MOTION_REL*height, MIN, MAX) px
-# -> the keypoints are not interpolated but measured (RTMPose on the interpolated box).  measured on 112 marked clips:
-# travel < 12 px gives a mid-frame interpolation error of ~1-2 px (median)
-MOTION_MIN, MOTION_MAX, MOTION_REL = 6.0, 12.0, 0.03
-BOX_MOVE, BOX_SCALE = 0.10, 0.10   # box centre travel f-1 -> f+1 (x height) / log height change above this -> full detection
-OVERLAP = 0.25                      # two people whose boxes overlap more than this (IoU) -> full detection (who is who)
-
-def interpolate_people(a, b, d, check_motion=True, why=None):
-    """frame f from its neighbours f-1 (a) and f+1 (b) (each [(kps, scores, box)]).  returns (how, people):
-      ("kp", people)   keypoints, scores and boxes = mean of the two neighbours (linear interpolation at the middle frame)
-      ("box", boxes)   people are the same but move (auto): RTMPose must measure them in these (interpolated) boxes
-      (None, None)     the person detector must run: a cut / big picture change, a different number of people,
-                       overlapping people, a person that cannot be paired, or (auto) a box that moves / scales a lot"""
-    why = why if why is not None else {}
-    def no(r):
-        why[r] = why.get(r, 0) + 1
-        return None, None
-    if d > CUT_DIFF or (check_motion and d > MOTION_DIFF):
-        return no("picture change")
-    if len(a) != len(b):
-        return no("people count")
-    if not a:
-        return "kp", []
-    for ppl in (a, b):
-        for i in range(len(ppl)):
-            for j in range(i + 1, len(ppl)):
-                if iou(ppl[i][2], ppl[j][2]) > OVERLAP:
-                    return no("people overlap")
-    from scipy.optimize import linear_sum_assignment
-    cost = np.array([[1.0 - iou(pa[2], pb[2]) for pb in b] for pa in a])
-    r, c = linear_sum_assignment(cost)
-    out, boxes, moving = [], [], False
-    for i, j in zip(r, c):
-        if cost[i, j] > 0.5:                             # box overlap < 0.5: not clearly the same person
-            return no("pairing")
-        (ka, sa, ba), (kb, sb, bb) = a[i], b[j]
-        ha, hb = max(10.0, ba[3] - ba[1]), max(10.0, bb[3] - bb[1]); h = (ha + hb) / 2
-        if check_motion:
-            if (np.hypot((ba[0] + ba[2] - bb[0] - bb[2]) / 2, (ba[1] + ba[3] - bb[1] - bb[3]) / 2) > BOX_MOVE * h
-                    or abs(math.log(ha / hb)) > BOX_SCALE):
-                return no("box motion")
-            vis = (sa > 0.3) & (sb > 0.3)
-            if vis.sum() >= 3:
-                mv = float(np.percentile(np.linalg.norm(ka[vis] - kb[vis], axis=1), 90))
-            else:
-                mv = float(np.hypot((ba[0] + ba[2] - bb[0] - bb[2]) / 2, (ba[1] + ba[3] - bb[1] - bb[3]) / 2))
-            moving |= mv > min(MOTION_MAX, max(MOTION_MIN, MOTION_REL * h))
-        box = [(u + v) / 2 for u, v in zip(ba, bb)]
-        out.append(((ka + kb) / 2, (sa + sb) / 2, box)); boxes.append(box)
-    if moving:
-        why["moving: pose only"] = why.get("moving: pose only", 0) + 1
-        return "box", boxes
-    return "kp", out
-
-DETECT_EVERY = 4        # stride "track": the person detector on every 4th frame (and cuts); RTMPose follows people between
-TRACK_JUMP_REL = 0.12  # stride "track": median joint move from the frame before above this x body height -> detect that frame
-TRACK_MIN = 0.3         # stride "track": a followed person whose head / shoulders / hips score below this -> detect that frame
-
-def track_frames(frames, y0, y1, marker, run, res, diff, every=DETECT_EVERY):
-    """stride "track" (for the processor, where the detector is ~95% of the time and RTMPose ~0.06 s a person):
-    the detector on every 4th frame, the last frame and every cut; in between RTMPose measures each person in their
-    box from the frame before, and the box moves on with their joints.  A frame is detected after all when the picture changes a lot, a person
-    is lost (weak head / shoulders / hips), two followed people become one or a skeleton jumps away from where it was.  When a detected frame finds more
-    people than the frame before (someone walked in or came out from behind), the frames before it are detected too."""
-    n = len(frames)
-    anchors = sorted(set(range(0, n, every)) | {n - 1} | {f for f in range(1, n) if diff[f] > CUT_DIFF})
-    run(anchors)
-    posed, why = set(), {}
-    def no(r, f):
-        why[r] = why.get(r, 0) + 1; run([f])
-    for f in range(1, n):
-        if f in res:
-            continue
-        prev = res[f - 1]
-        if diff[f] > MOTION_DIFF:
-            no("picture change", f); continue
-        if not prev:                                      # nobody to follow: the next detected frame looks again
-            res[f] = []; posed.add(f); continue
-        pic = frames[f][y0:y1]; H, W = pic.shape[:2]
-        bxs = [[b[0], b[1] - y0, b[2], b[3] - y0] for _, _, b in prev]     # each person's box from the frame before
-        kps, scs = marker.poses([(pic, bxs)])[0]
-        ppl = [(k, sc, b) for k, sc, b in zip(kps, scs, bxs)]
-        if not all(core_score(p) >= TRACK_MIN for p in ppl):
-            no("person lost", f); continue
-        if len(drop_same_skeletons(ppl)) < len(ppl):
-            no("two became one", f); continue
-        # overlapping people are followed too: each one's box comes from their own joints; a skeleton that jumps from
-        # where that person was (RTMPose locked on the other one, or a mix of both) -> detect
-        if any(skeleton_dist((k - [0, y0], sc, b), q) > TRACK_JUMP_REL for (k, sc, b), q in zip(prev, ppl)):
-            no("joints jumped", f); continue
-        res[f] = []                    # the box moves with the joints (keeps the detector's box shape for the tracker)
-        for (k0, s0, b0), (k, sc, _) in zip(prev, ppl):
-            vis = (s0 > 0.3) & (sc > 0.3)
-            dx, dy = np.median((k + [0, y0])[vis] - k0[vis], axis=0) if vis.sum() >= 3 else (0.0, 0.0)
-            b = [min(W - 1, max(0, b0[0] + dx)), b0[1] + dy, min(W - 1, max(0, b0[2] + dx)), b0[3] + dy]
-            b[1], b[3] = max(y0, b[1]), min(y1 - 1, b[3])
-            res[f].append((k + [0, y0], sc, [float(v) for v in b]))
-        posed.add(f)
-    for a in anchors:                                     # a person appeared at a detected frame: look back for them
-        g = a - 1
-        while g > 0 and g in posed and len(res[g]) < len(res[g + 1]) and a - g < every:
-            del res[g]; posed.discard(g); why["someone appeared"] = why.get("someone appeared", 0) + 1; run([g]); g -= 1
-    if why:
-        log("  frames detected where following stopped: " + ", ".join("%s %d" % kv for kv in sorted(why.items())))
-    return [res[f] for f in range(n)], [], sorted(posed)
-
-def detect_frames(frames, y0, y1, marker, stride="auto"):
-    """per frame list of (kps(17,2), scores(17), box) in full-frame pixels, the frames whose keypoints were interpolated,
-    and the frames where only RTMPose ran (in interpolated boxes).
-    stride 1: model on every frame.  2: person detector + pose on every 2nd frame (+ the last); a frame in between is
-    interpolated from its neighbours unless there is a cut or the people do not pair up (then it is detected).
-    auto: like 2, but when people move the in-between keypoints are measured: the detector runs on the full picture
-    only (1 call instead of 5 with the tiles), its box is joined with the interpolated one, and RTMPose measures the
-    keypoints there (the 5 detector calls are ~85% of the time, RTMPose is cheap); fast box motion, overlapping people,
-    a cut or a change in the number of people mean a full detection"""
-    n = len(frames); res = {}; t0 = time.time(); done = [0]
-    def run(idx):
-        idx = [f for f in idx if f not in res]
-        for i in range(0, len(idx), FRAME_BATCH):
-            grp = idx[i:i + FRAME_BATCH]
-            for f, r in zip(grp, marker.run_many([frames[f][y0:y1] for f in grp])):
-                res[f] = [(k + [0, y0], s, [b[0], b[1] + y0, b[2], b[3] + y0]) for k, s, b in r]
-            done[0] += len(grp)
-            if done[0] % 40 < len(grp) or done[0] == n:
-                log("  detected %d frames (frame %d/%d, people %d)  (%.1fs)" % (done[0], grp[-1] + 1, n, len(res[grp[-1]]),
-                                                                              time.time() - t0))
-    stride = str(stride).lower()
-    if stride == "1" or n < 3:
-        run(list(range(n)))
-        return [res[f] for f in range(n)], [], []
-    th = [cv2.resize(cv2.cvtColor(fr[y0:y1], cv2.COLOR_BGR2GRAY), (96, 54), interpolation=cv2.INTER_AREA).astype(np.float32)
-          for fr in frames]
-    diff = [0.0] + [float(np.mean(np.abs(th[f] - th[f - 1]))) for f in range(1, n)]     # change f-1 -> f
-    if stride == "track":
-        return track_frames(frames, y0, y1, marker, run, res, diff)
-    run(list(range(0, n, 2)) + [n - 1])
-    todo, interp, posed, why = [], {}, {}, {}
-    for f in range(1, n - 1, 2):
-        if f in res:
-            continue
-        how, p = interpolate_people(res[f - 1], res[f + 1], max(diff[f], diff[f + 1]), check_motion=(stride == "auto"),
-                                    why=why)
-        if how == "kp":
-            interp[f] = p
-        elif how == "box":
-            posed[f] = p
-        else:
-            todo.append(f)
-    if why:
-        log("  in-between frames not interpolated: " + ", ".join("%s %d" % kv for kv in sorted(why.items())))
-    run(todo)
-    pf = sorted(posed)
-    for i in range(0, len(pf), FRAME_BATCH):             # moving people: detector on the full picture only (1 of 5 calls)
-        grp = pf[i:i + FRAME_BATCH]; items = []          # to place each box exactly, then RTMPose (picture-area coords)
-        for f in grp:
-            pic = frames[f][y0:y1]
-            try:
-                dets = marker.detect(pic)
-            except Exception as e:
-                log("  detector error on full picture:", e); dets = []
-            bxs = []
-            for b in posed[f]:
-                b = [b[0], b[1] - y0, b[2], b[3] - y0]
-                best = max(dets, key=lambda d: iou(b, d), default=None)
-                if best is not None and iou(b, best) > 0.5:  # grow it like merge_boxes does with the tile boxes
-                    b = [min(b[0], best[0]), min(b[1], best[1]), max(b[2], best[2]), max(b[3], best[3])]
-                bxs.append([float(v) for v in b])
-            items.append((pic, bxs))
-        for f, (pic, bxs), (kps, sc) in zip(grp, items, marker.poses(items)):
-            res[f] = [(k + [0, y0], s, [b[0], b[1] + y0, b[2], b[3] + y0]) for k, s, b in zip(kps, sc, bxs)]
-    res.update(interp)
-    return [res[f] for f in range(n)], sorted(interp), pf
-
-
-# ----------------------------------------------------------------------------- one clip
 def process(path, out_root, args, marker):
     name = os.path.splitext(os.path.basename(path))[0]
     rel = os.path.relpath(os.path.dirname(os.path.abspath(path)), args.base) if args.base else ""
@@ -717,28 +140,17 @@ def process(path, out_root, args, marker):
     previous = os.path.join(out,"pose.json")
     if os.path.exists(previous) and not args.force:
         old = jload(previous)
-        if not needs_tracking(old,settings) and (old.get('tracker_backend')!='sam3' or os.path.isfile(os.path.join(out,'sam3_masks.npz'))):
+        if not needs_tracking(old,settings) and os.path.isfile(os.path.join(out,'sam3_masks.npz')):
             log("skip (already done):", path)
             return
-    changed = os.path.isfile(previous) and needs_tracking(jload(previous),settings)
-    if settings.get('tracker_backend','geometry') == 'sam3' or changed:
-        from sam3_tracking import publish
-        os.makedirs(out,exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=out,prefix='tracking_pending_') as staged:
-            _generate_marks(path,staged,args,marker,settings)
-            backup = publish(staged,out)
-            if backup: log('  previous tracking and person edits backed up: '+backup)
-            log('  updated tracking marks published: '+out)
-    else:
-        _generate_marks(path,out,args,marker,settings)
-
-
-def make_marker(args, settings):
-    if settings.get('pose_backend','rtmpose') == 'rtmo':
-        from rtmo_marker import RTMOMarker
-        args.mode = 'RTMO'; args.detect_stride = '1'
-        return RTMOMarker(settings.get('rtmo_model',''),args.engine,not args.no_tiles)
-    return Marker(args.mode,args.device,not args.no_tiles,args.engine)
+    from sam3_tracking import publish
+    os.makedirs(out, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=out, prefix='tracking_pending_') as staged:
+        _generate_marks(path, staged, args, marker, settings)
+        backup = publish(staged, out)
+        if backup:
+            log('  previous tracking and person edits backed up: ' + backup)
+        log('  updated tracking marks published: ' + out)
 
 
 def _generate_marks(path, out, args, marker, settings):
@@ -754,62 +166,40 @@ def _generate_marks(path, out, args, marker, settings):
     t0 = time.time()
     from shots import split_shots
     shots = split_shots(frames,y0,y1-y0)
-    cuts = [start for start,end in shots][1:]
-    max_gap = max(15, round(fps * float(settings.get("track_occlusion_seconds", 2.0))))
-    identities = {}
-    sam3 = settings.get('tracker_backend','geometry') == 'sam3'
-    if sam3:
-        from sam3_tracking import run_masks,measure_poses
-        log('  SAM 3 persistent video tracking ...')
-        bundle = run_masks(frames,y0,y1,shots,out,settings,fps)
-        # The SAM 3 process exits before loading the ONNX pose model on the GPU.
-        marker = marker or make_marker(args,settings)
-        tr = measure_poses(bundle,frames,y0,y1,marker)
-        interp,posed = [],[]
-        jsave(os.path.join(out,'tracking_report.json'),{'backend':'sam3','version':1,'mask_records':len(bundle['frames']),
-              'identities':len(tr),'peak_vram_mb':float(bundle.get('peak_vram_mb',0.)),
-              'shots':[[int(a),int(b)] for a,b in shots]})
-    else:
-        marker = marker or make_marker(args,settings)
-        per_frame, interp, posed = detect_frames(frames, y0, y1, marker, args.detect_stride)
-        log("  detected %d/%d frames, %d pose only, %d interpolated (stride %s)  %.1fs" % (
-            n - len(interp) - len(posed), n, len(posed), len(interp), args.detect_stride, time.time() - t0))
-        if os.environ.get("AUTOMARK_DUMP"):
-            import pickle
-            pickle.dump(per_frame, open(os.path.join(out, "per_frame.pkl"), "wb"))
-        tr = track(per_frame, max_gap=max_gap, frames=frames, cuts=cuts, identity=identities)
-        if not getattr(args, "no_gap_fill", False):
-            nf = fill_gaps(tr, per_frame, frames, y0, y1, marker)
-            if nf: log("  %d frames of briefly hidden people measured in their predicted box" % nf)
+    from sam3_tracking import run_masks, measure_poses
+    log('  SAM 3 persistent video tracking ...')
+    bundle = run_masks(frames, y0, y1, shots, out, settings, fps)
+    # The SAM 3 process exits before loading RTMPose on the GPU.
+    marker = marker or Marker(args.mode, args.device, args.engine)
+    tr = measure_poses(bundle, frames, y0, y1, marker)
+    jsave(os.path.join(out, 'tracking_report.json'), {
+        'backend': 'sam3', 'version': 1, 'mask_records': len(bundle['frames']),
+        'identities': len(tr), 'peak_vram_mb': float(bundle.get('peak_vram_mb', 0.)),
+        'shots': [[int(a), int(b)] for a, b in shots]})
     # drop short / weak tracks, then number people by size (P1 = biggest on screen)
     good = {}
     for t, d in tr.items():
-        if len(d) < (min(args.min_track,4) if sam3 else args.min_track):
-            continue
-        msc = np.mean([s.mean() for k, s, b in d.values()])
-        if msc < 0.25 and not sam3:
+        if len(d) < args.min_track:
             continue
         good[t] = d
     order = sorted(good, key=lambda t: -np.mean([b[3] - b[1] for k, s, b in good[t].values()]))
     people = []
     for new_id, t in enumerate(order, 1):
         d = good[t]
-        people.append({"id": new_id, "appearance": identities.get(t), "frames": {str(f): [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
+        people.append({"id": new_id, "frames": {str(f): [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
                                                          for (x, y), s in zip(k, sc)] for f, (k, sc, b) in sorted(d.items())},
                        "boxes": {str(f): [round(float(v), 1) for v in b] for f, (k, sc, b) in sorted(d.items())}})
-        if sam3: people[-1]['sam3_id'] = int(t)
+        people[-1]['sam3_id'] = int(t)
     review = sorted(set(list(range(0, n, args.step)) + [n - 1]))
     data = {"video": os.path.abspath(path), "clip": name, "width": W, "height": H, "fps": fps, "frames": n,
             "picture_area": [0, y0, W, y1 - y0], "keypoint_names": KP_NAMES, "review_frames": review,
-            "model": "rtmlib Body (%s; %s)" % (args.mode, marker.engine), "detect_stride": str(args.detect_stride),
-            "interpolated_frames": interp, "pose_only_frames": posed, "people": people}
-    data["tracking_version"] = 2
-    data["tracking_max_gap"] = max_gap
-    data['tracker_backend'] = 'sam3' if sam3 else 'geometry'
-    if sam3:
-        from sam3_tracking import signature
-        data['masks_file'] = 'sam3_masks.npz'
-        data['tracking_signature'] = signature(settings)
+            "model": "RTMPose (%s; %s)" % (args.mode, marker.engine),
+            "people": people}
+    from sam3_tracking import signature
+    data['tracking_version'] = 2
+    data['tracker_backend'] = 'sam3'
+    data['masks_file'] = 'sam3_masks.npz'
+    data['tracking_signature'] = signature(settings)
     with open(os.path.join(out, "pose.json"), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
     # review images + check page
@@ -827,7 +217,8 @@ def _generate_marks(path, out, args, marker, settings):
         page_frames.append({"f": f, "img": "data:image/jpeg;base64," + base64.b64encode(jpg).decode(),
                             "people": [{"id": pid, "kps": [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
                                                             for (x, y), s in zip(k, s_)]} for pid, k, s_ in ppl]})
-    tpl = open(os.path.join(HERE, "check_template.html"), encoding="utf-8").read()
+    with open(os.path.join(HERE, "check_template.html"), encoding="utf-8") as template:
+        tpl = template.read()
     page = {"clip": name, "video": os.path.abspath(path), "picture_area": [0, y0, W, y1 - y0], "kp_names": KP_NAMES,
             "skeleton": SKELETON, "frames": page_frames}
     html = tpl.replace("__PAGE_DATA__", json.dumps(page, ensure_ascii=False))
@@ -846,36 +237,17 @@ def main():
                     help="pose models: performance (largest, most exact), balanced (faster, "
                          "less exact joints), lightweight. default: config.json pose_mode")
     ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
-    ap.add_argument("--no-tiles", action="store_true", help="faster, but may miss small far-away people")
-    ap.add_argument("--min-track", type=int, default=8, help="ignore people seen in fewer frames than this")
+    ap.add_argument("--min-track", type=int, default=4, help="minimum observed frames per person (at least 4)")
     ap.add_argument("--force", action="store_true", help="redo clips that already have pose.json")
-    ap.add_argument("--no-gap-fill", action="store_true", help="do not measure briefly hidden people in their predicted box")
-    ap.add_argument("--no-overlap-split", action="store_true",
-                    help="old box merging: a box mostly inside another is always the same person")
-    ap.add_argument("--split-wide", action="store_true",
-                    help="probe wide boxes for two people side by side (RTMPose on each half; may add junk tracks)")
-    ap.add_argument("--detect-stride", default=None, choices=["auto", "1", "2", "track"],
-                    help="1 = model on every frame; 2 / auto = every 2nd frame, in-between frames interpolated when safe "
-                         "(auto also detects on fast motion). default: config.json detect_stride")
     ap.add_argument("--engine", default=None, choices=["tensorrt", "cuda"],
                     help="GPU engine (tensorrt falls back to cuda). default: config.json pose_engine")
     args = ap.parse_args()
-    if args.detect_stride is None or args.engine is None or args.mode is None:
-        try:
-            c = cfg()
-        except Exception:
-            c = {}
-        args.detect_stride = args.detect_stride or str(c.get("detect_stride", "auto"))
-        args.engine = args.engine or str(c.get("pose_engine", "tensorrt"))
-        args.mode = args.mode or str(c.get("pose_mode", "performance"))
-    args.device = pick_device(args.device)               # stops here without a working NVIDIA card
-    global KEEP_OVERLAPPING, SPLIT_WIDE
-    if args.split_wide:
-        SPLIT_WIDE = True
-    if args.no_overlap_split:
-        KEEP_OVERLAPPING = SPLIT_WIDE = False
-    if not args.inputs:
-        args.inputs = [cfg()["source_root"]]                 # no input given: the Source folder of config.json
+    settings = cfg()
+    args.engine = args.engine or str(settings.get("pose_engine", "tensorrt"))
+    args.mode = args.mode or str(settings.get("pose_mode", "performance"))
+    if args.min_track < 4:
+        ap.error("--min-track must be at least 4 for the 3D fitter")
+    args.device = pick_device(args.device)
     vids = []
     for p in args.inputs:
         if os.path.isdir(p):
@@ -893,7 +265,7 @@ def main():
         log("no videos found"); return
     log("%d video(s) to process" % len(vids))
     settings = cfg()
-    marker = None if settings.get('tracker_backend','geometry') == 'sam3' else make_marker(args,settings)
+    marker = None
     failures = 0
     for i, v in enumerate(vids, 1):
         log("[%d/%d] %s" % (i, len(vids), v))

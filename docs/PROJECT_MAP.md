@@ -1,7 +1,6 @@
 # Project map
 
-What every folder and tracked file is for, and what the 2026-11-18 review decided about it. Regenerate the file
-table after big changes; the decisions below are written by hand.
+What every folder and tracked file is for, and what the 2026-11-18 review decided about it. For the current model dependency flow, see [MODEL_FLOW.md](MODEL_FLOW.md). The file table is a historical inventory; the decisions below are written by hand.
 
 ## Folders
 
@@ -18,8 +17,8 @@ table after big changes; the decisions below are written by hand.
 | `inputs\test\` | Three short test clips | yes |
 | `data\` | Clip-name tables; `jobs.db` (the app's job queue) is not in git | partly |
 | `.venv\` | Python environment, made by `Setup.bat` | no |
-| `models\` | Model weights: Depth Anything, MoGe-2, MotionBERT, SAM 2.1 | no |
-| `third_party\` | MoGe and MotionBERT source code, downloaded by `Setup.bat` | no |
+| `models\` | Model weights: SAM 3, SAM 3D Body/MHR, MoGe-2, depth and semantic models | no |
+| `third_party\` | MoGe, SAM 3, SAM 3D Body and DA3 source code, downloaded by `Setup.bat` | no |
 | `SOURCE\` | Input clips | no |
 | `output\` | Per clip: detected joints, review, hints (what was detected and decided) | no |
 | `Work_auto\` | Per clip: computed files, previews, renders, quality report; rebuilt by a refit | no |
@@ -79,15 +78,13 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `pipeline/camera_solve.py` | per-frame camera rotation from tracked background features (pan / tilt / roll shots). | `pipeline/camera_estimate.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/common.py` | shared settings and helpers for the automatic white-model pipeline | `Setup.bat`, `agent/config.py`, `agent/server.py`, `agent/validate.py` +43 | imports |
 | `pipeline/compare.py` | Film frame next to the rendered frame for a few frames of a clip - to see what does not match. | `README.md`, `docs/ENV_AUTHORING.md`, `pipeline/audit.py`, `pipeline/build_env.py` +7 | imports |
-| `pipeline/dedupe_roles.py` | Find people the detector saw twice (two tracks on the same body) in the automatic roles, and mark the smaller / | `pipeline/run_pipeline.py` | imports |
-| `pipeline/fit_people.py` | 3D pose of every person: the L3 rig is fitted to the 2D marks of each frame (COCO-17) | `pipeline/build_env.py`, `pipeline/pose3d.py`, `pipeline/run_pipeline.py` | imports |
+| `pipeline/fit_people.py` | 3D pose of every person: the L3 rig is fitted to the 2D marks of each frame (COCO-17) | `pipeline/build_env.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/get_model.py` | download the Depth Anything V2 Small depth model (Apache-2.0, ~99 MB) into models\ | `Setup.bat` | imports |
 | `pipeline/ground_feet.py` | Feet on the ground and a real stepping gait (client feedback: "äººç‰©çš„æ‚¬æµ®æ„Ÿ/æ¼‚æµ®æ„Ÿå¤ªå¼º", "æ­¥æ€å’ŒåŽŸç‰‡ä¸ç¬¦"). | `docs/HINTS.md`, `pipeline/render_lzhd.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/ground_solve.py` | ground plane + camera height from the people (their feet stand on the ground, their heads are ~height above). | `pipeline/run_pipeline.py` | imports |
 | `pipeline/lens_auto.py` | The clip's lens from the picture (MoGe-2), instead of one fixed lens for every clip. | `README.md`, `pipeline/run_pipeline.py`, `tests/test_quality.py` | imports |
 | `pipeline/motion_prior.py` | Real-world movement knowledge as a SOFT recommendation for the fitted characters. | `docs/MOTION_RESEARCH.md`, `pipeline/fit_people.py` | imports |
 | `pipeline/package.py` | Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring); | `agent/server.py`, `agent/validate.py`, `docs/HINTS.md` +24 | imports |
-| `pipeline/pose3d.py` | 3D pose lifting: COCO-17 2D tracks -> H36M-17 3D joints per frame (MotionBERT, GPU). | `pipeline/common.py`, `pipeline/fit_people.py` | imports |
 | `pipeline/props.py` | Library of simple, recognisable white-model objects (like the client samples: a door has a frame, a panel and a | `README.md`, `agent/ai.py`, `agent/brief.py`, `agent/review.py` +12 | imports |
 | `pipeline/quality.py` | Quality of a fitted clip in numbers, and the filter for tracks that are not worth fitting. | `README.md`, `pipeline/env_auto.py`, `pipeline/run_pipeline.py` +2 | imports |
 | `pipeline/rig.py` | numpy copy of the L3 mannequin in blender_build.py (same joints, same Blender XYZ euler order). | `assets/sample_character.json`, `pipeline/blender_build.py`, `pipeline/build_env.py`, `pipeline/compare.py` +15 | imports |

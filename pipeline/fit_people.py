@@ -290,7 +290,7 @@ def lying_flags(K):
 
 LEG_IDX = [i for i, a in enumerate(ANG) if a[0].startswith(("hip_", "knee_"))]
 
-# ---- 3D pose prior (pose3d.py, MotionBERT): bone directions of the lifted pose, compared in camera axes.
+# ---- SAM 3D Body prior: bone directions of the metric pose, compared in camera axes.
 # (name, H36M joint a, H36M joint b, joint that turns the bone (hint keys / held poses on it win), leg bone, COCO marks)
 P3_BONES = [("spine", 0, 8, "spine", False, (5, 6, 11, 12)), ("shoulders", 11, 14, "chest", False, (5, 6)),
             ("hips", 4, 1, "root", False, (11, 12)), ("head", 8, 10, "neck", False, (0, 1, 2, 5, 6)),
@@ -319,21 +319,13 @@ def p3_dirs_b(W, s, Rcw):
     return d @ Rcw.T
 
 def p3_target(lift, f, k, world):
-    """lifted bone directions at frame f in the camera axes + how sure each is: (nbones, 3), (nbones,) or None.
-    The lifter sees the person as if centred in the picture: its pose is turned onto the ray through the body."""
+    """SAM 3D Body bone directions and confidence, already in camera coordinates."""
     fr, X, cf = lift[:3]
     i = int(f - fr[0])
     if i < 0 or i >= len(fr):
         return None
     d = X[i][_P3B] - X[i][_P3A]
     d = d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
-    body = [j for j in (5, 6, 11, 12) if k[j, 2] > 0.3] or [j for j in range(17) if k[j, 2] > 0.3]
-    if body and not (len(lift)>3 and lift[3]=='camera'):
-        r = np.r_[world.norm(f, *k[body, :2].mean(0)), 1.0]; r /= np.linalg.norm(r)
-        ax = np.cross([0, 0, 1.0], r); sn = np.linalg.norm(ax); cs = r[2]
-        if sn > 1e-6:                                         # rotation taking the optical axis onto the ray
-            ax /= sn; Kx = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
-            d = d @ (np.eye(3) + sn * Kx + (1 - cs) * Kx @ Kx).T
     c = np.minimum(cf[i][_P3A], cf[i][_P3B])
     return d, 0.2 + 0.8 * np.clip(c, 0, 1)
 
@@ -349,9 +341,9 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
       distance                    metres from the camera along the floor (number or [[frame, m], ...])
       yaw                         heading in degrees, 0 = facing +x ... (number or keys); weak guide
       floor_z                     height of what they stand / sit on (m), or [[frame, m], ...] keys (stairs)
-      pose3d: false / pose3d_weight   switch off / scale the lifted 3D pose prior for this person
-    lift: (frames, X, conf) from pose3d.lift_people (None = no 3D prior); p3: {"weight", "sigma"} from the config.
-    Hints win over the lifter: bones turned by keyed / held joints, legs of seated / hidden people, the hip and
+      pose3d: false / pose3d_weight   switch off / scale SAM 3D Body direction constraints for this person
+    lift: (frames, camera-space joints, confidence) from SAM 3D Body (None = no 3D prior); p3: {"weight", "sigma"} from the config.
+    Hints take priority over body constraints: bones turned by keyed / held joints, legs of seated / hidden people, the hip and
     shoulder lines when a yaw is set, and bones of untrusted marks (use_kps / ignore_kps) get no 3D prior."""
     hint = hint or {}
     legs = hint.get("legs", "auto")
@@ -488,7 +480,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             va = vb if va is None else va; vb = va if vb is None else vb
             out.append((i, float(va) * (1 - w) + float(vb) * w))
         return out
-    # 3D pose prior: bone directions of the lifted pose (pose3d.py); hints keep priority (see the docstring)
+    # 3D pose prior: bone directions of the SAM 3D Body pose; hints keep priority (see the docstring)
     p3 = p3 or {}
     use_p3 = lift is not None and hint.get("pose3d", True) is not False and not hint.get("ignore_kps") and not dots
     p3_w = float(hint.get("pose3d_weight", p3.get("weight", 1.0))) / float(p3.get("sigma", 0.2))
@@ -500,7 +492,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
     p3_leg = np.array([0.0 if bn[4] else 1.0 for bn in P3_BONES])
     def p3_frame(f, k, kt, yh):
         """(target directions (nb, 3), weights (nb,)) of frame f, or None"""
-        if not use_p3 or p3_w <= 0 or lying_at(f):           # the lifter has hardly seen anyone lying down
+        if not use_p3 or p3_w <= 0 or lying_at(f):           # explicit lying poses take priority over body constraints
             return None
         tg = p3_target(lift, f, k, world)
         if tg is None:
@@ -633,7 +625,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
                 r.append(d / st)
             if q0 is not None:
                 r.append((Q[:, :2] - q0[:2]) / 1.5)
-            if p3t is not None:                               # bones point where the lifted 3D pose points them
+            if p3t is not None:                               # bones follow the measured metric body directions
                 r.append(((p3_dirs_b(W, rig.s, Rcw) - p3t[0]) * p3t[1][:, None]).reshape(len(Q), -1))
             return np.concatenate(r, axis=1)
         return fb
@@ -642,7 +634,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         return lsq_b(residual_b(f, k, qprev, dt, q0), q, lo, hi, loss="soft_l1", f_scale=2.0,
                      max_nfev=it, x_scale="jac", diff_step=1e-3)
     def lift_start(q, f, k, it=30):
-        """start pose from the lifted 3D pose: heading and joint angles that point the bones like the lifter does
+        """Initialize heading and joint angles from SAM 3D Body directions
         (place and pelvis height stay; keyed / held angles are set and kept, so are the default legs when seated)"""
         kt = key_targets(f); yh = yaw_hint(f)
         t = p3_frame(f, k, kt, yh)
@@ -823,8 +815,8 @@ def fit_all(world, y0, people, N, c):
         order.sort(key=lambda p: rank.get(rv.get(str(p), {}).get("role", "extra"), 4))
     n_extra = 0
     todo = order[: c["max_people"] if not rv else len(order)]
-    lifts = {}                                               # 3D pose prior (config "pose3d", hints.json "pose3d": false = off)
-    body = c.get('_sam3d_body') if c.get('human_backend')=='sam3d_body' else None
+    lifts = {}                                               # Metric body directions; per-person pose3d hints still control their fitting weight.
+    body = c.get('_sam3d_body')
     if body is not None:
         import sam3d_body
         for pid in todo:
@@ -834,17 +826,6 @@ def fit_all(world, y0, people, N, c):
             dense = np.arange(int(fr[0]),int(fr[-1])+1)
             interpolated = np.stack([np.interp(dense,fr,xyz[:,j,axis]) for j in range(17) for axis in range(3)],axis=1).reshape(-1,17,3)
             lifts[pid] = (dense,sam3d_body.h36m(interpolated),np.full((len(dense),17),.8),'camera')
-    elif c.get("pose3d", True) and (c.get("_hints") or {}).get("pose3d", True) is not False:
-        try:
-            import pose3d
-            if pose3d.available():
-                sub = {p: (people[p][0], np.asarray(people[p][1], float) - np.array([0, y0, 0])) for p in todo}
-                cp = os.path.join(c["_work"], "pose3d%s.npz" % c.get("_shot_tag", "")) if c.get("_work") else None
-                lifts = pose3d.lift_people(sub, world.cam.W, world.cam.H, cp)
-            else:
-                log("    pose3d: torch / MotionBERT not installed - fitting without the 3D prior")
-        except Exception as e:                                 # never let the prior stop a fit
-            log("    pose3d failed (%s) - fitting without the 3D prior" % str(e)[:200])
     p3 = {"weight": float(c.get("pose3d_weight", 1.0)), "sigma": float(c.get("pose3d_sigma", 0.2))}
     for n, pid in enumerate(todo):
         fs, K = people[pid]
@@ -896,7 +877,7 @@ def fit_all(world, y0, people, N, c):
             label = (labels[n] if n < 2 else "Extra person %d" % (n - 1)) + "_" + colour
         kind = "P%d" % (n + 1)
         keys.update(label=label, colour=colour, height=height, track_id=pid, style=style)
-        keys['human_backend'] = 'sam3d_body' if body is not None and pid in lifts else 'motionbert' if pid in lifts else '2d'
+        keys['human_backend'] = 'sam3d_body' if pid in lifts else '2d'
         chars[kind] = keys
         e = np.array(list(err.values()))
         report.append({"person": kind, "track": pid, "colour": colour, "frames": len(fs),

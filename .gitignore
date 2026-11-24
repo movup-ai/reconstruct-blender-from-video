@@ -13,7 +13,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # ---------------------------------------------------------------
-# Third-party libraries (upstream clones: MoGe, sam2, MotionBERT)
+# Third-party libraries (upstream clones: MoGe, sam3, sam-3d-body, da3)
 # Re-clone these instead of committing them.
 # ---------------------------------------------------------------
 third_party/

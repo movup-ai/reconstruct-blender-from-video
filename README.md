@@ -2,13 +2,14 @@
 
 Local white-model production app. It turns the film clips in the `SOURCE` folder into the client's submission
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
-Every model runs on the NVIDIA card, and only there: the pose models through TensorRT (fp16, plain CUDA as fallback;
-the person detector as a batched copy, `models\yolox_x_humanart_batch.onnx` made by `pipeline\det_batch_model.py`, so a
-frame and its 4 tiles go to the card in one call - same boxes, about 3x faster),
-the depth model through CUDA (`onnxruntime-gpu`), and MotionBERT, MoGe-2, SAM 2.1 and CLIP through the NVIDIA build of
-PyTorch. There is no processor build: on a PC without a working NVIDIA card `Setup.bat` and the jobs stop with a message.
-`Setup.bat` installs PyTorch and the TensorRT runtime from the wheels in `downloads\torch` and `downloads\trt` when they
-are there (no download), and builds the TensorRT engines once (about 8 minutes, kept in `models\trt_cache`).
+Person reconstruction uses **SAM 3 tracking → RTMPose masked joints → SAM 3D Body → editable Blender rigs**.
+SAM 3 also segments scene objects using the same local `models/sam3/sam3.pt` checkpoint. Its image and video
+workers and the body worker run sequentially in the isolated Python 3.12 CUDA environment. RTMPose uses
+TensorRT or CUDA, and the scene depth model uses CUDA (`onnxruntime-gpu`). MoGe-2, Mask2Former, Grounding DINO
+and CLIP handle scene geometry, semantic labels and carried objects. Every inference stage needs an NVIDIA GPU.
+`Setup.bat` installs the main runtime and RTMPose joint model. The required SAM worker setup and approved
+checkpoint locations are documented in [SAM 3 tracking](docs/SAM3_TRACKING.md) and [SAM 3D Body](docs/SAM3D_BODY.md).
+Use one concurrent job on the RTX 4070. TensorRT joint engines are cached in `models/trt_cache`.
 A `3D` folder inside `SOURCE` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
 
 Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
@@ -25,12 +26,12 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 
 ## Processing upgrades
 
-SAM 3D Body is available as a selectable metric 3D body backend using tracked masks and the local body
+SAM 3D Body is the metric 3D body backend using tracked masks and the local body
 checkpoints. It adds visible-mesh depth calibration and camera-space pose/placement constraints to the
 editable mannequin fitter. See [SAM 3D Body operation and validation](docs/SAM3D_BODY.md).
 
-SAM 3 video tracking is available in Settings with the local `models/sam3/sam3.pt` checkpoint. It supplies
-persistent person masks and IDs to the existing pose models. Prepare/Re-check generates the new tracks and
+SAM 3 video tracking uses the local `models/sam3/sam3.pt` checkpoint. It supplies
+persistent person masks and IDs to RTMPose joint measurements. Prepare/Re-check generates the new tracks and
 backs up previous person edits. See [SAM 3 setup, operation and limitations](docs/SAM3_TRACKING.md).
 
 The existing models now support MAVE-style shared metric evidence, gravity and Manhattan alignment,
@@ -39,17 +40,11 @@ Finish run these stages automatically; Settings has switches for shared geometry
 The clip's Things to check list includes unresolved geometry issues. See [the implementation and testing guide](docs/MAVE_EXISTING_MODELS.md)
 for diagnostics, evidence queries, human scale controls and the differences from the paper.
 
-Settings now includes foot contact, adaptive set views, the pose backend and the camera backend.
-The tracker compares clothing colour, uses confident poses before weak candidates, checks joint confidence in
-both observations and resets identities at hard cuts. Foot contact adds a soft world-space constraint when
-visible ankles agree with a planted foot in the fitted camera. Per-person hints can disable it with
-`"foot_contact": false`. Keyed leg joints take precedence.
-
-During overlaps the tracker masks neighbouring boxes out of appearance samples, freezes appearance and velocity
-updates, and uses visible head joints when a person's body box shrinks. Brightness helps distinguish dark and light
-clothes. `track_occlusion_seconds` defaults to two seconds for retaining an identity across missing detections.
-Pose and track duplicate cleanup require matching joints; overlapping boxes or missing joints alone do not establish a duplicate.
-These tracking changes apply when fresh joint marks are generated.
+Settings includes foot contact, adaptive set views, checkpoint locations and the camera solver.
+SAM 3 IDs are retained through pose measurement and body reconstruction. Identity merging and synthetic
+track-gap filling are removed. Fitted visibility follows observed masks, and manual joint corrections,
+roles and camera hints remain available. Foot contact is a soft world-space constraint when visible ankles
+agree with a planted foot; per-person `"foot_contact": false` and keyed leg joints take precedence.
 
 Adaptive set sampling keeps the first and middle views and adds views when the camera travels 0.5 m, turns
 12 degrees or changes zoom by 15 percent relative to the nearest selected view. `set_max_frames` defaults to five.
@@ -57,14 +52,8 @@ For nearly fixed views it also looks for background uncovered when people move a
 Frames explicitly annotated by an operator are always included. Set caches and completed-job fingerprints
 include the new settings, so a changed configuration can trigger rebuilding.
 
-The default pose backend is `rtmpose`. The optional `rtmo` backend accepts a COCO-17, 640x640 RTMO ONNX checkpoint
-at `rtmo_model`, and measures every frame. It also supports the overlapping tiles used to find small people.
-Use the clip's reset/re-check workflow to generate fresh joint marks with a different model.
-This command compares models on the same footage.
-
-```powershell
-.venv\Scripts\python tools\benchmark_pose.py SOURCE\edward\two_men.mp4 --frames 24 --out downloads\pose_benchmark.json
-```
+The human model flow is fixed. Older saved backend choices are migrated automatically. See
+[the active model inventory](docs/MODEL_FLOW.md) for each remaining dependency and the retired components.
 
 The optional `da3` camera backend uses Depth Anything 3 multi-view extrinsics and interpolates between sampled views.
 It scales translation from visible floor contacts, or from the DA3 translation scale in Settings (`da3_meters_per_unit`). When scale cannot be
@@ -177,16 +166,16 @@ Objects left on auto stay where they are measured (`env_auto.by_level`).
 
 ## What happens in each step
 
-**Prepare** (Start; one job per clip, about 1.5-3 minutes):
-1. *People*: the person detector (YOLOX, batched) and RTMPose find every person and 17 joints in every frame, and
-   keep each person's identity across frames (`automark.py` -> `pose.json`).
+**Prepare** (Start; one job per clip; timing depends on clip length and crowding):
+1. *People*: SAM 3 tracks person masks and persistent IDs; RTMPose measures 17 joints inside each mask
+   (`automark.py` -> `pose.json` and `sam3_masks.npz`).
 2. *Camera and people in 3D*: cuts are found, the lens is measured (MoGe-2), the camera height / tilt / turn is
-   solved, and every person is fitted as a 3D mannequin (MotionBERT as the 3D pose prior) -> `scene_data.json`.
+   solved, and SAM 3D Body recovers metric bodies and depth placement that drive editable mannequins -> `scene_data.json`.
    A zooming lens is tracked too (`scene_data.json` "zoom": focal scale per frame): the people, the set, the drawn
    objects and the Blender camera (lens keyed every frame) all use each frame's own focal length, so things at the
    picture's edge in the first frame leave it as the camera zooms in.
 3. *Carried objects*: Grounding DINO + CLIP find what people hold or wear -> `held.json`.
-4. *Background - measured*: on the first and middle frame of each shot, MoGe-2 measures depth, SAM 2.1 cuts the
+4. *Background - measured*: on the first and middle frame of each shot, MoGe-2 measures depth, SAM 3 cuts the
    picture into pieces and Mask2Former names them; walls, floor, furniture and plants are placed from that ->
    `env_auto.json` (+ `env_auto.jpg`). Your object notes from the clip page are built here too.
 5. *Background - built*: with **Settings -> Background set -> Claude**, Claude now writes the set from the frames,
@@ -257,7 +246,7 @@ Running `--stage fit` again replaces the set with the automatic one: run `build_
 | `pipeline\` | marks, camera, ground, people fitting, set, Blender build, packaging |
 | `web\` | the pages |
 | `assets\` | the client's sample character from the November 2 trial Blender file |
-| `models\` | depth, MotionBERT, MoGe-2, SAM 2.1 and CLIP weights; `trt_cache\` holds the built TensorRT engines |
+| `models\` | SAM 3, SAM 3D Body/MHR, depth, MoGe-2, semantic and object model weights; `trt_cache\` holds the built TensorRT engines |
 | `downloads\` | saved PyTorch and TensorRT wheels that `Setup.bat` installs |
 | `output\` | joint marks and reviews per clip |
 | `data\jobs.db` | job queue (survives restarts) |

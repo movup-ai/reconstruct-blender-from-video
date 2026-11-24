@@ -12,7 +12,7 @@ Everything runs from the project folder with `.venv\Scripts\python.exe`, `PYTHON
 0. **Start from the automatic proposal.** `python pipeline\env_auto.py <clip>` (GPU, about 5-15 s per clip once the
    models are loaded; several clips in one call: `env_auto.py <clip1> <clip2> ...`, or `--all [--skip-done]`) measures
    the first and middle frame of every shot with MoGe-2 (metric 3D points + normals, with the pipeline's own field of
-   view) and SAM 2.1 (masks; the people are masked out). It writes `output\<clip>\env_auto.json` (same format as
+   view) and SAM 3 (masks; the people are masked out). It writes `output\<clip>\env_auto.json` (same format as
    env_claude.json; never touches env_claude.json) and `Work_auto\<clip>\env_auto.jpg`: per frame, the masks with
    their class (wall, building, pole = trunk / post, vegetation, rock, top = table / counter top, object, far, slope,
    terrain; people red) and object names | the proposed set over the film | the set alone.

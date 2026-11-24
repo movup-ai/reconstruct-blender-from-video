@@ -292,7 +292,7 @@ def char_pose(kind, f):
 # ------------------------------------------------------------------ set and props (geometry is baked into DATA)
 def set_pieces():
     """list of (name, verts, faces, colour, layer, smooth)   layer: 0 backdrop, 1 terrain, 2 objects"""
-    return [(m["name"], m["v"], m["f"], m["colour"], m["layer"], m.get("smooth", False)) for m in DATA["meshes"]]
+    return [(m["name"], m["v"], m["f"], m["colour"], m.get("layer", 0), m.get("smooth", False)) for m in DATA["meshes"]]
 
 def prop_pose(p, f):
     """per-frame transform of an animated prop: location, euler (deg), scale"""

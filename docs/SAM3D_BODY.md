@@ -1,8 +1,8 @@
 # SAM 3D Body reconstruction
 
-Choose **Settings → 3D body model → SAM 3D Body metric reconstruction**, then Prepare/Re-check the clip.
-The existing SAM 3 person IDs and reviewed joint corrections are reused. Switching the body backend does not
-renumber people or require tracking regeneration. MotionBERT remains selectable in the same menu.
+SAM 3D Body is the required human reconstruction model. Check its checkpoint and MHR paths in Settings,
+then Prepare/Re-check the clip. Existing SAM 3 IDs and reviewed joint corrections are reused. Changing the
+body checkpoint does not renumber people or require tracking regeneration.
 
 The following local assets are required:
 

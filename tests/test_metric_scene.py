@@ -166,6 +166,10 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(after['repairs'])
             self.assertGreater(after['evidence'][0]['coverage_fraction'],before['evidence'][0]['coverage_fraction'])
             self.assertEqual(after['evidence'][0]['conflict_fraction'],0.)
+            repaired = [m for m in data['meshes'] if '_evidence' in m]
+            self.assertTrue(repaired)
+            self.assertTrue(all(m['layer'] in (0, 1, 2) for m in repaired),
+                            'repaired geometry must satisfy the Blender scene contract')
 
     def test_occlusion_repair_moves_a_whole_primitive_toward_measured_depth(self):
         data,world = scene()

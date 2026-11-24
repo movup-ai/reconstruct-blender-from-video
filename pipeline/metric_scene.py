@@ -75,7 +75,7 @@ def observe(frames, pose, cam, y0, camj, c):
     """Run isolated GPU observations, cached by the actual images and intrinsics."""
     count = min(len(frames), max(1, int(c.get("metric_max_views", 3))))
     fs = np.unique(np.linspace(0, len(frames)-1, count, dtype=int))
-    if c.get('human_backend')=='sam3d_body' and c.get('_da3_depth'):
+    if c.get('_da3_depth'):
         available = sorted(c['_da3_depth'])
         fs = np.asarray([available[i] for i in np.unique(np.linspace(0,len(available)-1,min(count,len(available)),dtype=int))])
     width = min(cam.W, int(c.get("metric_resolution", 384)))
@@ -127,7 +127,7 @@ def observe(frames, pose, cam, y0, camj, c):
                 source["valid"][len(groups)][label == i] = False
         people.append(mask); groups.append(group)
     source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source="MoGe-2")
-    if c.get('human_backend')=='sam3d_body' and c.get('_da3_depth'):
+    if c.get('_da3_depth'):
         for i,f in enumerate(fs):
             d = c['_da3_depth'][int(f)]; Kd = c['_da3_intrinsics'][int(f)]
             warped = cv2.warpPerspective(d,source['K'][i] @ np.linalg.inv(Kd),(width,height),
@@ -301,7 +301,7 @@ def plane_proposals(bundle, minimum=40):
     """Measured planar patches as editable meshes, separated by semantic component.
 
     Retain openings by using each component's convex hull only when it is mostly filled.
-    Non-planar furniture/vegetation remains the existing SAM 2 environment's job.
+    Non-planar furniture/vegetation is handled by the SAM 3 environment builder.
     """
     candidates = []
     for f, depth, K, R, C, valid, person, labels in zip(bundle["frames"], bundle["depth"], bundle["K"], bundle["R"],
@@ -331,5 +331,6 @@ def plane_proposals(bundle, minimum=40):
                 if np.max(np.linalg.norm(vertices-center, axis=1)) > 40: continue
                 candidates.append({"name": "evidence_%s_f%d_c%d" % (name.replace(" ", "_"), f, component),
                     "v": vertices.tolist(), "f": [list(range(len(vertices)))], "colour": "set", "role": "bg",
+                    "layer": 1 if name in SUPPORT else 0,
                     "_evidence": {"frame": int(f), "semantic": name, "samples": int(mask.sum())}})
     return sorted(candidates, key=lambda m: -m["_evidence"]["samples"])[:60]

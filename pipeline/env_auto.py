@@ -6,7 +6,7 @@
 For the first and middle frame of every shot:
   MoGe-2 (microsoft/MoGe, models\\moge2\\model.pt): metric point map + normals, with the pipeline's own field of view
      (so the set lines up with the render camera); its free field-of-view estimate is reported too.
-  SAM 2.1 (facebookresearch/sam2, models\\sam2\\sam2.1_hiera_large.pt): the people's masks (from their boxes in
+  SAM 3 (models\\sam3\\sam3.pt): the people's masks (from their boxes in
      pose.json) and automatic masks of everything else.
   Ground plane: RANSAC over upward-facing points (people removed, their feet as anchors) -> the camera's height /
      tilt / roll over that ground, compared with Work_auto\\<clip>\\camera.json (the fit's camera).  Walls give the true
@@ -39,13 +39,13 @@ CLS_COL = {"floor": (120, 120, 120), "slope": (40, 160, 220), "wall": (220, 120,
 def setup():
     dl = os.path.join(AGENT, "downloads")
     os.environ.setdefault("HF_HOME", os.path.join(dl, "hf")); os.environ.setdefault("TORCH_HOME", os.path.join(dl, "torch_home"))
-    for p in (os.path.join(TP, "MoGe"), os.path.join(TP, "sam2")):
+    for p in (os.path.join(TP, "MoGe"),):
         if p not in sys.path:
             sys.path.insert(0, p)
 
 
 class Models:
-    def __init__(self, points_per_side=32, device=None):
+    def __init__(self, points_per_side=32, device=None, config=None):
         setup()
         import torch
         from common import torch_device
@@ -53,11 +53,9 @@ class Models:
         self.torch, self.dev = torch, device
         from moge.model.v2 import MoGeModel
         self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, "moge2", "model.pt")).to(device).eval()
-        from sam2.build_sam import build_sam2
-        from sam2.sam2_image_predictor import SAM2ImagePredictor
-        sam = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", os.path.join(MODELS, "sam2", "sam2.1_hiera_large.pt"), device=device)
         self.pps = points_per_side
-        self.pred = SAM2ImagePredictor(sam)
+        self.config = dict(config or cfg())
+        self.scene_cache = None
         self.seg = None                                      # what each piece is: Mask2Former ADE20K (semseg.py)
         try:
             import semseg
@@ -66,69 +64,43 @@ class Models:
         except Exception as e:
             print("segmentation model not used (%s) - pieces are named by CLIP" % str(e)[:200])
 
-    def amp(self):
-        """half precision on the GPU"""
-        return self.torch.autocast("cuda", dtype=self.torch.bfloat16)
-
     def moge_run(self, rgb, fov_x=None):
+        self.moge.to(self.dev)
         t = self.torch.tensor(rgb, dtype=self.torch.float32, device=self.dev).permute(2, 0, 1) / 255.0
         with self.torch.inference_mode():
             out = self.moge.infer(t, fov_x=fov_x, use_fp16=True)                   # half precision on the GPU
         return {k: v.float().cpu().numpy() for k, v in out.items() if hasattr(v, "cpu")}
 
-    def sam_auto(self, rgb, n=None, iou_t=0.7, stab_t=0.86, nms_t=0.6, min_area=0.002):
-        """automatic masks, done on SAM's 256x256 low-res logits (the library generator spends 10-30 s on full-res
-        post-processing; this takes about a second): point grid -> 3 masks each -> quality / stability filter ->
-        mask-IoU NMS -> survivors upsampled to the picture"""
-        torch = self.torch; F = torch.nn.functional
-        n = n or self.pps
-        H, W = rgb.shape[:2]
-        with torch.inference_mode(), self.amp():
-            self.pred.set_image(rgb)
-            g = (np.arange(n) + 0.5) / n
-            pts = np.array([(x * W, y * H) for y in g for x in g], np.float32)
-            L, S = [], []
-            for i in range(0, len(pts), 64):
-                pc = pts[i:i + 64, None, :]; pl = np.ones((len(pc), 1), np.int32)
-                _, uc, lab, _ = self.pred._prep_prompts(pc, pl, None, None, True)
-                _, iou, low = self.pred._predict(uc, lab, None, None, multimask_output=True, return_logits=True)
-                low = low.float().flatten(0, 1); iou = iou.float().flatten()
-                stab = (low > 1).sum((1, 2)).float() / (low > -1).sum((1, 2)).clamp(min=1).float()
-                area = (low > 0).float().mean((1, 2))
-                k = (iou > iou_t) & (stab > stab_t) & (area > min_area) & (area < 0.98)
-                L.append(low[k] > 0); S.append(iou[k] + 0.2 * stab[k])
-            M = torch.cat(L); sc = torch.cat(S)
-            if not len(M):
-                return []
-            order = torch.argsort(sc, descending=True); M = M[order]
-            Mf = M.flatten(1).half()
-            inter = (Mf @ Mf.T).float(); ar = Mf.sum(1).float()
-            iouM = (inter / (ar[:, None] + ar[None] - inter).clamp(min=1)).cpu().numpy()
-            keep = []
-            for i in range(len(M)):
-                if all(iouM[i, j] <= nms_t for j in keep):
-                    keep.append(i)
-            Mk = M[keep].float()[:, None]
-            up = F.interpolate(Mk, (H, W), mode="bilinear", align_corners=False)[:, 0] > 0.5
-            up = up.cpu().numpy()
-        return [{"segmentation": m, "area": int(m.sum())} for m in up]
+    def _release_scene_gpu(self):
+        # SAM 3 runs in a different Python/CUDA runtime. Release resident geometry and semantic weights first.
+        self.moge.to("cpu")
+        if self.seg is not None:
+            self.seg.model.to("cpu")
+        self.torch.cuda.empty_cache()
+
+    def _sam_scene(self, rgb, automatic=False, boxes=(), **options):
+        from sam3_scene import segment
+        return segment(rgb, self.config, automatic=automatic, boxes=boxes,
+                       cache_dir=self.scene_cache, before_inference=self._release_scene_gpu, **options)
+
+    def sam_auto(self, rgb, n=None, iou_t=.7, stab_t=.86, nms_t=.6, min_area=.002):
+        masks = self._sam_scene(rgb, automatic=True, points=n or self.pps,
+                                iou=iou_t, stability=stab_t, nms=nms_t, min_area=min_area)['masks']
+        return [{"segmentation": m, "area": int(m.sum())} for m in masks]
 
     def sam_box_mask(self, rgb, box):
-        """the outline of the one thing inside a drawn box (SAM with the box as prompt) -> bool mask"""
-        with self.torch.inference_mode(), self.amp():
-            self.pred.set_image(rgb)
-            m, sc, _ = self.pred.predict(box=np.asarray(box, np.float32), multimask_output=True)
-        m = np.asarray(m).reshape(-1, *rgb.shape[:2]); sc = np.asarray(sc).reshape(-1)
-        return m[int(np.argmax(sc))].astype(bool)
+        return self._sam_scene(rgb, boxes=[box])['box_masks'][0]
 
     def sam_boxes(self, rgb, boxes):
         if not len(boxes):
             return np.zeros(rgb.shape[:2], bool)
-        with self.torch.inference_mode(), self.amp():
-            self.pred.set_image(rgb)
-            m, _, _ = self.pred.predict(box=np.asarray(boxes, np.float32), multimask_output=False)
-        m = np.asarray(m).reshape(len(boxes), -1, *rgb.shape[:2])[:, 0]
-        return m.astype(bool).any(0)
+        return self._sam_scene(rgb, boxes=boxes)['box_masks'].any(0)
+
+    def semantic(self, rgb):
+        if self.seg is None:
+            return None
+        self.seg.model.to(self.dev)
+        return self.seg(rgb)
 
 
 # ----------------------------------------------------------------------------------------------- geometry helpers
@@ -341,7 +313,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     if shared is not None and fr.segm is not None and list(shared["names"]) == fr.segm.names:
         fr.sem = cv2.resize(shared["labels"].astype(np.int16),(Wk,Hk),interpolation=cv2.INTER_NEAREST)
     else:
-        fr.sem = fr.segm(rgb) if fr.segm is not None else None      # class of every pixel (ADE20K)
+        fr.sem = models.semantic(rgb)      # class of every pixel (ADE20K)
     masks = sorted(masks, key=lambda m: -m["area"])
     lab = np.full((Hk, Wk), -1, np.int32)
     for i, m in enumerate(masks):                                # big first, smaller ones on top
@@ -1426,7 +1398,7 @@ def main():
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
     pts = a.points or int(c.get("sam_points", 32))
-    models = Models(pts)
+    models = Models(pts, config=c)
     print("SAM: %dx%d points" % (pts, pts))
     import namer as NM
     models.namer = NM.Namer(models.dev) if (models.seg is None and NM.available()) else None   # only without Mask2Former
@@ -1512,6 +1484,7 @@ def sample_set_frames(data, start, end, c, first_only=False, pose=None, picture=
 def run_clip(name, models, a, c):
     T0 = time.time()
     work = os.path.join(c["work_root"], name)
+    models.scene_cache = os.path.join(work, "sam3_scene_cache")
     print("== %s" % name)
     ci = jload(os.path.join(work, "clip_info.json")); data = jload(os.path.join(work, "scene_data.json"))
     camj = jload(os.path.join(work, "camera.json"))
@@ -1894,7 +1867,7 @@ def run_clip(name, models, a, c):
         env = dict(out_shots["1"]); env["sky"] = sky
     else:
         env = {"sky": sky, "shots": out_shots}
-    env["_auto"] = {"tool": "env_auto.py (MoGe-2 vitl-normal + SAM 2.1 hiera-large)", "fov_x_deg": round(fov_x, 2), "shots": report,
+    env["_auto"] = {"tool": "env_auto.py (MoGe-2 vitl-normal + SAM 3 image masks)", "fov_x_deg": round(fov_x, 2), "shots": report,
                     "time_s": round(time.time() - T0, 1)}
     outp = (a.out if a.out and len(a.names) <= 1 else None) or os.path.join(output_dir(), name, "env_auto.json")
     if os.path.basename(outp).lower() == "env_claude.json":

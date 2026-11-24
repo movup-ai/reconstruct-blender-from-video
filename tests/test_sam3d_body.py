@@ -96,8 +96,9 @@ class PlacementTests(unittest.TestCase):
         delta=points[0][_P3B]-points[0][_P3A]
         delta/=np.maximum(np.linalg.norm(delta,axis=1,keepdims=True),1e-9)
         np.testing.assert_allclose(target,delta)
-        lifted,_=p3_target((np.array([0]),points,confidence),0,k,world)
-        self.assertGreater(np.max(np.abs(lifted-target)),.01)
+        # Off-axis image joints must not rotate native camera-space body directions.
+        centered,_=p3_target((np.array([0]),points,confidence),0,k,world)
+        np.testing.assert_allclose(centered,target)
 
     def test_missing_body_assets_stop_before_model_subprocess(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(BODY.subprocess,'run') as run:

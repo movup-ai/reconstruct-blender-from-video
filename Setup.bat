@@ -66,24 +66,12 @@ if errorlevel 1 (
 
 echo Depth model...
 "%VPY%" pipeline\get_model.py || echo   (depth model download failed - run Setup.bat again later)
-echo 3D pose model (MotionBERT)...
-if not exist "third_party\MotionBERT-main\lib\model\DSTformer.py" (
-  if not exist third_party mkdir third_party
-  curl -sS -L --retry 5 -o "third_party\mb.zip" https://github.com/Walter0807/MotionBERT/archive/refs/heads/main.zip && tar -xf "third_party\mb.zip" -C third_party && del "third_party\mb.zip"
-)
-if not exist "third_party\MotionBERT-main\lib\model\DSTformer.py" echo   !! MotionBERT code missing - people are fitted without the 3D pose step
-if not exist "models\motionbert\FT_MB_release_MB_ft_h36m.bin" echo   !! MotionBERT weights missing: models\motionbert\FT_MB_release_MB_ft_h36m.bin from huggingface.co/walterzhu/MotionBERT
-echo Lens and set models (MoGe-2, SAM 2.1, CLIP)...
+echo Lens and set models (MoGe-2, SAM 3, CLIP)...
 if not exist "third_party\MoGe\moge\model\v2.py" (
   if not exist third_party mkdir third_party
   curl -sS -L --retry 5 -o "third_party\moge.zip" https://github.com/microsoft/MoGe/archive/refs/heads/main.zip && tar -xf "third_party\moge.zip" -C third_party && del "third_party\moge.zip" && ren "third_party\MoGe-main" MoGe
 )
-if not exist "third_party\sam2\sam2\build_sam.py" (
-  if not exist third_party mkdir third_party
-  curl -sS -L --retry 5 -o "third_party\sam2.zip" https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip && tar -xf "third_party\sam2.zip" -C third_party && del "third_party\sam2.zip" && ren "third_party\sam2-main" sam2
-)
 if not exist "models\moge2\model.pt" echo   !! MoGe-2 weights missing: models\moge2\model.pt - every clip uses the fixed lens of config.json
-if not exist "models\sam2\sam2.1_hiera_large.pt" echo   !! SAM 2.1 weights missing: models\sam2\sam2.1_hiera_large.pt - no automatic set
 if not exist "models\clip\open_clip_model.safetensors" echo   !! CLIP weights missing: models\clip\open_clip_model.safetensors - set pieces are named from shape and colour only
 echo Carried-object model (Grounding DINO, about 0.9 GB the first time)...
 if not exist "models\grounding_dino\model.safetensors" (
@@ -93,15 +81,20 @@ echo Set segmentation model (Mask2Former ADE20K, about 0.8 GB the first time)...
 if not exist "models\mask2former_ade\model.safetensors" (
   "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('facebook/mask2former-swin-large-ade-semantic', local_dir=r'models\mask2former_ade', allow_patterns=['*.json','*.safetensors'])" || echo   !! Mask2Former not downloaded - set pieces are named by CLIP and plants / curtains use library shapes
 )
-echo Pose models (first download ~600 MB; the first TensorRT engine build takes about 8 minutes)...
-"%VPY%" -c "from rtmlib import Body; from rtmlib.tools.file import download_checkpoint as d; m=Body.MODE['performance']; d(m['det']); d(m['pose'])" || echo   !! pose models not downloaded - they are downloaded on first use
-rem the person detector, batched: the picture and its 4 tiles in one GPU call (same boxes, about 3x faster)
-"%VPY%" pipeline\det_batch_model.py || echo   !! batched person detector not made - the detector takes one picture a call (slower)
-"%VPY%" -c "import automark; m=automark.Marker(); print('  pose models ready (%%s)' %% m.engine)" || echo   !! pose models not ready - they are downloaded and built on first use
+echo Masked joint model (RTMPose; no person detector)...
+"%VPY%" -c "from rtmlib import Body; from rtmlib.tools.file import download_checkpoint as d; d(Body.MODE['performance']['pose'])" || goto end_fail
+"%VPY%" -c "import automark; m=automark.Marker(); print('  RTMPose ready (%%s)' %% m.engine)" || goto end_fail
+
+echo Required SAM 3 and SAM 3D Body assets...
+"%VPY%" -c "import sys, os; sys.path.insert(0,'pipeline'); from common import cfg, human_model_assets; missing=[(n,p) for n,p in human_model_assets(cfg()) if not os.path.isfile(p)]; [print('  Missing %%s: %%s' %% x) for x in missing]; sys.exit(bool(missing))"
+if errorlevel 1 (
+  echo See docs\SAM3_TRACKING.md and docs\SAM3D_BODY.md for worker installation and approved checkpoints.
+  goto end_fail
+)
 if not exist "assets\sample_character.json" (
   echo NOTE: assets\sample_character.json is missing - characters fall back to box mannequins.
 )
-"%VPY%" -m agent.selftest
+"%VPY%" -m agent.selftest || goto end_fail
 echo.
 echo Optional AI suggestions: paste your DeepSeek API key in the app (start page, "AI suggestions").
 echo ============================================================

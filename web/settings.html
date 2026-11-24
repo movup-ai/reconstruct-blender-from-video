@@ -41,19 +41,13 @@
       <div><input id="set_adaptive_frames" type="checkbox"> Measure additional views when the camera moves</div>
       <label class="k" for="set_max_frames">Maximum automatic views per shot</label>
       <div><input id="set_max_frames" type="number" min="2" max="12" value="5"></div>
-      <label class="k" for="pose_backend">Pose model</label>
-      <div><select id="pose_backend"><option value="rtmpose">YOLOX + RTMPose</option><option value="rtmo">RTMO</option></select></div>
-      <label class="k" for="tracker_backend">Person tracking</label>
-      <div><select id="tracker_backend"><option value="geometry">Pose and appearance</option><option value="sam3">SAM 3 video tracking</option></select></div>
+      <div class="k">Person reconstruction</div>
+      <div>SAM 3 tracking → RTMPose masked joints → SAM 3D Body</div>
       <label class="k" for="sam3_checkpoint">SAM 3 checkpoint</label>
       <div><input id="sam3_checkpoint" type="text"></div>
       <label class="k" for="sam3_python">SAM 3 Python executable</label>
       <div><input id="sam3_python" type="text"></div>
-      <div class="help">SAM 3 keeps mask identities through overlaps and measures poses inside each person's mask. Prepare/Re-check regenerates tracking after a backend change. Previous person edits are backed up, and the new IDs need review.</div>
-      <label class="k" for="rtmo_model">RTMO ONNX file</label>
-      <div><input id="rtmo_model" type="text"></div>
-      <label class="k" for="human_backend">3D body model</label>
-      <div><select id="human_backend"><option value="motionbert">MotionBERT pose prior</option><option value="sam3d_body">SAM 3D Body metric reconstruction</option></select></div>
+      <div class="help">SAM 3 keeps mask identities through overlaps. RTMPose measures joints inside each person's mask. Prepare/Re-check regenerates tracking when its checkpoint or settings change. Previous person edits are backed up, and the new IDs need review.</div>
       <label class="k" for="sam3d_checkpoint">SAM 3D Body checkpoint</label>
       <div><input id="sam3d_checkpoint" type="text"></div>
       <label class="k" for="sam3d_mhr">MHR model file</label>
@@ -158,7 +152,7 @@ async function load() {
   $('parhelp').textContent = S.nvidia ? 'This PC has an NVIDIA card: 2–3 at once is usually fine. Lower it if the PC gets slow or the card runs out of memory.'
     : 'No working NVIDIA card was found. The models run on the NVIDIA card only: run Setup.bat, then start the app again.';
   segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
-  for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'tracker_backend', 'sam3_checkpoint', 'sam3_python', 'human_backend', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
+  for (const key of ['camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
   for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
   $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
@@ -188,7 +182,7 @@ $('ds_save').onclick = async () => { const k = $('ds_key').value.trim(); if (!k)
 $('ds_test').onclick = async () => { $('ds_state').innerHTML = '<span class="muted">Testing… (up to a minute)</span>';
   const r = await post('/api/ai_test'); $('ds_state').innerHTML = `<span class="${r.ok ? (r.images ? 'good' : 'warn') : 'bad'}">● ${esc(r.detail)}</span>`; };
 segInit($('set_builder'), v => set({ set_builder: v }, v === 'claude' ? 'Claude builds the sets from the next Prepare' : 'The local models build the sets'));
-for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python', 'tracker_backend', 'sam3_checkpoint', 'sam3_python', 'human_backend', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python']) {
+for (const key of ['camera_backend', 'da3_model', 'da3_python', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python']) {
   $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
 }
 for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');

@@ -80,29 +80,6 @@ class TestMemberNames(unittest.TestCase):
             common.member_cfg(c, "ben", "")
 
 
-class TestBatchedDetector(unittest.TestCase):
-    """the batched person detector's own NMS gives what the original model's built-in one + rtmlib gave"""
-    def test_nms_per_class_top_and_threshold(self):
-        import det_batch_model as dbm
-        import numpy as np
-        boxes = np.array([[0, 0, 100, 200], [2, 2, 102, 202], [300, 0, 400, 200], [0, 0, 100, 200], [500, 0, 600, 90]], np.float32)
-        scores = np.zeros((5, 80), np.float32)
-        scores[0, 0], scores[1, 0], scores[2, 0] = 0.9, 0.8, 0.6   # 1 overlaps 0 (IoU 0.94): suppressed; 2 is apart: kept
-        scores[3, 5] = 0.7                                       # the same place, another class: NMS is per class, kept
-        scores[4, 0] = 0.25                                      # below rtmlib's 0.3: left out
-        out = dbm.person_dets(boxes, scores)
-        self.assertEqual(out.tolist(), [[0, 0, 100, 200], [0, 0, 100, 200], [300, 0, 400, 200]], "best first")
-        self.assertEqual(dbm.person_dets(boxes, np.zeros((5, 80), np.float32)).shape, (0, 4))
-
-    def test_iou_at_the_threshold_is_kept(self):
-        import det_batch_model as dbm
-        import numpy as np
-        b = np.array([[0, 0, 100, 100], [0, 35, 100, 135]], np.float32)       # IoU 65/135 = 0.48: kept
-        self.assertEqual(len(dbm.nms(b, np.array([0.9, 0.8]), 0.65)), 2)
-        b = np.array([[0, 0, 100, 100], [0, 10, 100, 110]], np.float32)       # IoU 90/110 = 0.82: suppressed
-        self.assertEqual(dbm.nms(b, np.array([0.9, 0.8]), 0.65).tolist(), [0])
-
-
 class TestMarksFolder(unittest.TestCase):
     def test_default_source_unchanged(self):
         c = {"source_root": os.path.join(rp.AGENT, "SOURCE")}
@@ -518,7 +495,6 @@ class TestFinishFingerprint(unittest.TestCase):
         self.assertFalse(clipsmod.status(c, cl)["done"])
 
 
-
 class TestJobResult(unittest.TestCase):
     """a job's result is the pipeline's exit code: 0 done, 1 failed (tried again once), 3 review not confirmed (not retried)"""
     def setUp(self):
@@ -579,7 +555,6 @@ class TestJobResult(unittest.TestCase):
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "failed")
         work = clipsmod.folders(self.r.app.c, self.cl)["work"]
         self.assertTrue(os.path.exists(os.path.join(work, "job_fit.previous.log")), "the first attempt's log is kept")
-
 
 
 class TestStartOver(unittest.TestCase):

@@ -295,12 +295,13 @@ def fingerprint(c, cl):
         pass
     h.update(str(pkg.package_name(cl.name, c)).encode("utf-8"))
     settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in
-                ("pose_backend", "rtmo_model", "camera_backend", "da3_model", "da3_python", "da3_meters_per_unit",
+                ("pose_mode", "camera_backend", "da3_model", "da3_python", "da3_meters_per_unit",
                  "da3_max_views", "foot_contact", "set_adaptive_frames", "set_max_frames",
                  "metric_scene", "metric_max_views", "metric_resolution", "scene_verify", "scene_repair", "scene_repair_limit",
                  "tracker_backend", "sam3_checkpoint", "sam3_python", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
+                 "sam_points", "sam3_image_batch", "sam3_image_max_masks",
                  "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_python", "sam3d_stride", "sam3d_surface_side")}
-    h.update(json.dumps({"pipeline_version": 5, **settings}, sort_keys=True).encode("utf-8"))
+    h.update(json.dumps({"pipeline_version": 6, **settings}, sort_keys=True).encode("utf-8"))
     return h.hexdigest()
 
 

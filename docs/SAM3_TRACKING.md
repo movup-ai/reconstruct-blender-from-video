@@ -1,15 +1,15 @@
 # SAM 3 person tracking
 
-The app can use the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs.
-SAM 3 does not need SAM 3D Body. The selected RTMPose/RTMO model measures COCO-17 joints, and MotionBERT
-continues to supply the 3D pose prior.
+The app uses the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs.
+RTMPose measures COCO-17 joints inside each mask. SAM 3D Body supplies metric body shape, pose and placement.
+The same SAM 3 checkpoint supplies point-grid and box-prompted masks for scene objects.
 
 ## Use it
 
 1. Restart the app after installing this update.
-2. In Settings, choose **Person tracking → SAM 3 video tracking**. The default checkpoint path is
+2. In Settings, check the **SAM 3 checkpoint** location. The default path is
    `models/sam3/sam3.pt`; the Python executable defaults to `downloads/da3-venv/Scripts/python.exe`.
-3. Prepare/Re-check the desired clip. A backend/checkpoint/settings change regenerates its person tracks.
+3. Prepare/Re-check the desired clip. A checkpoint/settings change regenerates its person tracks.
 4. Review the new person roles and joints, then Finish.
 
 Completed deliveries are not automatically regenerated when settings change. Use Prepare/Re-check first.
@@ -28,13 +28,14 @@ the current pose file so the review cards show the current identities.
 - SAM 3's `person` prompt detects and tracks people, including people entering after the first frame. Detection
   ordering does not change the persistent ID. The app retains the SAM ID alongside its size-ranked display ID.
 - Each pose crop sees only the pixels inside its person's SAM mask. Joints outside that mask are downweighted;
-  unobserved masks do not create fabricated detections. Existing geometry-based track stitching, gap filling and
-  duplicate suppression are bypassed for SAM tracks. The short/weak pose junk filter does not discard a
+  unobserved masks do not create fabricated detections. Geometry-based identity stitching, synthetic gap filling and
+  duplicate suppression have been removed. The short/weak pose junk filter does not discard a
   mask-confirmed partial person. At least four frames are needed for the current 3D fitter.
 - Fitted character visibility follows the observed mask frames. Missing masks are not filled by borrowing
   another person's pose. Short visible fragments and occluded body joints can still need manual review.
-- Metric scene observation and the SAM 2 background builder reuse the tracked person masks to exclude people
-  from static geometry. SAM 2 remains responsible for segmenting background objects.
+- Metric scene observation and the SAM 3 background builder reuse tracked person masks to exclude people
+  from static geometry. Background objects use SAM 3's interactive image API with point and box prompts;
+  there is no standalone SAM 2 dependency. See [the current model flow](MODEL_FLOW.md).
 
 Additional config options are `sam3_mask_side` (saved-mask maximum dimension, default 640),
 `sam3_max_objects` (default 16), `sam3_probability` (output threshold, default 0.35), `sam3_timeout_min`
@@ -59,7 +60,7 @@ tracking backup path when a clip was replaced.
 ```
 
 Tests cover mask packing, identity preservation when detection order changes, overlap isolation, confidence
-masking, cropped coordinates, absent frames, cache invalidation, cleanup guards, partial-person retention and
+masking, cropped coordinates, absent frames, cache invalidation, fixed-flow migration, partial-person retention and
 safe annotation backups. GPU smoke artifacts are kept separately under `downloads/sam3-smoke/` and
 `downloads/sam3-pipeline-smoke/`.
 
@@ -67,5 +68,4 @@ For a fresh machine, use the existing Python 3.12 CUDA runtime setup described i
 `https://github.com/facebookresearch/sam3` into `third_party/sam3`, and check out tested commit
 `31cb7e624e4fe95301b1be1d4e809111593d2e45`. Install `requirements-sam3.txt` into that runtime with
 `uv pip install --python downloads/da3-venv/Scripts/python.exe -r requirements-sam3.txt`. Obtain the checkpoint
-from the approved Meta repository. Training code, SAM 3.1 checkpoints and SAM 3D Body are not needed for
-this tracking backend.
+from the approved Meta repository. The complete app also requires the [SAM 3D Body assets](SAM3D_BODY.md). Training code and SAM 3.1 checkpoints are not used.
