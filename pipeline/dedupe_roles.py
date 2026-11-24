@@ -21,15 +21,22 @@ def overlap(a, b):
 
 def same_skeleton(ka, kb, box):
     """the two tracks' joints lie on one body (a person half hidden right behind another has his own joints:
-    overlapping boxes alone do not make a duplicate).  Without enough shared joints the boxes decide."""
+    overlapping boxes alone do not make a duplicate).  Missing joints leave identity undecided."""
     if ka is None or kb is None:
-        return True
+        return False
     a, b = np.asarray(ka, float), np.asarray(kb, float)
     vis = (a[:, 2] > 0.3) & (b[:, 2] > 0.3)
     if vis.sum() < 5:
-        return True
+        return False
     h = max(10.0, box[3] - box[1])
-    return float(np.median(np.linalg.norm(a[vis, :2] - b[vis, :2], axis=1))) < 0.1 * h
+    head = vis[:5]
+    if head.sum() >= 2:
+        head_distance = np.median(np.linalg.norm(a[:5][head, :2] - b[:5][head, :2], axis=1)) / h
+        if head_distance > 0.12:
+            return False
+        if head.sum() >= 3 and head_distance < 0.03:
+            return True
+    return float(np.median(np.linalg.norm(a[vis, :2] - b[vis, :2], axis=1))) < 0.08 * h
 
 
 def duplicates(pose, active):
@@ -45,7 +52,7 @@ def duplicates(pose, active):
             same = np.mean([overlap(T[i]["boxes"][f][:4], T[j]["boxes"][f][:4]) > 0.6 and
                             same_skeleton(T[i]["frames"].get(f), T[j]["frames"].get(f), T[i]["boxes"][f])
                             for f in common])
-            if same > 0.5:
+            if same >= 0.9:
                 out.append((j, i, float(same)))
     return out
 

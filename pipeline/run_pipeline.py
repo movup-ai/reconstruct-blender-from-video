@@ -173,13 +173,20 @@ def stitch_tracks(pose, shots, max_gap=30):
                         continue
                     from dedupe_roles import same_skeleton           # overlapping boxes, but two bodies (one walking
                     if np.mean([same_skeleton(A["frames"].get(f), B["frames"].get(f), A["boxes"][f])   # behind the
-                                for f in common]) < 0.5:              # other): not the same person
+                                for f in common]) < 0.9:              # other): not the same person
                         continue
                     cost = 1.0 - ov
                 else:                                                  # one after the other
                     gap = b0 - a1
                     if gap <= 0 or gap > max_gap or shot_of.get(a1) != shot_of.get(b0):
                         continue
+                    appearance_a, appearance_b = A.get("appearance"), B.get("appearance")
+                    if appearance_a is not None and appearance_b is not None:
+                        ha_, hb_ = np.asarray(appearance_a, float), np.asarray(appearance_b, float)
+                        if ha_.shape == hb_.shape:
+                            similarity = float(np.sqrt(ha_ * hb_).sum())
+                            if similarity < 0.4:
+                                continue
                     ea, sb = box(A, a1), box(B, b0)
                     ha, hb = ea[3] - ea[1], sb[3] - sb[1]
                     if not 0.5 < hb / max(ha, 1e-6) < 2.0:

@@ -23,6 +23,48 @@ def person(x, confidence=0.9):
 
 
 class TrackingTests(unittest.TestCase):
+    def test_sparse_overlapping_skeletons_are_preserved(self):
+        a, b = person(0, 0.1), person(0, 0.1)
+        a[1][:4] = 0.9; b[1][:4] = 0.9
+        self.assertEqual(len(automark.drop_same_skeletons([a, b])), 2)
+
+    def test_distinct_visible_heads_preserve_overlapping_people(self):
+        a, b = person(0), person(0)
+        b[0][:5, 0] += 20
+        self.assertEqual(len(automark.drop_same_skeletons([a, b])), 2)
+
+    def test_identity_survives_a_longer_occlusion(self):
+        tracks = automark.track([[person(0)]] + [[] for _ in range(25)] + [[person(0)]])
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(list(tracks[1]), [0, 26])
+
+    def test_partial_box_during_overlap_preserves_identity(self):
+        a, b = person(0), person(40)
+        a = (a[0], a[1], [0, 0, 60, 180])
+        b = (b[0], b[1], [20, 0, 80, 180])
+        partial = (a[0].copy(), a[1].copy(), [0, 0, 60, 80])
+        tracks = automark.track([[a, b], [partial, b]])
+        self.assertEqual(len(tracks), 2)
+        self.assertEqual(tracks[1][1][2], partial[2])
+
+    def test_overlap_does_not_update_the_identity_template(self):
+        first = np.full((120, 100, 3), 230, np.uint8)
+        second = first.copy(); second[:, 28:48] = [0, 0, 255]
+        a, b = person(20), person(28)
+        original, overlapping = {}, {}
+        automark.track([[a]], frames=[first], identity=original)
+        automark.track([[a], [a, b]], frames=[first, second], identity=overlapping)
+        np.testing.assert_allclose(original[1], overlapping[1])
+
+    def test_appearance_distinguishes_dark_and_light_clothing(self):
+        light = np.full((120, 100, 3), 230, np.uint8)
+        dark = np.full_like(light, 20)
+        first = light.copy(); first[:, 40:] = dark[:, 40:]
+        second = dark.copy(); second[:, 40:] = light[:, 40:]
+        p, q = person(20), person(40)
+        tracks = automark.track([[p, q], [p, q]], frames=[first, second])
+        self.assertEqual(tracks[1][1][2], q[2])
+
     def test_cut_starts_new_identity(self):
         tracks = automark.track([[person(0)], [person(0)]], cuts=[1])
         self.assertEqual([list(t) for t in tracks.values()], [[0], [1]])
@@ -48,6 +90,32 @@ class TrackingTests(unittest.TestCase):
         p = person(20); q = person(40)
         tracks = automark.track([[p, q], [p, q]], frames=[first, second])
         self.assertEqual(tracks[1][1][2], q[2])
+
+
+class TrackCleanupTests(unittest.TestCase):
+    def test_missing_joints_do_not_prove_duplicate_identity(self):
+        from dedupe_roles import same_skeleton
+        keys = [[0, 0, 0.1]] * 17
+        self.assertFalse(same_skeleton(keys, keys, [0, 0, 60, 180]))
+        self.assertFalse(same_skeleton(None, keys, [0, 0, 60, 180]))
+
+    def test_stitch_preserves_people_who_have_distinct_observations(self):
+        from test_agent import TestStitch
+        import run_pipeline
+        a = TestStitch.track(1, 0, 40, 500)
+        b = TestStitch.track(2, 10, 60, 505)
+        for frame in range(34, 40):
+            b['frames'][str(frame)] = [[40, 0, 0.9]] * 17
+        pose = {'people': [a, b]}
+        self.assertEqual(run_pipeline.stitch_tracks(pose, [(0, 60)]), {})
+
+    def test_sequential_tracks_with_different_appearance_are_not_joined(self):
+        from test_agent import TestStitch
+        import run_pipeline
+        a = TestStitch.track(1, 0, 40, 500)
+        b = TestStitch.track(2, 46, 90, 510)
+        a['appearance'], b['appearance'] = [1, 0], [0, 1]
+        self.assertEqual(run_pipeline.stitch_tracks({'people': [a, b]}, [(0, 90)]), {})
 
 
 class SamplingTests(unittest.TestCase):

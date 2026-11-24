@@ -95,8 +95,15 @@ def same_person(p, q):
         return False
     vis = (sa > 0.3) & (sb > 0.3)
     if vis.sum() < 5:
-        return iou(ba, bb) > 0.45
+        return False
     h = max(10.0, ba[3] - ba[1], bb[3] - bb[1])
+    head = vis[:5]
+    if head.sum() >= 2:
+        head_distance = np.median(np.linalg.norm(ka[:5][head] - kb[:5][head], axis=1)) / h
+        if head_distance > 0.12:
+            return False
+        if head.sum() >= 3 and head_distance < 0.03:
+            return True
     return float(np.median(np.linalg.norm(ka[vis] - kb[vis], axis=1))) < 0.06 * h
 
 SPLIT_WIDE = False     # a wide box is probed for two people (see Marker.split_wide); off by default: on one bent /
@@ -359,15 +366,16 @@ class Marker:
 TRACK_JUMP = 0.45   # box centre farther than this x box height from where the track was predicted (per frame, more
                     # across gaps) -> never the same person (stops a track jumping to a neighbour when its person is lost)
 
-def track(per_frame, max_gap=15, frames=None, y0=0, cuts=()):
+def track(per_frame, max_gap=45, frames=None, y0=0, cuts=(), identity=None):
     """per_frame: list over frames of [(kps, sc, box)].  returns {track_id: {frame: (kps, sc, box)}}"""
     from scipy.optimize import linear_sum_assignment
     tracks, last = {}, {}          # last[id] = (frame, box, kps)
     vel = {}                       # vel[id] = box centre motion per frame (px) - the box is predicted across gaps
     nid = 1
     appearance = {}
+    previous_overlap = {}
     cuts = set(cuts)
-    def descriptor(f, box):
+    def descriptor(f, box, others):
         if frames is None:
             return None
         img = frames[f]
@@ -378,31 +386,52 @@ def track(per_frame, max_gap=15, frames=None, y0=0, cuts=()):
         if x1 <= x0 or yb <= ya:
             return None
         hsv = cv2.cvtColor(img[ya:yb, x0:x1], cv2.COLOR_BGR2HSV)
-        hist = cv2.calcHist([hsv], [0, 1], None, [16, 8], [0, 180, 0, 256]).ravel()
+        mask = np.full(hsv.shape[:2], 255, np.uint8)
+        for other in others:
+            ox0, oy0, ox1, oy1 = other
+            left, right = max(0, int(ox0) - x0), min(x1 - x0, int(ox1) - x0)
+            top, bottom = max(0, int(oy0 + y0) - ya), min(yb - ya, int(oy1 + y0) - ya)
+            if right > left and bottom > top:
+                mask[top:bottom, left:right] = 0
+        if np.count_nonzero(mask) < max(24, 0.2 * mask.size):
+            return None
+        hist = cv2.calcHist([hsv], [0, 1, 2], mask, [12, 4, 4], [0, 180, 0, 256, 0, 256]).ravel()
         return hist / max(float(hist.sum()), 1.0)
     def ctr(b):
         return np.array([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2])
     for f, people in enumerate(per_frame):
         if f in cuts:
-            last.clear(); vel.clear(); appearance.clear()
-        desc = [descriptor(f, p[2]) for p in people]
+            if identity is not None:
+                identity.update({t: hist.tolist() for t, hist in appearance.items()})
+            last.clear(); vel.clear(); appearance.clear(); previous_overlap.clear()
+        desc = [descriptor(f, p[2], [q[2] for j, q in enumerate(people) if j != i]) for i, p in enumerate(people)]
+        occluded = [any(max(contained(p[2], q[2]), contained(q[2], p[2])) > 0.25
+                        for j, q in enumerate(people) if j != i) for i, p in enumerate(people)]
         active = [t for t, (lf, _, _) in last.items() if f - lf <= max_gap]
         cost = np.full((len(active), len(people)), 1e6)
         for i, t in enumerate(active):
             lf, lb, lk = last[t]
             hb = max(10.0, lb[3] - lb[1])
-            v = vel.get(t, np.zeros(2)) * min(f - lf, 8)          # constant velocity, at most 8 frames ahead
+            v = vel.get(t, np.zeros(2)) * (f - lf)
             for j, (k, s, b) in enumerate(people):
                 cb = ctr(lb) + v - ctr(b)
+                overlapping = occluded[j] or previous_overlap.get(t, False)
+                good = (s > 0.3) & (tracks[t][lf][1] > 0.3)
+                if overlapping and good[:5].sum() >= 2:
+                    cb = np.median(lk[:5][good[:5]], axis=0) + v - np.median(k[:5][good[:5]], axis=0)
                 dc = np.linalg.norm(cb) / hb
-                if dc > TRACK_JUMP * (1 + 0.5 * (f - lf - 1)):
+                gate = 0.75 if overlapping else TRACK_JUMP
+                if dc > gate * (1 + 0.5 * (f - lf - 1)):
                     continue                                     # the box jumped: another person, not this one
                 dh = abs(math.log(max(10.0, b[3] - b[1]) / hb))
-                good = (s > 0.3) & (tracks[t][lf][1] > 0.3)
-                dk = np.median(np.linalg.norm(k[good] - lk[good] - v, axis=1)) / hb if good.sum() >= 4 else dc
-                c = dc + 0.7 * dk + 1.5 * dh + 0.05 * (f - lf - 1)
+                if overlapping and good[:5].sum() >= 2:
+                    good[5:] = False
+                dk = np.median(np.linalg.norm(k[good] - lk[good] - v, axis=1)) / hb if good.sum() >= 2 else dc
+                c = dc + 0.7 * dk + (0.25 if overlapping else 1.5) * dh + 0.01 * (f - lf - 1)
                 if t in appearance and desc[j] is not None:
                     distance = np.sqrt(max(0.0, 1.0 - float(np.sqrt(appearance[t] * desc[j]).sum())))
+                    if distance > 0.9 and f - lf > 5 and not occluded[j]:
+                        continue
                     c += 0.45 * distance
                 if c < 1.0:
                     # small extra cost for young tracks: when a duplicate box flickers next to a person, the person keeps
@@ -427,17 +456,22 @@ def track(per_frame, max_gap=15, frames=None, y0=0, cuts=()):
                     t = active[i]
                     lf, lb = last[t][0], last[t][1]
                     nv = (ctr(people[j][2]) - ctr(lb)) / max(1, f - lf)
-                    vel[t] = nv if t not in vel else 0.6 * vel[t] + 0.4 * nv
+                    if not occluded[j]:
+                        vel[t] = nv if t not in vel else 0.6 * vel[t] + 0.4 * nv
                     tracks[t][f] = people[j]; last[t] = (f, people[j][2], people[j][0]); used.add(j)
-                    if desc[j] is not None and j in reliable:
+                    previous_overlap[t] = occluded[j]
+                    if desc[j] is not None and j in reliable and not occluded[j]:
                         appearance[t] = desc[j] if t not in appearance else 0.9 * appearance[t] + 0.1 * desc[j]
         for j, p in enumerate(people):
             if j not in used:
                 if np.mean(p[1] > 0.3) < 0.25:
                     continue
                 tracks[nid] = {f: p}; last[nid] = (f, p[2], p[0]); nid += 1
+                previous_overlap[nid - 1] = occluded[j]
                 if desc[j] is not None:
                     appearance[nid - 1] = desc[j]
+    if identity is not None:
+        identity.update({t: hist.tolist() for t, hist in appearance.items()})
     return tracks
 
 
@@ -698,7 +732,10 @@ def process(path, out_root, args, marker):
         pickle.dump(per_frame, open(os.path.join(out, "per_frame.pkl"), "wb"))
     from shots import split_shots
     cuts = [start for start, end in split_shots(frames, y0, y1 - y0)][1:]
-    tr = track(per_frame, frames=frames, cuts=cuts)
+    settings = cfg()
+    max_gap = max(15, round(fps * float(settings.get("track_occlusion_seconds", 2.0))))
+    identities = {}
+    tr = track(per_frame, max_gap=max_gap, frames=frames, cuts=cuts, identity=identities)
     if not getattr(args, "no_gap_fill", False):
         nf = fill_gaps(tr, per_frame, frames, y0, y1, marker)
         if nf:
@@ -716,7 +753,7 @@ def process(path, out_root, args, marker):
     people = []
     for new_id, t in enumerate(order, 1):
         d = good[t]
-        people.append({"id": new_id, "frames": {str(f): [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
+        people.append({"id": new_id, "appearance": identities.get(t), "frames": {str(f): [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
                                                          for (x, y), s in zip(k, sc)] for f, (k, sc, b) in sorted(d.items())},
                        "boxes": {str(f): [round(float(v), 1) for v in b] for f, (k, sc, b) in sorted(d.items())}})
     review = sorted(set(list(range(0, n, args.step)) + [n - 1]))
@@ -724,6 +761,8 @@ def process(path, out_root, args, marker):
             "picture_area": [0, y0, W, y1 - y0], "keypoint_names": KP_NAMES, "review_frames": review,
             "model": "rtmlib Body (%s; %s)" % (args.mode, marker.engine), "detect_stride": str(args.detect_stride),
             "interpolated_frames": interp, "pose_only_frames": posed, "people": people}
+    data["tracking_version"] = 2
+    data["tracking_max_gap"] = max_gap
     with open(os.path.join(out, "pose.json"), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
     # review images + check page

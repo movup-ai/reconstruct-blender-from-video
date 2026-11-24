@@ -31,6 +31,12 @@ both observations and resets identities at hard cuts. Foot contact adds a soft w
 visible ankles agree with a planted foot in the fitted camera. Per-person hints can disable it with
 `"foot_contact": false`. Keyed leg joints take precedence.
 
+During overlaps the tracker masks neighbouring boxes out of appearance samples, freezes appearance and velocity
+updates, and uses visible head joints when a person's body box shrinks. Brightness helps distinguish dark and light
+clothes. `track_occlusion_seconds` defaults to two seconds for retaining an identity across missing detections.
+Pose and track duplicate cleanup require matching joints; overlapping boxes or missing joints alone do not establish a duplicate.
+These tracking changes apply when fresh joint marks are generated.
+
 Adaptive set sampling keeps the first and middle views and adds views when the camera travels 0.5 m, turns
 12 degrees or changes zoom by 15 percent relative to the nearest selected view. `set_max_frames` defaults to five.
 For nearly fixed views it also looks for background uncovered when people move away.

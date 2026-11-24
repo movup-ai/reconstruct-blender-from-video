@@ -39,6 +39,7 @@ DEFAULT_CFG = {
     "set_adaptive_frames": True,
     "set_max_frames": 5,
     "foot_contact": True,
+    "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
 }
 
 def cfg():
