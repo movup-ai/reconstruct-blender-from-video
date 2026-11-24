@@ -1,6 +1,6 @@
 # Blender Agent
 
-Local white-model (白模) production app. It turns the film clips in the `SOURCE` folder into the client's submission
+Local white-model production app. It turns the film clips in the `SOURCE` folder into the client's submission
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
 Every model runs on the NVIDIA card, and only there: the pose models through TensorRT (fp16, plain CUDA as fallback;
 the person detector as a batched copy, `models\yolox_x_humanart_batch.onnx` made by `pipeline\det_batch_model.py`, so a
@@ -256,7 +256,7 @@ Running `--stage fit` again replaces the set with the automatic one: run `build_
 | `agent\` | the app (server, job queue, review logic, local AI) |
 | `pipeline\` | marks, camera, ground, people fitting, set, Blender build, packaging |
 | `web\` | the pages |
-| `assets\` | the client's sample character (from `11月2日试稿blend.blend`) |
+| `assets\` | the client's sample character from the November 2 trial Blender file |
 | `models\` | depth, MotionBERT, MoGe-2, SAM 2.1 and CLIP weights; `trt_cache\` holds the built TensorRT engines |
 | `downloads\` | saved PyTorch and TensorRT wheels that `Setup.bat` installs |
 | `output\` | joint marks and reviews per clip |

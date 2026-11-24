@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-One-time: turn the client's sample character (11月2日试稿 blend, object L3.002 on Rigify rig.002) into
+One-time: turn the client's sample character (November 2 trial blend, object L3.002 on Rigify rig.002) into
 assets/sample_character.json, used by blender_build.py for character_style "sample".
 
 The sample character is 10 rigid pieces, each bound to one deform bone (torso box, sphere head with the teal face

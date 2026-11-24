@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-White-model (白模) L3 rebuild - generic Blender builder of the automatic pipeline.
+White-model L3 rebuild - generic Blender builder of the automatic pipeline.
 Run by the pipeline:  blender -b -P blender_build.py -- <scene_data.json> [render]
 Builds the grey set, the colour-coded L3 mannequins (teal face / chest markers painted on head and chest),
 the solved camera, saves model_3d/<name>.blend and optionally renders JPEG frames.
@@ -421,7 +421,7 @@ def build_blender():
             for p in me.polygons: p.use_smooth = True
         ob = bpy.data.objects.new(name, me); col.objects.link(ob); return ob
 
-    cs = coll("Set_背景")
+    cs = coll("Set_Background")
     shot_range = {int(s["shot"]): s["frames"] for s in DATA.get("shots") or []}
     for name, v, f, colour, layer, smooth in set_pieces():
         ob = mesh_obj(name, v, f, colour, cs, smooth)
@@ -466,7 +466,7 @@ def build_blender():
                         o.keyframe_insert("hide_render", frame=fr + 1); o.keyframe_insert("hide_viewport", frame=fr + 1)
                     prev = v
 
-    cp = coll("Props_可交互物体")
+    cp = coll("Props_Interactive")
     for p in DATA.get("props", []):
         ob = mesh_obj(p["name"], p["v"], p["f"], p["colour"], cp, p.get("smooth", False))
         for fr in range(DATA["frames"]):

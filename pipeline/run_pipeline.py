@@ -37,17 +37,17 @@ PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 
 BONES = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (11, 12), (5, 11), (6, 12), (11, 13), (13, 15), (12, 14), (14, 16), (0, 5), (0, 6)]
 
 def film_short(path, c=None):
-    """short film name from the folder under source_root ("人生一世￥13" -> "人生一世")"""
+    """Short film name from the folder under source_root, excluding supplier suffixes."""
     root = os.path.abspath((c or cfg())["source_root"])
     rel = os.path.relpath(os.path.abspath(path), root)
     top = rel.split(os.sep)[0] if not rel.startswith("..") and os.sep in rel else os.path.basename(os.path.dirname(path))
     if not rel.startswith("..") and rel.count(os.sep) >= 2:      # batch folder with one sub-folder per film:
-        top = rel.split(os.sep)[-2]                               # 11月17日原始素材191秒\Dragon\x.mp4 -> Dragon
+        top = rel.split(os.sep)[-2]                               # batch\Dragon\x.mp4 -> Dragon
     m = re.match(r"[\u4e00-\u9fff]+", top)
     return m.group(0) if m else re.sub(r"[^\w]+", "_", top)[:20]
 
 def clip_name(path, c=None):
-    """unique per clip: <film>_<file stem>  (several films have a clip called 11月12日(1))"""
+    """unique per clip: <film>_<file stem>  (several films can share the same clip filename)"""
     stem = os.path.splitext(os.path.basename(path))[0]
     return re.sub(r'[\\/:*?"<>|\s]+', "_", film_short(path, c) + "_" + stem).strip("_") or "clip"
 

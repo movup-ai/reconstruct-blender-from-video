@@ -72,8 +72,8 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 
 | File | Role | Referred to by | Check |
 |---|---|---|---|
-| `automark.py` | automark.py - automatic body keypoint marking for the white-model (白模) clips. | `pipeline/common.py`, `pipeline/run_pipeline.py` | imports |
-| `pipeline/blender_build.py` | White-model (白模) L3 rebuild - generic Blender builder of the automatic pipeline. | `pipeline/build_env.py`, `pipeline/extract_base_character.py`, `pipeline/extract_human_master.py`, `pipeline/extract_sample_character.py` +5 | Blender script |
+| `automark.py` | automark.py - automatic body keypoint marking for the white-model clips. | `pipeline/common.py`, `pipeline/run_pipeline.py` | imports |
+| `pipeline/blender_build.py` | White-model L3 rebuild - generic Blender builder of the automatic pipeline. | `pipeline/build_env.py`, `pipeline/extract_base_character.py`, `pipeline/extract_human_master.py`, `pipeline/extract_sample_character.py` +5 | Blender script |
 | `pipeline/build_env.py` | Hand-built set for one clip (the client-sample style: clean grey room / landscape made of simple recognisable | `README.md`, `docs/ENV_AUTHORING.md`, `docs/HINTS.md` +13 | imports |
 | `pipeline/camera_estimate.py` | automatic camera for one shot: rotation (+ zoom) tracking, steadying, and camera height / pitch / roll. | `pipeline/camera_solve.py`, `pipeline/ground_solve.py`, `pipeline/run_pipeline.py` | imports |
 | `pipeline/camera_solve.py` | per-frame camera rotation from tracked background features (pan / tilt / roll shots). | `pipeline/camera_estimate.py`, `pipeline/run_pipeline.py` | imports |
@@ -125,21 +125,21 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 |---|---|---|---|
 | `assets/reconstruction/reconstruct.py` | Rebuild the white-model shot from scene.json (schema "ba_whitemodel_scene" 1.0) in Blender. | `assets/reconstruction/README.md`, `pipeline/package.py`, `pipeline/scene_export.py` | Blender script |
 | `pipeline/deliver.py` | v2.1 delivery: our packages -> the batch folder the client expects, checked with the client's own check_package.py. | `pipeline/package.py` | imports |
-| `pipeline/render_lzhd.py` | Render + package one clip to the LZHD V1.0 spec (白模视频复刻需求及验收标准 V1.0, 2026-11-15): | `docs/LZHD_CLIP_WORKFLOW.md` | imports |
+| `pipeline/render_lzhd.py` | Render + package one clip to the LZHD V1.0 spec (White-model Video Reconstruction and Acceptance Standard V1.0, 2026-11-15): | `docs/LZHD_CLIP_WORKFLOW.md` | imports |
 | `pipeline/task_pack.py` | Fill the client's task zips (e.g. SOURCE\zacha-T001.zip) from our finished packages. | - | imports |
 | `tools/v21/check_package.bat` | Double-click wrapper for check_package.py | `docs/v21/交付规范_v1.0.md`, `tools/v21/check_package.py` | - |
-| `tools/v21/check_package.py` | 白模交付包上传前自检（对应《交付规范》第 1、2 节）。 | `agent/validate.py`, `docs/v21/交付规范_v1.0.md`, `pipeline/deliver.py`, `pipeline/package.py` +2 | imports |
+| `tools/v21/check_package.py` | Pre-upload delivery package checks (delivery specification sections 1 and 2). | `agent/validate.py`, `docs/v21/交付规范_v1.0.md`, `pipeline/deliver.py`, `pipeline/package.py` +2 | imports |
 | `tools/v21/manifest_template.csv` | Client manifest template for v2.1 deliveries | `docs/v21/交付规范_v1.0.md` | - |
 
 ### One-time asset builders (run inside or before Blender)
 
 | File | Role | Referred to by | Check |
 |---|---|---|---|
-| `pipeline/dump_base_character.py` | One-time (run inside Blender): dump the v2.1 supplied base character (character-base.blend, the 物理_* pieces of | `pipeline/extract_base_character.py` | Blender script |
+| `pipeline/dump_base_character.py` | One-time (run inside Blender): dump the v2.1 supplied base character (character-base.blend, the legacy physics-prefixed pieces of | `pipeline/extract_base_character.py` | Blender script |
 | `pipeline/dump_human_master.py` | One-time (run inside Blender): dump the official human_master.blend (rig + its 10 skinned pieces) for | `pipeline/extract_human_master.py` | Blender script |
 | `pipeline/extract_base_character.py` | One-time: the v2.1 supplied base character (character-base.blend, dumped by dump_base_character.py) -> | `pipeline/dump_base_character.py`, `pipeline/rig.py` | imports |
 | `pipeline/extract_human_master.py` | One-time: the official human_master.blend (dumped by dump_human_master.py) -> assets/human_master.json, used by | `pipeline/blender_build.py`, `pipeline/dump_human_master.py`, `pipeline/rig.py` | imports |
-| `pipeline/extract_sample_character.py` | One-time: turn the client's sample character (11月2日试稿 blend, object L3.002 on Rigify rig.002) into | `pipeline/blender_build.py` | Blender script |
+| `pipeline/extract_sample_character.py` | One-time: turn the client's sample character (November 2 trial blend, object L3.002 on Rigify rig.002) into | `pipeline/blender_build.py` | Blender script |
 
 ### App
 
@@ -159,7 +159,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `agent/review.py` | The review (key points) of a clip: people roles / colours / heights, camera, set, objects, notes. | `README.md`, `agent/__init__.py`, `agent/ai.py`, `agent/brief.py` +23 | imports |
 | `agent/selftest.py` | python -m agent.selftest - checks the installation and prints what is missing. | - | imports |
 | `agent/server.py` | HTTP server (127.0.0.1 only): the web pages, the JSON API and the media files. | `README.md`, `tests/test_agent.py` | imports |
-| `agent/validate.py` | Check submission packages against the client sample (11月2日试稿) and the delivery spec. | `agent/config.py`, `agent/review.py`, `agent/server.py`,  +1 | imports |
+| `agent/validate.py` | Check submission packages against the client sample (November 2 trial) and the delivery spec. | `agent/config.py`, `agent/review.py`, `agent/server.py`,  +1 | imports |
 | `check_template.html` | Page template of the dot editor that automark.py writes per clip | `automark.py`,  | - |
 | `requirements.txt` | Python packages for a PC with an NVIDIA card | `Setup.bat` | - |
 | `web/app.css` | App styles | `tests/test_agent.py`, `web/clip.html`, `web/help.html`, `web/index.html` +2 | - |

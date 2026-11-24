@@ -416,7 +416,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
                                         "original and the white model (24 fps film frames, same duration, no speed change)" % len(drops))
                                        if drops else "none",
                              "audio": "source audio stream copied unchanged into white_model and comparison" if pt_audio(ff, video) else "source has no audio"},
-            "checks": {"structure": "check_package.py", "reconstruction": "未验证", "visual_review": "未验证"}}
+            "checks": {"structure": "check_package.py", "reconstruction": "unverified", "visual_review": "unverified"}}
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
     with open(os.path.join(sub, "meta", "README.md"), "w", encoding="utf-8") as fh:
@@ -451,40 +451,40 @@ def blender_version(render_dir):
                 return line.split(" ", 1)[1].strip()
     except OSError:
         pass
-    return "未记录"
+    return "not recorded"
 
 
 def meta_readme(pkg, meta, desc, drops, W, H, CW, CH):
     ov = meta["output_video"]
     return "\n".join([
-        "# %s — 工程说明" % pkg, "",
-        "- 主工程：`model_3d/%s.blend`（Blender %s 保存）。打开即可，活动相机为 `Camera`。" % (pkg, meta["blender_version"]),
-        "- 场景数据：`model_3d/reconstruction/scene.json`，读取 / 重建入口 `reconstruct.py`，说明见同目录 `README.md`。",
-        "- 依赖：无额外依赖（无插件、无外部贴图、无外链文件；所有网格与材质都在工程内）。",
+        "# %s — Project guide" % pkg, "",
+        "- Main project: `model_3d/%s.blend`, saved with Blender %s. Open it directly; the active camera is `Camera`." % (pkg, meta["blender_version"]),
+        "- Scene data: `model_3d/reconstruction/scene.json`. Read or rebuild it with `reconstruct.py`; see the adjacent `README.md`.",
+        "- Dependencies: no extra dependencies, plugins, external textures or linked files. All meshes and materials are included.",
         "",
-        "## 工程内容", "",
-        "- 集合 `Set_背景`：灰白场景（地面、墙、道具等简单形体）；多镜头时每个镜头的场景只在该镜头帧段内显示（hide_render 关键帧）。",
-        "- 角色：官方 `human_master.blend` 的骨架与 10 块网格（每人一次性均匀缩放），头部与胸部识别标识面为白色（材质 `WM_marker`），"
-        "颜色：主角红、第二蓝、第三绿、第四黄、第五起青。",
-        "- 角色控制：`P<n>_root`（位置 + 朝向关键帧）→ `P<n>_pelvis`（高度关键帧）→ 各关节空物体（XYZ 欧拉旋转关键帧，每帧一键）；"
-        "网格块挂在对应关节下，改关节旋转即可继续编辑动作。",
-        "- 相机：`Camera`，每帧位置 / 旋转关键帧（随原片运镜）；焦距与传感器见 scene.json `camera`。",
-        "- 帧段：工程 1–%d 帧，%d fps，与原片逐帧对应。" % (meta["project_frames"]["frame_end"], meta["project_frames"]["fps"]),
+        "## Project contents", "",
+        "- `Set_Background` collection: gray and white scene primitives (floor, walls and props). In multi-shot clips, hide_render keys limit each set to its shot's frame range.",
+        "- Characters: the supplied `human_master.blend` rig and 10 mesh parts, uniformly scaled once per person. Head and chest marker faces use white `WM_marker` material. "
+        "Role colors: main red, second blue, third green, fourth yellow, and cyan for additional people.",
+        "- Character controls: `P<n>_root` (position and heading keys) → `P<n>_pelvis` (height keys) → joint empties (XYZ Euler rotation keys every frame). "
+        "Mesh parts follow their corresponding joints; edit joint rotations to adjust motion.",
+        "- Camera: `Camera`, with position and rotation keys every frame following the source camera. Focal length and sensor width are in scene.json `camera`.",
+        "- Timeline: frames 1–%d at %d fps, matching the source frame for frame." % (meta["project_frames"]["frame_end"], meta["project_frames"]["fps"]),
         "",
-        "## 视频", "",
-        "- `target/original.mp4`：原片，未改动（%dx%d）。%s" % (W, H, "" if (W, H) in ((1920, 1080), (1080, 1920)) else
-                                                         "原片尺寸不是 1920x1080，按规范不拉伸、不重编码，原样提交。"),
-        "- `white_model/blendervid.mp4`：%dx%d，%d fps，%d 帧；原片画面按原比例放大铺满 1080P 画布，超出部分居中裁掉，无黑边。" % (CW, CH, ov["fps"], ov["frames"]),
-        ("- `comparison/comparison.mp4`：%dx%d，上为原片、下为白模，同一时间基准；两者取景与白模视频相同（铺满 %dx%d），全尺寸上下拼接，无黑边。" % (CW, 2 * CH, CW, CH)
-         if CW >= CH else "- `comparison/comparison.mp4`：%dx%d，左为原片、右为白模，同一时间基准；两者取景与白模视频相同（铺满 %dx%d），全尺寸左右拼接，无黑边。" % (2 * CW, CH, CW, CH)),
-        "- 帧率：%s" % ov["retime"],
-        "- 音轨：%s。" % ov["audio"],
+        "## Videos", "",
+        "- `target/original.mp4`: unchanged source (%dx%d). %s" % (W, H, "" if (W, H) in ((1920, 1080), (1080, 1920)) else
+                                                         "The source is not 1920x1080; it is submitted without resizing or re-encoding, as required."),
+        "- `white_model/blendervid.mp4`: %dx%d, %d fps, %d frames. The source framing is scaled proportionally to fill the 1080P canvas and center-cropped without black borders." % (CW, CH, ov["fps"], ov["frames"]),
+        ("- `comparison/comparison.mp4`: %dx%d, source above and white model below, synchronized. Both fill %dx%d with the same framing as the white-model video, stacked at full size without black borders." % (CW, 2 * CH, CW, CH)
+         if CW >= CH else "- `comparison/comparison.mp4`: %dx%d, source left and white model right, synchronized. Both fill %dx%d with the same framing as the white-model video, placed side by side at full size without black borders." % (2 * CW, CH, CW, CH)),
+        "- Frame rate: %s" % ov["retime"],
+        "- Audio: %s." % ov["audio"],
         "",
-        "## 核对状态", "",
-        "- 结构：check_package.py 检查（见交付记录）。",
-        "- 重建：未验证（每包未单独运行 reconstruct.py；入口已在同类包上试运行）。",
-        "- 视觉审核：未验证。",
-        "" if not desc else "\n## 镜头说明\n\n" + desc + "\n"])
+        "## Verification status", "",
+        "- Structure: checked by check_package.py; see the delivery log.",
+        "- Reconstruction: unverified for this package. The entry point has been tested on similar packages, but reconstruct.py has not been run separately for each package.",
+        "- Visual review: unverified.",
+        "" if not desc else "\n## Shot notes\n\n" + desc + "\n"])
 
 
 def zip_v21(src_dir, pkg, zp):
@@ -533,24 +533,24 @@ def lzhd_flags(si):
     """qualification flags of the spec (section 7): recorded, never 'fixed' by resampling"""
     f = []
     if min(si["width"], si["height"]) < 1080:
-        f.append("原片不足1080P（%dx%d）" % (si["width"], si["height"]))
+        f.append("Source below 1080P (%dx%d)" % (si["width"], si["height"]))
     if si["fps"] < 24 - 1e-3:
-        f.append("原片低于24fps（%.3f）" % si["fps"])
+        f.append("Source below 24 fps (%.3f)" % si["fps"])
     if si["duration"] < 5.0:
-        f.append("原片短于5秒（%.3fs）" % si["duration"])
+        f.append("Source shorter than 5 seconds (%.3fs)" % si["duration"])
     if si["video_bitrate"] < 18000000:
-        f.append("原片视频码率低于18Mbps（%.2f Mbps）" % (si["video_bitrate"] / 1e6))
+        f.append("Source video bitrate below 18 Mbps (%.2f Mbps)" % (si["video_bitrate"] / 1e6))
     return f
 
 
 def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", notes=None):
-    """LZHD 白模视频复刻需求及验收标准 V1.0 (2026-11-15):
+    """LZHD White-model Video Reconstruction and Acceptance Standard V1.0 (2026-11-15):
       white_model/blendervid.mp4   same width, height, frame rate and video bit rate as the source; the source's audio
       comparison/comparison.mp4    original on top, white model below: W x 2H, same fps, audio copied
       target/original.mp4          the source clip, byte for byte
       model_3d/<pkg>.blend         editable project (official human_master rig, Eevee, active camera, timeline 1..N)
       model_3d/reconstruction/     scene.json (+ reconstruct.py, README.md)
-      meta/meta.json + README.md   specs, qualification flags, honest check record (未验证 where not done)
+      meta/meta.json + README.md   specs, qualification flags, honest check record (unverified where not done)
     No resampling, padding, cropping or speed change: frame N of the source = frame N of the white model."""
     ff = ffmpeg_exe()
     si = source_video_info(ff, video)
@@ -597,7 +597,7 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
                "comparison_fps": ci2["fps_rational"] == fr, "comparison_frames": nc == N,
                "white_model_bitrate_ratio": round(wi["video_bitrate"] / float(br), 3)}
     ok = all(v for k, v in spec_ok.items() if k != "white_model_bitrate_ratio")
-    meta = {"id": pkg, "clip": name, "spec": "LZHD 白模视频复刻需求及验收标准 V1.0 (2026-11-15)",
+    meta = {"id": pkg, "clip": name, "spec": "LZHD White-model Video Reconstruction and Acceptance Standard V1.0 (2026-11-15)",
             "paths_base": ".", "source": "target/original.mp4", "white_model": "white_model/blendervid.mp4",
             "comparison": "comparison/comparison.mp4", "model_3d": "model_3d/%s.blend" % pkg,
             "scene_json_path": "model_3d/reconstruction/scene.json", "blender_version": blender_version(render_dir),
@@ -606,10 +606,10 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
                                "uniform model_scale per character",
             "frame_start": 1, "frame_end": N, "frames": N, "fps": fr, "duration": round(D, 6),
             "source_video": si, "white_model_video": wi, "comparison_video": ci2,
-            "frame_map": "参考视频第 N 帧 = 三维工程第 N 帧 = 白模第 N 帧（1..%d）" % N,
+            "frame_map": "Source frame N = 3D project frame N = white-model frame N (1..%d)" % N,
             "qualification_flags": lzhd_flags(si), "output_checks": spec_ok,
-            "checks": {"技术结构通过": "通过（解码、帧数、尺寸、帧率已核对）" if ok else "未通过",
-                       "重建已验证": "未验证", "视觉验收": "未验证", "客户验收": "未验证"},
+            "checks": {"technical_structure": "passed (decoding, frame count, dimensions and fps checked)" if ok else "failed",
+                       "reconstruction": "unverified", "visual_review": "unverified", "client_acceptance": "unverified"},
             "notes": notes or []}
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
@@ -623,26 +623,26 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
 def lzhd_readme(pkg, meta, desc):
     s, w = meta["source_video"], meta["white_model_video"]
     lines = [
-        "# %s — 工程说明（LZHD V1.0）" % pkg, "",
-        "- 主工程：`model_3d/%s.blend`（Blender %s，Eevee）。活动相机 `Camera`，时间轴 1–%d 帧，%s fps，与原片逐帧对应。"
+        "# %s — Project guide (LZHD V1.0)" % pkg, "",
+        "- Main project: `model_3d/%s.blend` (Blender %s, Eevee). Active camera: `Camera`. Timeline: frames 1–%d at %s fps, matching the source frame for frame."
         % (pkg, meta["blender_version"], meta["frames"], meta["fps"]),
-        "- 人形：官方 `human_master.blend` 的骨架与 10 块网格（未换骨架、未改比例，仅导入时一次性均匀 model_scale）。"
-        "身体按色卡（主角 #D63E3D、第二人 #2D6BD8、第三人 #2E9D5A、第四人 #D9A014），头部与胸部识别标识为源文件自带的标识面，改为白色。",
-        "- 动作：每个角色的关节空物体（`<n>_pelvis`、`<n>_shoulder_L` …）逐帧旋转关键帧；对应的 DEF 骨骼用 Copy Transforms 跟随"
-        "（`<n>_<关节>_bone`）。改关节空物体即可继续编辑动作。",
-        "- 场景：集合 `Set_背景`，按色卡语义上色（背景 #B8B8B8、前景物体 #9A6B3B、近处交互物 #DF872F、远处交互物 #D4689E、"
-        "光源 #F5F5F5、特殊对象 #7A4EC2）。",
-        "- 光照：集合 `Lights`（主光 `Key_sun` + 环境光），方向按原片主光。", "",
-        "## 视频", "",
-        "- `target/original.mp4`：原片，未改动（%dx%d，%s fps，%.2f Mbps）。" % (s["width"], s["height"], s["fps_rational"], s["video_bitrate"] / 1e6),
-        "- `white_model/blendervid.mp4`：%dx%d，%s fps，%.2f Mbps，音轨为原片音轨拷贝。" % (w["width"], w["height"], w["fps_rational"], w["video_bitrate"] / 1e6),
-        "- `comparison/comparison.mp4`：%dx%d，上原片、下白模，同帧对齐，音轨为原片音轨拷贝。"
+        "- Characters: the supplied `human_master.blend` rig and 10 mesh parts, with original rig and proportions, uniformly scaled once on import using model_scale. "
+        "Body palette: main #D63E3D, second #2D6BD8, third #2E9D5A, fourth #D9A014. The source model's head and chest marker faces are white.",
+        "- Motion: joint empties (`<n>_pelvis`, `<n>_shoulder_L`, etc.) have rotation keys every frame. Corresponding DEF bones follow with Copy Transforms "
+        "(`<n>_<joint>_bone`). Edit the joint empties to adjust motion.",
+        "- Scene: `Set_Background` collection, colored by semantic palette: background #B8B8B8, foreground objects #9A6B3B, nearby interactive objects #DF872F, distant interactive objects #D4689E, "
+        "light sources #F5F5F5, special objects #7A4EC2.",
+        "- Lighting: `Lights` collection (`Key_sun` plus ambient light), oriented to match the source key light.", "",
+        "## Videos", "",
+        "- `target/original.mp4`: unchanged source (%dx%d, %s fps, %.2f Mbps)." % (s["width"], s["height"], s["fps_rational"], s["video_bitrate"] / 1e6),
+        "- `white_model/blendervid.mp4`: %dx%d, %s fps, %.2f Mbps; source audio copied." % (w["width"], w["height"], w["fps_rational"], w["video_bitrate"] / 1e6),
+        "- `comparison/comparison.mp4`: %dx%d, source above and white model below, aligned frame for frame; source audio copied."
         % (meta["comparison_video"]["width"], meta["comparison_video"]["height"]),
-        "- 资格旗标：%s。" % ("；".join(meta["qualification_flags"]) or "无"), "",
-        "## 核对记录（诚实记录）", ""]
-    lines += ["- %s：%s" % kv for kv in meta["checks"].items()]
+        "- Qualification flags: %s." % ("; ".join(meta["qualification_flags"]) or "none"), "",
+        "## Verification record", ""]
+    lines += ["- %s: %s" % kv for kv in meta["checks"].items()]
     if meta["notes"]:
-        lines += ["", "## 备注", ""] + ["- " + n for n in meta["notes"]]
+        lines += ["", "## Notes", ""] + ["- " + n for n in meta["notes"]]
     if desc:
-        lines += ["", "## 镜头说明", "", desc]
+        lines += ["", "## Shot notes", "", desc]
     return "\n".join(lines) + "\n"

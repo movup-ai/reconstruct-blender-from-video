@@ -23,7 +23,7 @@ from test_agent import make_video  # noqa: E402
 class TestPackageNames(unittest.TestCase):
     def test_slug(self):
         self.assertEqual(pkg.title_slug("The Hidden Blade!"), "the_hidden_blade")
-        self.assertEqual(pkg.title_slug("  隐剑  "), "")
+        self.assertEqual(pkg.title_slug("  \u9690\u5251  "), "")
 
     def test_numbering_continues_and_keeps_existing(self):
         names = {"a": "the_hidden_blade-1", "b": "the_hidden_blade-7", "x": "other-3"}
@@ -164,8 +164,8 @@ class TestTaskZips(unittest.TestCase):
         with open(v, "rb") as fh:
             self.vid = fh.read()
         self.zp = os.path.join(self.src, "p867bed92_t022-1.zip")
-        task = {"taskId": "p-1-T022", "taskCode": "T022", "taskName": "11月21日 (3)(21).mp4", "projectTitle": "侠探杰克",
-                "sourceVideo": {"name": "11月21日 (3)(21).mp4", "durationSec": 5.08}}
+        task = {"taskId": "p-1-T022", "taskCode": "T022", "taskName": "11\u670821\u65e5 (3)(21).mp4", "projectTitle": "\u4fa0\u63a2\u6770\u514b",
+                "sourceVideo": {"name": "11\u670821\u65e5 (3)(21).mp4", "durationSec": 5.08}}
         with zipfile.ZipFile(self.zp, "w") as z:
             for n in ("comparison/", "target/", "white_model/", "model_3d/", "meta/"):
                 z.writestr(n, b"")
@@ -191,7 +191,7 @@ class TestTaskZips(unittest.TestCase):
                 self.assertEqual(fh.read(), self.vid, "byte for byte")
             cl = lib.clips[0]
             self.assertEqual(cl.to_dict()["zip"], "p867bed92_t022-1.zip")
-            self.assertEqual(cl.task["code"], "T022"); self.assertEqual(cl.task["project"], "侠探杰克")
+            self.assertEqual(cl.task["code"], "T022"); self.assertEqual(cl.task["project"], "\u4fa0\u63a2\u6770\u514b")
             self.assertEqual(pkg.package_name(cl.name, self.c), "p867bed92_t022-1")
             m = os.path.getmtime(out)
             lib.rescan()                                                    # not written again
@@ -673,7 +673,7 @@ class TestSubmissionsPage(unittest.TestCase):
     def test_download_name(self):
         self.assertEqual(server.download_name("the_hidden_blade-3.zip"),
                          "attachment; filename=\"the_hidden_blade-3.zip\"; filename*=UTF-8''the_hidden_blade-3.zip")
-        self.assertIn("filename*=UTF-8''%E9%9A%90", server.download_name("隐剑.zip"))   # non-ASCII kept in the UTF-8 form
+        self.assertIn("filename*=UTF-8''%E9%9A%90", server.download_name("\u9690\u5251.zip"))   # non-ASCII kept in the UTF-8 form
 
     def test_character_file_follows_style(self):
         self.assertEqual(server.char_file({"character_style": "master"}), "human_master.json")

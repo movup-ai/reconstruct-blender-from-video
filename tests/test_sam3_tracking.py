@@ -100,7 +100,7 @@ class PersistentIdentityTests(unittest.TestCase):
     def test_lazy_frame_folder_accepts_unicode_paths(self):
         from PIL import Image
         with tempfile.TemporaryDirectory() as tmp:
-            folder=pathlib.Path(tmp)/'人物'; folder.mkdir()
+            folder=pathlib.Path(tmp)/'\u4eba\u7269'; folder.mkdir()
             Image.new('RGB',(40,20)).save(folder/'000000.jpg')
             source=SAM.FrameFolder(str(folder),1008,(.5,)*3,(.5,)*3)
             self.assertEqual((source.width,source.height,len(source)),(40,20,1))

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Check submission packages against the client sample (11月2日试稿) and the delivery spec.
+"""Check submission packages against the client sample (November 2 trial) and the delivery spec.
 
   python -m agent.validate [SUBMIT folder]      -> prints a report, writes <work_root>/submit_check.csv
 Each package must look exactly like the sample; every problem is listed in plain words."""

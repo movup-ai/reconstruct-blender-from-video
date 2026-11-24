@@ -77,7 +77,7 @@ def main():
                 marks.append(len(f)); f.append([base + i for i in x])
         return {"v": [r5(x) for x in v], "f": f, "smooth": bool(P[piece]["smooth"]), "marker_faces": marks}
 
-    # bands sized like the approved client sample (11月2日试稿, L3): eye visor ~71% of the head's width and ~22% of its
+    # bands sized like the approved client sample (November 2 trial, L3): eye visor ~71% of the head's width and ~22% of its
     # height, wrapped on the sphere at eye level; chest band ~71% of the torso's width, ~16% of its height, on the
     # upper chest (66%..82% of the torso height).  The base model's own thin strips are replaced by these.
     parts = {"chest": part("torso", A_BODY), "head": part("head", A_BODY, off=(0, 0, head_c - torso_len))}
@@ -105,7 +105,7 @@ def main():
         parts["hip_" + side] = part(nm + "_thigh", A_LIMB)
         parts["knee_" + side] = part(nm + "_shin", A_LIMB)
     hc = (head_c - torso_len) * k
-    res = {"source": "v2.1 supplied base model (character-base.blend, blender %s), pieces 物理_*" % d.get("blender"),
+    res = {"source": "v2.1 supplied base model (character-base.blend, blender %s), legacy physics-prefixed pieces" % d.get("blender"),
            "scale_to_1_75": round(k, 5), "sole": sole, "head_centre": round(hc, 5), "head_radius": round(head_r * k, 5),
            "eye_level": round(hc, 5), "joints": joints, "parts": parts}
     with open(out, "w", encoding="utf-8") as fh:

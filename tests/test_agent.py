@@ -255,7 +255,7 @@ class TestZip(unittest.TestCase):
         import package
         d = tempfile.mkdtemp()
         try:
-            name = "人生一世_11月12日(1)"
+            name = "\u4eba\u751f\u4e00\u4e16_11\u670812\u65e5(1)"
             sub = os.path.join(d, name)
             for s in package.SUBDIRS:
                 os.makedirs(os.path.join(sub, s))
@@ -345,9 +345,9 @@ class TestApi(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.d = tempfile.mkdtemp()
-        src = os.path.join(cls.d, "src", "电影Film")
+        src = os.path.join(cls.d, "src", "\u7535\u5f71Film")
         os.makedirs(src)
-        make_video(os.path.join(src, "11月12日(1).mp4"), n=30, cut=15)
+        make_video(os.path.join(src, "11\u670812\u65e5(1).mp4"), n=30, cut=15)
         cls._data = config.DATA
         config.DATA = os.path.join(cls.d, "data")
         from agent.server import App, Server, make_handler
@@ -416,7 +416,7 @@ class TestApi(unittest.TestCase):
         not found for them"""
         other_src = os.path.join(self.d, "src2")
         os.makedirs(other_src, exist_ok=True)
-        make_video(os.path.join(other_src, "11月12日(1).mp4"), n=12)        # same file name as the tester's clip
+        make_video(os.path.join(other_src, "11\u670812\u65e5(1).mp4"), n=12)        # same file name as the tester's clip
         mine = self.cookie
         try:
             TestApi.cookie = None
@@ -493,7 +493,7 @@ class TestApi(unittest.TestCase):
         code, body, _ = self.get("/api/clips")
         d = json.loads(body)
         self.assertEqual(len(d["clips"]), 1)
-        self.assertEqual(d["clips"][0]["name"], "电影_11月12日(1)")
+        self.assertEqual(d["clips"][0]["name"], "\u7535\u5f71_11\u670812\u65e5(1)")
         self.assertEqual(d["clips"][0]["status"]["label"], "not prepared")
         code, body, _ = self.get("/api/clip/" + self.cid)
         self.assertEqual(code, 200)
@@ -621,19 +621,19 @@ class TestApi(unittest.TestCase):
         make_video(p, n=12)
         with open(p, "rb") as fh:
             data = fh.read()
-        code, d = self.upload("新片Test", "clip A.mp4", data)
+        code, d = self.upload("\u65b0\u7247Test", "clip A.mp4", data)
         self.assertEqual(code, 200, d)
-        self.assertTrue(os.path.exists(os.path.join(self.d, "src", "新片Test", "clip A.mp4")))
-        self.assertEqual(d["clip"]["film"], "新片Test")
-        code, d = self.upload("新片Test", "clip A.mp4", data)
+        self.assertTrue(os.path.exists(os.path.join(self.d, "src", "\u65b0\u7247Test", "clip A.mp4")))
+        self.assertEqual(d["clip"]["film"], "\u65b0\u7247Test")
+        code, d = self.upload("\u65b0\u7247Test", "clip A.mp4", data)
         self.assertEqual(d["file"], "clip A (2).mp4", "never overwrites an existing clip")
-        self.assertEqual(self.upload("新片Test", "notes.txt", b"x")[0], 400)
+        self.assertEqual(self.upload("\u65b0\u7247Test", "notes.txt", b"x")[0], 400)
         self.assertEqual(self.upload("..\\evil", "a.mp4", data)[0], 400)
         self.assertEqual(self.upload("", "a.mp4", data)[0], 400)
         mine = TestApi.cookie
         try:
             TestApi.cookie = None
-            self.assertEqual(self.upload("新片Test", "clip B.mp4", data)[0], 401, "no upload without a login")
+            self.assertEqual(self.upload("\u65b0\u7247Test", "clip B.mp4", data)[0], 401, "no upload without a login")
         finally:
             TestApi.cookie = mine
 

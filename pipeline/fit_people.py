@@ -810,9 +810,9 @@ def assemble(rig, Q, N, smooth, span=None):
 
 def fit_all(world, y0, people, N, c):
     """people {id: (frames, kps)} -> DATA['chars'] entries + per-person report"""
-    labels = ["主角色", "第二角色"]
-    ROLE = {"main": ("主角色", "red"), "second": ("第二角色", "blue"), "third": ("第三角色", "green"),
-            "fourth": ("第四角色", "yellow"), "extra": ("其他人物", None)}
+    labels = ["Main character", "Second character"]
+    ROLE = {"main": ("Main character", "red"), "second": ("Second character", "blue"), "third": ("Third character", "green"),
+            "fourth": ("Fourth character", "yellow"), "extra": ("Extra person", None)}
     rv = (c.get("_review") or {}).get("people", {})          # key points confirmed in the review app
     chars = {}; report = []
     order = sorted(people, key=lambda p: -np.mean([np.ptp(k[k[:, 2] > 0.3, 1]) if (k[:, 2] > 0.3).sum() > 2 else 0
@@ -889,11 +889,11 @@ def fit_all(world, y0, people, N, c):
             base, colour = ROLE[r["role"]]
             colour = r.get("colour") or colour or c["colours"][min(4 + n_extra, len(c["colours"]) - 1)]
             if r["role"] == "extra":
-                n_extra += 1; base = "其他人物%d" % n_extra
+                n_extra += 1; base = "Extra person %d" % n_extra
             label = base + "_" + colour + ("_" + r["name"] if r.get("name") else "")
         else:
             colour = c["colours"][min(n, len(c["colours"]) - 1)]
-            label = (labels[n] if n < 2 else "其他人物%d" % (n - 1)) + "_" + colour
+            label = (labels[n] if n < 2 else "Extra person %d" % (n - 1)) + "_" + colour
         kind = "P%d" % (n + 1)
         keys.update(label=label, colour=colour, height=height, track_id=pid, style=style)
         keys['human_backend'] = 'sam3d_body' if body is not None and pid in lifts else 'motionbert' if pid in lifts else '2d'

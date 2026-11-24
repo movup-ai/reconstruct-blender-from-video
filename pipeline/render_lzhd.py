@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Render + package one clip to the LZHD V1.0 spec (白模视频复刻需求及验收标准 V1.0, 2026-11-15):
+"""Render + package one clip to the LZHD V1.0 spec (White-model Video Reconstruction and Acceptance Standard V1.0, 2026-11-15):
 official human_master.blend characters (style "master"), palette colours by meaning, Eevee, white model at the
 source's own width / height / frame rate / bit rate, comparison original-over-white-model at twice the height.
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-automark.py - automatic body keypoint marking for the white-model (白模) clips.
+automark.py - automatic body keypoint marking for the white-model clips.
 
 For every video it:
   1. finds the picture area (skips the black bars),

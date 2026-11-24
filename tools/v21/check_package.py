@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""白模交付包上传前自检（对应《交付规范》第 1、2 节）。
+r"""Pre-upload white-model package checks (delivery specification sections 1 and 2).
 
-用法（Windows 用 py，Linux/macOS 用 python3）：
+Usage (Windows: py; Linux/macOS: python3):
     py check_package.py the_greatest_showman-1.zip comparison.mp4
-    py check_package.py D:\交付\the_greatest_showman-1\v1      # 版本目录，自动找 zip 和 comparison.mp4
+    py check_package.py D:\deliveries\the_greatest_showman-1\v1
 
-Windows 上也可以把版本目录直接拖到同目录的 check_package.bat 上。
+The second form locates the zip and comparison.mp4 in a version directory.
+On Windows, you can also drag the version directory onto check_package.bat.
 
-全部检查通过时，在 zip 旁边生成 {包名}.zip.sha256，并打印 manifest_v{n}.csv 需要的
-zip_sha256、zip_size、comparison_sha256。有任何一项不通过时，退出码为 1，并且
-不会生成 .zip.sha256（如果旁边留着旧的，会删掉，避免把没通过的包传上去）。
+On success, writes {package}.zip.sha256 beside the zip and prints the zip_sha256,
+zip_size and comparison_sha256 fields for manifest_v{n}.csv. A failed check exits
+with code 1 and removes any old .zip.sha256 file to avoid uploading a failed package.
 
-只依赖 Python 3.9+ 标准库。这里只检查文件结构；视频能否完整解码由收货方验收时检查。
+Requires only the Python 3.9+ standard library. Checks file structure; the recipient
+must separately verify that the videos decode completely.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import zipfile
 from pathlib import Path
 
 PACKAGE_NAME_RE = re.compile(r"^[a-z0-9]+(?:_[a-z0-9]+)*-[0-9]+$")
-# .gz 不算：meta/verification/ 下的 *.json.gz 是正常的压缩数据文件，不是嵌套包
+# .gz is allowed: meta/verification/*.json.gz contains compressed data, not nested archives.
 NESTED_SUFFIXES = (".zip", ".rar", ".7z")
 JUNK_PARTS = {"__MACOSX", ".DS_Store", "Thumbs.db", "desktop.ini"}
 UTF8_FLAG = 0x800
@@ -43,19 +45,19 @@ class Report:
         self.failed = 0
 
     def ok(self, item: str, detail: str = "") -> None:
-        print(f"  [通过]   {item}" + (f"：{detail}" if detail else ""))
+        print(f"  [PASS]   {item}" + (f": {detail}" if detail else ""))
 
     def fail(self, item: str, detail: str) -> None:
         self.failed += 1
-        print(f"  [不通过] {item}：{detail}")
+        print(f"  [FAIL] {item}: {detail}")
 
     def note(self, item: str, detail: str) -> None:
-        print(f"  [提示]   {item}：{detail}")
+        print(f"  [NOTE]   {item}: {detail}")
 
     def check(self, item: str, problems: list[str], ok_detail: str = "") -> None:
         if problems:
-            more = f"，另有 {len(problems) - 3} 处" if len(problems) > 3 else ""
-            self.fail(item, "；".join(problems[:3]) + more)
+            more = f", plus {len(problems) - 3} more" if len(problems) > 3 else ""
+            self.fail(item, "; ".join(problems[:3]) + more)
         else:
             self.ok(item, ok_detail)
 
@@ -99,9 +101,9 @@ def _iter_boxes(data: bytes, start: int, end: int):
 
 
 def parse_mp4(data: bytes) -> tuple[str, tuple[int, int]]:
-    """检查 mp4 的 box 结构，返回 (错误描述, (宽, 高))，没有错误时描述为空串。"""
+    """Check MP4 boxes; return (error, (width, height)), with an empty error on success."""
     if len(data) < 16:
-        return "文件过小，不是有效的 mp4", (0, 0)
+        return "File too small to be a valid MP4", (0, 0)
     top = set()
     total = 0
     for typ, _bs, be in _iter_boxes(data, 0, len(data)):
@@ -109,9 +111,9 @@ def parse_mp4(data: bytes) -> tuple[str, tuple[int, int]]:
         total = be
     for required in (b"ftyp", b"moov", b"mdat"):
         if required not in top:
-            return f"缺少 {required.decode()} box", (0, 0)
+            return f"Missing {required.decode()} box", (0, 0)
     if total < len(data) - 8:
-        return "box 长度与文件大小不符，文件可能被截断", (0, 0)
+        return "Box lengths do not match file size; the file may be truncated", (0, 0)
 
     size = [0, 0]
 
@@ -128,7 +130,7 @@ def parse_mp4(data: bytes) -> tuple[str, tuple[int, int]]:
 
     walk(0, len(data))
     if not size[0]:
-        return "找不到视频轨的尺寸信息", (0, 0)
+        return "Video track dimensions not found", (0, 0)
     return "", (size[0], size[1])
 
 
@@ -140,72 +142,72 @@ def resolution_ok(width: int, height: int) -> bool:
 
 
 def blend_header_error(raw: bytes) -> str:
-    """raw 是 .blend 的开头若干字节，返回错误描述，有效时返回空串。"""
+    """Check the initial bytes of a .blend file; return an empty error on success."""
     if raw.startswith(GZIP_MAGIC):
         try:
             raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read(len(BLENDER_MAGIC))
         except (OSError, EOFError) as exc:
-            return f"gzip 解压失败：{exc}"
+            return f"gzip decompression failed: {exc}"
     elif raw.startswith(ZSTD_MAGIC):
         try:
             from compression import zstd  # Python 3.14+
         except ImportError:
-            return ""  # 旧版 Python 解不了 zstd，文件头交给收货方检查
+            return ""  # Older Python cannot decode zstd; defer header verification to the recipient.
         try:
             raw = zstd.ZstdDecompressor().decompress(raw, max_length=len(BLENDER_MAGIC))
         except Exception as exc:
-            return f"zstd 解压失败：{exc}"
+            return f"zstd decompression failed: {exc}"
     if not raw.startswith(BLENDER_MAGIC):
-        return f"文件头不是 BLENDER：{raw[:12]!r}"
+        return f"File header is not BLENDER: {raw[:12]!r}"
     return ""
 
 
-# ---------------------------------------------------------------- 主流程
+# ---------------------------------------------------------------- main flow
 
 
 def check(zip_path: Path, comparison_path: Path) -> int:
     report = Report()
     package = zip_path.name[:-4] if zip_path.name.lower().endswith(".zip") else zip_path.stem
-    print(f"检查 {zip_path.name}（包名 {package}）")
+    print(f"Checking {zip_path.name} (package {package})")
 
-    # 1. 包名与格式
+    # 1. Package name and format
     if zip_path.suffix != ".zip":
-        report.fail("压缩格式", f"扩展名是 {zip_path.suffix or '无'}，只接受 .zip")
+        report.fail("Archive format", f"Extension is {zip_path.suffix or 'none'}; only .zip is accepted")
         return finish(report, zip_path, comparison_path)
     report.check(
-        "包名",
+        "Package name",
         [] if PACKAGE_NAME_RE.match(package) else
-        [f"{package!r} 不符合 {{片名}}-{{序号}}，只能用小写字母、数字、_、-"],
+        [f"{package!r} does not match {{title}}-{{number}}; use lowercase letters, digits, _ and - only"],
         package,
     )
 
     try:
         zf = zipfile.ZipFile(zip_path)
     except (zipfile.BadZipFile, OSError) as exc:
-        report.fail("zip 能否打开", str(exc))
+        report.fail("ZIP opens", str(exc))
         return finish(report, zip_path, comparison_path)
 
     with zf:
         broken = zf.testzip()
-        report.check("zip 完整性", [f"条目损坏：{broken}"] if broken else [], "所有条目 CRC 正确")
+        report.check("ZIP integrity", [f"Corrupt entry: {broken}"] if broken else [], "All entry CRCs are valid")
 
         infos = zf.infolist()
         names = [i.filename for i in infos]
         files = [i for i in infos if not i.is_dir()]
 
-        # 2.2 反斜杠
+        # 2.2 Backslashes
         report.check(
-            "路径分隔符",
-            [f"含反斜杠：{n}" for n in names if "\\" in n],
-            "全部使用 /",
+            "Path separators",
+            [f"Contains backslashes: {n}" for n in names if "\\" in n],
+            "All paths use /",
         )
 
-        # 2.3 结构
+        # 2.3 structure
         roots = {n.split("/")[0] for n in names}
         wrap = []
         if len(roots) == 1 and "comparison" not in roots:
-            wrap = [f"外面套了一层 {next(iter(roots))}/ 目录，请直接压缩目录里的内容"]
-        report.check("没有套层目录", wrap)
+            wrap = [f"Unexpected wrapper directory {next(iter(roots))}/; archive its contents directly"]
+        report.check("No wrapper directory", wrap)
 
         required = [
             "comparison/comparison.mp4",
@@ -217,27 +219,27 @@ def check(zip_path: Path, comparison_path: Path) -> int:
         ]
         name_set = set(names)
         report.check(
-            "必需文件",
-            [f"缺少 {r}" for r in required if r not in name_set],
-            "、".join(required),
+            "Required files",
+            [f"Missing {r}" for r in required if r not in name_set],
+            ", ".join(required),
         )
 
-        # 2.4 内容
+        # 2.4 Contents
         report.check(
-            "中文文件名使用 UTF-8 记录",
+            "Non-ASCII filenames use UTF-8",
             [
-                f"{i.filename}（文件名编码不是 UTF-8，在其他系统上会乱码）"
+                f"{i.filename} (filename is not encoded as UTF-8 and may display incorrectly on other systems)"
                 for i in infos
                 if not i.flag_bits & UTF8_FLAG and any(ord(c) > 127 for c in i.filename)
             ],
         )
-        report.check("路径没有空格", [n for n in names if " " in n])
+        report.check("No spaces in paths", [n for n in names if " " in n])
         report.check(
-            "没有嵌套压缩包",
+            "No nested archives",
             [i.filename for i in files if i.filename.lower().endswith(NESTED_SUFFIXES)],
         )
         report.check(
-            "没有系统垃圾文件",
+            "No system junk files",
             [n for n in names if JUNK_PARTS.intersection(n.replace("\\", "/").split("/"))],
         )
 
@@ -247,12 +249,12 @@ def check(zip_path: Path, comparison_path: Path) -> int:
                 continue
             err, (w, h) = parse_mp4(zf.read(info))
             if err:
-                mp4_problems.append(f"{info.filename}：{err}")
+                mp4_problems.append(f"{info.filename}: {err}")
             elif not resolution_ok(w, h):
                 res_notes.append(f"{info.filename} {w}x{h}")
-        report.check("mp4 结构", mp4_problems)
+        report.check("mp4 structure", mp4_problems)
         if res_notes:
-            report.note("分辨率不符 1920x(1080 的整数倍)，不会退回但会被标记", "；".join(res_notes))
+            report.note("Resolution differs from 1920x(a multiple of 1080); flagged without rejecting the package", "; ".join(res_notes))
 
         blend_problems = []
         blends = [i for i in files if i.filename.lower().endswith(".blend")]
@@ -260,23 +262,23 @@ def check(zip_path: Path, comparison_path: Path) -> int:
             with zf.open(info) as fh:
                 err = blend_header_error(fh.read(4096))
             if err:
-                blend_problems.append(f"{info.filename}：{err}")
-        report.check("Blender 文件头", blend_problems, f"{len(blends)} 个 .blend")
+                blend_problems.append(f"{info.filename}: {err}")
+        report.check("Blender file headers", blend_problems, f"{len(blends)} .blend files")
 
-        # 对比视频一致
+        # Comparison videos match
         if not comparison_path.is_file():
-            report.fail("对比视频", f"找不到 {comparison_path}")
+            report.fail("Comparison video", f"Cannot find {comparison_path}")
             return finish(report, zip_path, comparison_path)
         if comparison_path.name != "comparison.mp4":
-            report.note("对比视频文件名", f"上传到 R2 时要命名为 comparison.mp4（现在是 {comparison_path.name}）")
+            report.note("Comparison video filename", f"Name it comparison.mp4 when uploading to R2 (currently {comparison_path.name})")
         err, _ = parse_mp4(comparison_path.read_bytes())
-        report.check("对比视频 mp4 结构", [err] if err else [])
+        report.check("Comparison video mp4 structure", [err] if err else [])
         if "comparison/comparison.mp4" in name_set:
             outer = sha256_file(comparison_path)
             inner = sha256_entry(zf, "comparison/comparison.mp4")
             report.check(
-                "包内外对比视频一致",
-                [] if outer == inner else [f"包外 {outer[:16]}… 与包内 {inner[:16]}… 不同"],
+                "Internal and external comparison videos match",
+                [] if outer == inner else [f"External {outer[:16]}… differs from internal {inner[:16]}…"],
                 outer[:16] + "…",
             )
 
@@ -286,17 +288,17 @@ def check(zip_path: Path, comparison_path: Path) -> int:
 def finish(report: Report, zip_path: Path, comparison_path: Path) -> int:
     sha_path = zip_path.with_name(zip_path.name + ".sha256")
     if report.failed:
-        print(f"\n结果：{report.failed} 项不通过，请修改后重新打包再检查。")
+        print(f"\nResult: {report.failed} failed checks. Fix, repackage and check again.")
         if sha_path.exists():
             sha_path.unlink()
-            print(f"已删除旧的 {sha_path.name}，避免和没通过检查的包一起上传。")
+            print(f"Removed old {sha_path.name} to avoid uploading it with a failed package.")
         return 1
 
     zip_sha = sha256_file(zip_path)
     sha_path.write_text(f"{zip_sha}  {zip_path.name}\n", encoding="ascii", newline="\n")
-    print("\n结果：全部通过。")
-    print(f"已生成 {sha_path.name}")
-    print("manifest_v{n}.csv 需要的字段：")
+    print("\nResult: all checks passed.")
+    print(f"Created {sha_path.name}")
+    print("Fields for manifest_v{n}.csv:")
     print(f"  zip_sha256        {zip_sha}")
     print(f"  zip_size          {zip_path.stat().st_size}")
     print(f"  comparison_sha256 {sha256_file(comparison_path)}")
@@ -304,30 +306,30 @@ def finish(report: Report, zip_path: Path, comparison_path: Path) -> int:
 
 
 USAGE = (
-    "用法：py check_package.py {包名}.zip comparison.mp4\n"
-    "  或：py check_package.py {版本目录}"
+    "Usage: py check_package.py {package}.zip comparison.mp4\n"
+    "  or: py check_package.py {version_directory}"
 )
 
 
 def resolve_folder(folder: Path) -> tuple[Path, Path] | None:
-    """版本目录里应该恰好有一个 .zip 和一个 comparison.mp4。"""
+    """A version directory must contain exactly one .zip and a comparison.mp4."""
     zips = sorted(p for p in folder.iterdir() if p.suffix.lower() == ".zip")
     comparison = folder / "comparison.mp4"
     if len(zips) != 1 or not comparison.is_file():
-        found = "、".join(p.name for p in sorted(folder.iterdir())) or "空目录"
-        print(f"{folder} 里应该恰好有一个 .zip 和一个 comparison.mp4，实际是：{found}")
+        found = ", ".join(p.name for p in sorted(folder.iterdir())) or "empty directory"
+        print(f"{folder} must contain exactly one .zip and a comparison.mp4; found: {found}")
         return None
     return zips[0], comparison
 
 
 def main(argv: list[str]) -> int:
-    # Windows 控制台输出被重定向到文件时用的是本地编码（如 GBK），遇到编不了的字符
-    # 也不能让检查中途崩掉
+    # Redirected Windows console output can use a local encoding such as GBK.
+    # Unencodable characters must not interrupt the check.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
 
-    # cmd 里 "D:\交付\v1\" 这种以反斜杠结尾的带引号路径，会把结尾的引号当成普通字符传进来
+    # cmd can pass a trailing quote literally in a quoted path ending with a backslash.
     args = [Path(a.strip().strip('"')) for a in argv]
     if len(args) == 1 and args[0].is_dir():
         pair = resolve_folder(args[0])

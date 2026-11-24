@@ -1,6 +1,6 @@
 /* Blender Agent - one light design system for every page.
    Plaster and graphite: cool white surfaces, graphite text, one petrol accent for the next action.
-   Status colours are kept apart from the accent and from the role colours (主角色 red, 第二角色 blue…). */
+   Status colours are kept apart from the accent and from the role colours (main character red, second character blue…). */
 :root {
   --plaster:#f4f6f7; --paper:#ffffff; --sunk:#eef1f3; --seam:#dde2e6; --seam-strong:#c6cdd3;
   --ink:#1e252b; --slate:#5e6a73; --faint:#8a949c;

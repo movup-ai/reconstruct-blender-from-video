@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Blender Agent - local white-model (白模) production app.
+"""Blender Agent - local white-model production app.
 
 video clips -> local models (pose marks, camera, ground, 3D people, L2 set) -> optional local-AI suggestions
 -> review form (or autopilot) -> Blender build with the client's sample character -> videos, meta.jsonl, zip.

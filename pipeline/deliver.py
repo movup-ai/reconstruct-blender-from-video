@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """v2.1 delivery: our packages -> the batch folder the client expects, checked with the client's own check_package.py.
 
-  python pipeline\\deliver.py [--films 隐剑] [--batch batch20261116] [--out DELIVERY] [--movie "隐剑鬼爪|The Hidden Blade|2004"]
+  python pipeline\\deliver.py [--films Film] [--batch batch20261116] [--out DELIVERY] [--movie "Film|Native title|The Hidden Blade|2004"]
 
 For every clip with a package name (data/package_names.json) and a finished SUBMIT\\<clip>.zip:
   DELIVERY\\<batch>\\data\\<package>\\v1\\<package>.zip             the package (copied byte for byte)
@@ -13,7 +13,7 @@ For every clip with a package name (data/package_names.json) and a finished SUBM
   DELIVERY\\UPLOAD\\<package>.zip           the same zips in one flat folder: these are the files to upload
                                          (never upload SUBMIT\\<clip>.zip: those are named after the clip)
 lens / num_characters / camera_movement are estimated from the fitted scene (lens from the focal length, characters
-counted, movement from the solved camera); theme (选片题材) is left empty for the user to fill in."""
+counted, movement from the solved camera); theme is left empty for the user to fill in."""
 import argparse, csv, datetime, hashlib, json, os, shutil, subprocess, sys, zipfile
 import numpy as np
 
@@ -35,36 +35,39 @@ def sha256(p):
     return h.hexdigest()
 
 
+# Client manifest categories retain the vocabulary required by the supplied template.
 def lens_class(mm, sensor=36.0):
+    """Classify as wide, standard/medium or telephoto using a 35 mm equivalent lens."""
     eq = mm * 36.0 / sensor
-    return "广角镜头" if eq < 28 else ("标准/中焦镜头" if eq <= 70 else "长焦镜头")
+    return "\u5e7f\u89d2\u955c\u5934" if eq < 28 else ("\u6807\u51c6/\u4e2d\u7126\u955c\u5934" if eq <= 70 else "\u957f\u7126\u955c\u5934")
 
 
 def people_class(n):
-    return {0: "单人", 1: "单人", 2: "双人", 3: "三人"}.get(n, "三人以上")
+    """Client categories: single person, two people, three people, or more than three."""
+    return {0: "\u5355\u4eba", 1: "\u5355\u4eba", 2: "\u53cc\u4eba", 3: "\u4e09\u4eba"}.get(n, "\u4e09\u4eba\u4ee5\u4e0a")
 
 
 def movement(cam, lens_note=""):
     """camera keys [x, y, z, rx, ry, rz] per frame -> allowed movement words"""
     C = np.array(cam, float)
     if len(C) < 2:
-        return "固定镜头"
+        return "\u56fa\u5b9a\u955c\u5934"
     pos = C[:, :3]; rot = C[:, 3:]
     travel = float(np.linalg.norm(pos[-1] - pos[0])); span = float(np.ptp(pos, axis=0).max())
     turn = float(np.abs((rot - rot[0] + 180) % 360 - 180).max())
     out = []
     if span > 0.3:
-        # along the view direction -> 推 / 拉, sideways -> 移
+        # Along the view direction: dolly in/out; sideways: truck.
         rx, rz = np.radians(rot[0, 0]), np.radians(rot[0, 2])
         view = np.array([np.sin(rz) * np.sin(rx), -np.cos(rz) * np.sin(rx), -np.cos(rx)])
         along = float((pos[-1] - pos[0]) @ view)
         if abs(along) > 0.6 * travel and travel > 0.3:
-            out.append("推镜头" if along > 0 else "拉镜头")
+            out.append("\u63a8\u955c\u5934" if along > 0 else "\u62c9\u955c\u5934")
         else:
-            out.append("移镜头")
+            out.append("\u79fb\u955c\u5934")
     if turn > 3.0:
-        out.append("摇镜头")
-    return "; ".join(out) or "固定镜头"
+        out.append("\u6447\u955c\u5934")
+    return "; ".join(out) or "\u56fa\u5b9a\u955c\u5934"
 
 
 def run_check(checker, zp, cmp_):
@@ -80,12 +83,12 @@ def main():
     ap.add_argument("--batch", default="batch" + bj.strftime("%Y%m%d"))
     ap.add_argument("--out", default=os.path.join(ROOT, "DELIVERY"))
     ap.add_argument("--movie", action="append", default=[],
-                    help="film folder keyword|中文名|English title|year (repeatable); default for 隐剑 built in")
+                    help="film folder keyword|native title|English title|year (repeatable); The Hidden Blade default is built in")
     a = ap.parse_args()
     c = config.load(); lib = Library(c)
     with open(os.path.join(ROOT, "data", "package_names.json"), encoding="utf-8") as fh:
         names = json.load(fh)
-    titles = {"隐剑": ("隐剑鬼爪", "The Hidden Blade", "2004")}
+    titles = {"\u9690\u5251": ("\u9690\u5251\u9b3c\u722a", "The Hidden Blade", "2004")}
     for m in a.movie:
         k, zh, en, yr = m.split("|"); titles[k] = (zh, en, yr)
     checker = os.path.join(ROOT, "tools", "v21", "check_package.py")
@@ -115,8 +118,8 @@ def main():
                      "lens": lens_class(sd.get("lens", 35), sd.get("sensor", 36)), "num_characters": people_class(len(sd.get("chars") or {})),
                      "camera_movement": movement(sd.get("cam") or []),
                      "submitted_at": bj.strftime("%Y-%m-%dT%H:%M:%S+08:00")})
-        trows.append({"package_name": pkg, "title_zh": title[0], "title_en": title[1], "year": title[2], "work_type": "电影",
-                      "year_basis": "首映年份", "source": cl.film, "r2_path": "raw/%s/data/%s/v1/" % (a.batch, pkg)})
+        trows.append({"package_name": pkg, "title_zh": title[0], "title_en": title[1], "year": title[2], "work_type": "\u7535\u5f71",
+                      "year_basis": "\u9996\u6620\u5e74\u4efd", "source": cl.film, "r2_path": "raw/%s/data/%s/v1/" % (a.batch, pkg)})
         up = os.path.join(a.out, "UPLOAD"); os.makedirs(up, exist_ok=True)     # flat folder: only the zips to upload
         shutil.copyfile(zp, os.path.join(up, pkg + ".zip"))
         print("%-22s ok  %s" % (pkg, cl.name))

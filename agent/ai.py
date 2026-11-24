@@ -111,7 +111,7 @@ Known characters of this film so far (keep the same role for the same character)
 For EVERY tracked person decide:
 - is_person: false if it is not a person standing/walking/sitting in the scene (a driver seen through a car window,
   a poster, a statue, a reflection, a mannequin, a detection error)
-- role: "main" (主角色), "second" (第二角色), "third", "fourth" or "extra". Reuse the known character's role when it is the
+- role: "main" (main character), "second" (second character), "third", "fourth" or "extra". Reuse the known character's role when it is the
   same character. New important characters get the next free role; background people "extra".
 - look: 6-12 words describing clothes / hair / build (only if you can see them)
 Also give:
