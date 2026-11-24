@@ -492,6 +492,12 @@ def run_clip(video, c, args):
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render an edited scene (no new fitting)
         return render_only(name, video, work, c, args, t0)
+    # Evidence belongs to this fit's cameras and shots. Never reuse a previous fit's files.
+    for evidence_path in glob.glob(os.path.join(work, "metric_evidence*.npz")):
+        os.remove(evidence_path)
+    for generated in ("scene_verification.json", "scene_proposals.json", "scene_overview.jpg"):
+        path = os.path.join(work, generated)
+        if os.path.isfile(path): os.remove(path)
     pose_p, chk_p = find_marks(video, c, args.device)
     pose = jload(pose_p); checked = jload(chk_p) if chk_p else None
     log("  marks: %s%s" % (pose_p, "  + checked: " + chk_p if chk_p else "  (not checked by a person)"))
@@ -596,7 +602,24 @@ def run_clip(video, c, args):
             u = _Rot.from_euler("xz", [np.radians(float(hcam.get("pitch_down_deg", ginfo.get("pitch_deg", 0.0)))),
                                        np.radians(float(hcam.get("roll_deg", 0.0)))]).apply([0, -1.0, 0])
             ginfo = {"source": "hints.json", "camera_height": hc, "pitch_deg": float(hcam.get("pitch_down_deg", 0.0))}
-        world = World(cam, camj["R"], u, hc, zoom=camj.get("zoom"))
+        observation = None
+        if c.get("metric_scene", True) and not c.get("_fake_depth"):
+            try:
+                import metric_scene
+                log("  metric scene: MoGe-2 geometry and semantic surfaces ...")
+                observation = metric_scene.observe(sf, spose, cam, y0, camj, c)
+                aligned_up, metric_info = metric_scene.align(observation, camj, u, hc, c, people, cam, y0)
+                # Explicit camera orientation/height/path remains the coordinate authority.
+                if not any(k in hcam for k in ("pitch_down_deg", "roll_deg", "path")):
+                    u = aligned_up
+                else:
+                    camj["world_yaw"] = 0.
+                ginfo["metric_alignment"] = metric_info
+            except Exception as e:
+                observation = None
+                camj["warnings"].append("metric evidence unavailable: %s" % str(e)[-240:])
+                log("    metric evidence unavailable: %s" % str(e)[-240:])
+        world = World(cam, camj["R"], u, hc, zoom=camj.get("zoom"), yaw=camj.get("world_yaw", 0.))
         if camj.get("travel_cam0"):
             world.T = np.asarray(camj["travel_cam0"]) @ world.M
         if hcam.get("path"):                                   # camera move set by hand (turn + travel)
@@ -613,7 +636,7 @@ def run_clip(video, c, args):
         if dz:
             hc2 = float(np.clip(hc + dz, 0.3, 12.0))
             log("    nobody's feet are in the picture: floor moved %+.2f m to stand the people on it (camera height %.2f -> %.2f m)" % (-dz, hc, hc2))
-            world = World(cam, camj["R"], u, hc2, zoom=camj.get("zoom"))
+            world = World(cam, camj["R"], u, hc2, zoom=camj.get("zoom"), yaw=camj.get("world_yaw", 0.))
             if camj.get("travel_cam0"):
                 world.T = np.asarray(camj["travel_cam0"]) @ world.M
             if hcam.get("path"):
@@ -622,6 +645,9 @@ def run_clip(video, c, args):
             hc = hc2
             chars, prep = fit_all(world, y0, people, Ns, c)
         log("    people %.1fs" % (time.time() - tp0))
+        if observation is not None:
+            ginfo["depth_scale"] = metric_scene.body_scale(observation, world, chars)
+            metric_scene.capture(observation, world, work, tag, s0, 200.*si)
         boxes = {}                     # where people are, per frame: the set never builds from them (see hold_boxes)
         for p in spose["people"]:
             for f, b in hold_boxes(p.get("boxes", {}), Ns).items():
@@ -748,6 +774,18 @@ def run_clip(video, c, args):
     rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
     if held_on is not None:                                # found ones + the ones annotated as held on the clip page
         rep["held_objects"] = held_place(name, work, video, c)
+    if c.get("scene_verify", True):
+        import scene_verify
+        final_data = jload(dp)
+        verification = scene_verify.process(final_data, work, c, hints,
+                                            repair=c.get("scene_repair", True) and not hand_set)
+        jsave(dp, final_data)
+        rep["scene_verification"] = final_data["scene_verification"]
+        rep["quality"] = quality.measure(final_data, pose, y0)
+        warns[:] = [w for w in warns if not w.startswith("quality - ")]
+        warns += ["quality - " + w for w in rep["quality"]["flags"]]
+        log("  scene verification: %d unresolved, %d measured repairs" %
+            (len(verification["unresolved"]), len(verification["repairs"])))
     if args.stage in ("blend", "all"):
         blender_render(c, work, dp, N)
     if args.stage == "all":
@@ -820,13 +858,20 @@ def set_inputs(work, drawn):
     import hashlib
     d = jload(os.path.join(work, "scene_data.json"))
     ea = hashlib.md5(open(drawn, "rb").read()).hexdigest() if os.path.exists(drawn) else ""
+    evidence = hashlib.sha256()
+    for path in sorted(glob.glob(os.path.join(work, "metric_evidence*.npz"))):
+        with open(path, "rb") as source:
+            for block in iter(lambda: source.read(1024*1024), b""):
+                evidence.update(block)
     return {"lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
-            "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea}
+            "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea, "metric_evidence": evidence.hexdigest()}
 
 
 def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
     """the set still fits: same frames and drawn objects, lens within 0.3 mm, camera within 5 cm / 0.5 deg every frame"""
     if not a or not b or a.get("frames") != b.get("frames") or a.get("env_ai") != b.get("env_ai"):
+        return False
+    if a.get("metric_evidence") != b.get("metric_evidence"):
         return False
     if abs(float(a.get("lens") or 0) - float(b.get("lens") or 0)) > lens or len(a.get("cam", [])) != len(b.get("cam", [])):
         return False
@@ -1030,6 +1075,9 @@ def render_only(name, video, work, c, args, t0):
         ground_feet.plant(data, log=log, hints=hints, ankle_vis=av)
     if c.get("pulldown_retime", False) or hints.get("pulldown_retime"):         # opt-in: even motion after pulldown removal
         retime_pulldown(data, video, c)
+    if c.get("scene_verify", True):
+        import scene_verify
+        scene_verify.process(data, work, c, hints)
     jsave(dp, data)
     blender_render(c, work, dp, data["frames"])
     rep = {"clip": name, "video": video, "status": "ok", "warnings": []}

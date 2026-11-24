@@ -544,6 +544,8 @@ function checks() {
     rows.push({ who: 'P' + p.id, text: p.flags.map(plain).join(' · '), go: still ? 's-people' : 's-marks', label: still ? 'Who is who' : 'Fix joints' }); });
   (INFO.warnings || []).filter(w => !/^quality - /.test(w)).forEach(w =>
     rows.push({ who: 'Camera', text: plain(w), go: 's-more', label: 'Camera settings' }));
+  ((INFO.scene_verification || {}).issues || []).slice(0, 8).forEach(i =>
+    rows.push({ who: 'Scene · f' + i.frame, text: i.detail, go: 's-objects', label: 'Objects in the set' }));
   $('s-check').style.display = rows.length && INFO.status.fit ? '' : 'none';
   $('checklist').innerHTML = rows.map(r => `<li><b>${esc(r.who)}</b><span>${esc(cap(r.text))}</span><a href="#${r.go}" data-go="${r.go}">${esc(r.label)}</a></li>`).join('');
   $('checklist').querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault();

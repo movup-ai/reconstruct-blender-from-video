@@ -313,6 +313,7 @@ def _build_one(o, n, meshes, cam, frame0, dx, tag, zg, gz):
             else:
                 c_ = (col if shade == "main" else (o.get("colour_" + shade) or SHADE[shade])) if col else SHADE[shade]
             m_ = {"name": "obj%s_%02d_%s_%s" % (tag, n, o.get("name", kind), pname), "v": V, "f": F, "colour": c_, "layer": 2}
+            m_["_primitive"] = "obj%s_%02d" % (tag, n)
             if pname.rstrip("0123456789") in FOLIAGE:            # leafy clumps (props.puff) are smooth-shaded
                 m_["smooth"] = True
             meshes.append(m_)
@@ -799,6 +800,10 @@ def main():
         colour_card.apply(data)
     except Exception as e:
         print("colour card not applied (%s)" % e)
+    if c.get("scene_verify", True):
+        import scene_verify
+        checked = scene_verify.process(data, work, c, hints)
+        print("scene verification: %d unresolved issue(s)" % len(checked["unresolved"]))
     jsave(dp, data)
     N = data["frames"]
     frs = [int(x) for x in a.frames.split(",") if x != ""] or sorted({v for s in shots for v in (s["frames"][0], (s["frames"][0] + s["frames"][1]) // 2, s["frames"][1])})[:9]

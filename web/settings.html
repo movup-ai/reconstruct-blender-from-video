@@ -31,6 +31,12 @@
       <div class="help">A failed job is tried again automatically this many times in total.</div>
       <label class="k" for="foot_contact">Foot contact</label>
       <div><input id="foot_contact" type="checkbox"> Hold visible planted feet during fitting</div>
+      <label class="k" for="metric_scene">Shared scene geometry</label>
+      <div><input id="metric_scene" type="checkbox"> Align scene axes and depth using MoGe and fitted people</div>
+      <label class="k" for="scene_verify">Scene checks</label>
+      <div><input id="scene_verify" type="checkbox"> Check depth, missing surfaces, body collisions and foot support</div>
+      <label class="k" for="scene_repair">Measured surface repair</label>
+      <div><input id="scene_repair" type="checkbox"> Add measured planar surfaces when verification improves</div>
       <label class="k" for="set_adaptive_frames">Set views</label>
       <div><input id="set_adaptive_frames" type="checkbox"> Measure additional views when the camera moves</div>
       <label class="k" for="set_max_frames">Maximum automatic views per shot</label>
@@ -135,7 +141,7 @@ async function load() {
     : 'No working NVIDIA card was found. The models run on the NVIDIA card only: run Setup.bat, then start the app again.';
   segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
   for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python', 'set_max_frames']) $(key).value = S[key] ?? '';
-  for (const key of ['foot_contact', 'set_adaptive_frames']) $(key).checked = S[key] !== false;
+  for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
   $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
     <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' && S.local ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
@@ -167,7 +173,7 @@ segInit($('set_builder'), v => set({ set_builder: v }, v === 'claude' ? 'Claude 
 for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python']) {
   $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
 }
-for (const key of ['foot_contact', 'set_adaptive_frames']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
+for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
 $('set_max_frames').onchange = e => set({ set_max_frames: +e.target.value }, 'Set view limit saved');
 $('da3_meters_per_unit').onchange = e => set({ da3_meters_per_unit: e.target.value === '' ? null : +e.target.value }, 'Camera scale saved');
 $('set_model').onchange = e => set({ set_model: e.target.value }, 'Set model saved');

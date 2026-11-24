@@ -223,6 +223,10 @@ class Workspace:
             if cam:
                 out["camera"] = {k: cam.get(k) for k in ("max_rotation_deg", "parallax_px", "cuts", "warnings", "shots")}
             out["warnings"] = rep.get("warnings", [])
+            verification = read_json(os.path.join(f["work"], "scene_verification.json"), {}) or {}
+            out["scene_verification"] = {"depth_checked": verification.get("depth_checked", False),
+                "issues": [i for i in verification.get("issues", []) if i.get("status") == "unresolved"][:30],
+                "repairs": verification.get("repairs", [])}
             sd = read_json(f["scene"])
             if sd:
                 kinds = {}

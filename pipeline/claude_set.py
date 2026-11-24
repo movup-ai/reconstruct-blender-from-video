@@ -208,6 +208,12 @@ def facts(name, c, s, data, ci, env_auto, env_ai, n_shots):
     L.append("Objects the user annotated - every one must be in your set at its box:\n  " + ("\n  ".join(ann) or "none"))
     if held:
         L.append("Annotated as carried by a person (NOT in the set):\n  " + "\n  ".join(held))
+    if c.get("metric_scene", True):
+        from scene_evidence import query
+        measured = query(data, os.path.join(c["work_root"], name), frame=a)
+        if measured.get("available"):
+            L.append("Shared metric surface evidence (world coordinates, z up; estimated depths, not ground truth):\n" +
+                     json.dumps(measured.get("surfaces", []), ensure_ascii=False))
     return "\n\n".join(L)
 
 
@@ -376,6 +382,9 @@ def run(name, c, log=print):
                                                 "for this shot in one ```json block (the same set if it is right)." % (
                                                     json.dumps(shot_envs[s["shot"]], ensure_ascii=False),
                                                     facts(name, c, s, data, ci, env_auto, env_ai, len(shots)))}]
+            if c.get("scene_verify", True):
+                from scene_verify import feedback
+                content.append({"type": "text", "text": feedback(work, a, b)})
             try:
                 text, usage = ask(c, system, content, log)
                 spent += cost(usage, model)

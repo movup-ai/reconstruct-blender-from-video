@@ -40,6 +40,12 @@ DEFAULT_CFG = {
     "set_max_frames": 5,
     "foot_contact": True,
     "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
+    "metric_scene": True,                   # shared MoGe geometry and gravity evidence
+    "metric_max_views": 3,
+    "metric_resolution": 384,
+    "scene_verify": True,
+    "scene_repair": True,                   # measured planar patches accepted only after verification
+    "scene_repair_limit": 4,
 }
 
 def cfg():

@@ -281,7 +281,7 @@ def side_bars(img, dark=16, rows=0.97):
     return m
 
 
-def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
+def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     """MoGe + SAM at work resolution for one frame -> Frame (camera-space points, normals, masks)"""
     t0 = time.time()
     H0, W0 = bgr.shape[:2]
@@ -292,7 +292,13 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     fr = Frame(); fr.k, fr.W, fr.H, fr.img, fr.f = k, Wk, Hk, img, f
     fr.rgb = rgb                                                 # (the drawn boxes' outlines: SAM with the box as prompt)
     fr.bars = side_bars(img)                                     # black pillarbox bars: not part of the room
-    o = models.moge_run(rgb, fov_x=fov_x)
+    fr.shared_metric = shared is not None
+    if shared is None:
+        o = models.moge_run(rgb, fov_x=fov_x)
+    else:
+        from metric_scene import resample_depth
+        o = {"points": resample_depth(shared["depth"], shared["K"], (Hk,Wk)),
+             "mask": cv2.resize(shared["valid"].astype(np.uint8),(Wk,Hk),interpolation=cv2.INTER_NEAREST)>0}
     fr.P = o["points"]; fr.N = o.get("normal"); fr.valid = o["mask"].astype(bool) & np.isfinite(fr.P).all(-1)
     fr.valid &= ~fr.bars
     fr.P = np.where(fr.valid[..., None], fr.P, 0.0)
@@ -327,7 +333,10 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     masks = models.sam_auto(rgb)
     fr.t_moge, fr.t_sam = t1 - t0, time.time() - t1
     fr.segm = getattr(models, "seg", None)
-    fr.sem = fr.segm(rgb) if fr.segm is not None else None      # class of every pixel (ADE20K)
+    if shared is not None and fr.segm is not None and list(shared["names"]) == fr.segm.names:
+        fr.sem = cv2.resize(shared["labels"].astype(np.int16),(Wk,Hk),interpolation=cv2.INTER_NEAREST)
+    else:
+        fr.sem = fr.segm(rgb) if fr.segm is not None else None      # class of every pixel (ADE20K)
     masks = sorted(masks, key=lambda m: -m["area"])
     lab = np.full((Hk, Wk), -1, np.int32)
     for i, m in enumerate(masks):                                # big first, smaller ones on top
@@ -1501,6 +1510,13 @@ def run_clip(name, models, a, c):
     print("== %s" % name)
     ci = jload(os.path.join(work, "clip_info.json")); data = jload(os.path.join(work, "scene_data.json"))
     camj = jload(os.path.join(work, "camera.json"))
+    shared_frames = {}
+    if c.get("metric_scene", True) and a.frame == "fit" and not a.free_fov:
+        from scene_verify import load_evidence
+        for bundle in load_evidence(data, work)[0]:
+            for i, f in enumerate(bundle["frames"]):
+                shared_frames[int(f)] = {k: bundle[k][i] for k in ("depth", "K", "valid", "labels")}
+                shared_frames[int(f)]["names"] = bundle["names"]
     from run_pipeline import marks_dir
     pp = os.path.join(marks_dir(ci["video"], c), "pose.json")
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
@@ -1542,7 +1558,8 @@ def run_clip(name, models, a, c):
         for f in want[sid]:
             t1 = time.time()
             fov_f = 2 * math.degrees(math.atan(W / 2 / acam.f_at(f)))     # this frame's field of view (zoom)
-            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_f, free_fov=bool(a.free_fov) and f == a0)
+            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_f,
+                         free_fov=bool(a.free_fov) and f == a0, shared=shared_frames.get(f))
             fr.t_start = t1
             Rp, Cp = cam_mats(data["cam"][f])
             up0 = unit(D @ (Rp.T @ np.array([0, 0, 1.0])))
@@ -1652,6 +1669,8 @@ def run_clip(name, models, a, c):
                     sc = float(Cl[2]) / (gfit["h"] / max(0.3, float(gfit["n"] @ up0)))
                 if f in feet_scale and 0.6 * s0 < feet_scale[f] < 1.7 * s0:
                     sc = feet_scale[f]
+                if fr.shared_metric:
+                    sc = 1.                                  # already in the shared scene's metres
                 to_world(fr, Rw, Cl, sc, gplane)
                 acam.R[f] = Rw @ D; acam.C[f] = Cl + np.array([dx, 0, 0])
                 if indoor is None:                               # indoor / outdoor: sky and far depth

@@ -47,7 +47,8 @@ EDITABLE = {"parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_mod
 AUTOPILOT_MODES = ("off", "prepare", "full")
 EDITABLE.update({"pose_backend": str, "rtmo_model": str, "camera_backend": str, "da3_model": str,
                  "da3_python": str, "da3_meters_per_unit": float,
-                 "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int})
+                 "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int,
+                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool})
 
 _lock = threading.Lock()
 

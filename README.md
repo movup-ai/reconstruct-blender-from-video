@@ -25,6 +25,12 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 
 ## Processing upgrades
 
+The existing models now support MAVE-style shared metric evidence, gravity and Manhattan alignment,
+proxy-based depth scale calibration, numerical scene checks and bounded geometry repair. Prepare and
+Finish run these stages automatically; Settings has switches for shared geometry, scene checks and repair.
+The clip's Things to check list includes unresolved geometry issues. See [the implementation and testing guide](docs/MAVE_EXISTING_MODELS.md)
+for diagnostics, evidence queries, human scale controls and the differences from the paper.
+
 Settings now includes foot contact, adaptive set views, the pose backend and the camera backend.
 The tracker compares clothing colour, uses confident poses before weak candidates, checks joint confidence in
 both observations and resets identities at hard cuts. Foot contact adds a soft world-space constraint when

@@ -7,14 +7,18 @@ from scipy.spatial.transform import Rotation
 from common import *
 
 class World:
-    def __init__(self, cam, Rlist, up_c, hc, zoom=None):
+    def __init__(self, cam, Rlist, up_c, hc, zoom=None, yaw=0.):
         self.cam = cam
         self.Ri = [np.asarray(r) for r in Rlist]          # frame-0 cam -> frame-i cam
         self.zoom = None if zoom is None or np.allclose(zoom, 1.0) else np.asarray(zoom, float)   # focal f_i = zoom[i] * cam.f
         Z = up_c / np.linalg.norm(up_c)
-        Y = np.array([0, 0, 1.0]) - Z * Z[2]; Y /= np.linalg.norm(Y)
+        Y = np.array([0, 0, 1.0]) - Z * Z[2]
+        if np.linalg.norm(Y) < 1e-6:
+            Y = np.array([0., 1., 0.]) - Z * Z[1]
+        Y /= np.linalg.norm(Y)
         X = np.cross(Y, Z)
         self.M = np.c_[X, Y, Z]                            # world -> cam0 (columns = world axes in cam0 coords)
+        self.M = self.M @ Rotation.from_euler("z", yaw).as_matrix()
         self.C = np.array([0, 0, hc])
         self.hc, self.up_c = hc, Z
         self.T = None                                      # per-frame camera travel (world metres), set by set_path()
