@@ -228,6 +228,11 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
     for n, o in enumerate(env.get("objects", [])):
         if o.get("off"):
             continue
+        if o.get("type") == "mesh" and o.get("v") and o.get("f"):   # a measured shape (env_auto / relief.py), in metres
+            V = [[float(q[0]) + dx, float(q[1]), float(q[2])] for q in o["v"]]
+            meshes.append({"name": "obj%s_%02d_%s" % (tag, n, o.get("name", "mesh")), "v": V, "f": [list(f) for f in o["f"]],
+                           "colour": o.get("colour", "set"), "layer": 2, "smooth": True})
+            continue
         if o.get("type") == "patch":                        # flat shape on the floor: {"px": [[u, v], ...]} or {"pts": [[x, y], ...]}
             z = float(o.get("z", zg + 0.02))
             if "pts3" in o:                                  # any flat polygon in metres [[x, y, z], ...] (env_auto: walls with

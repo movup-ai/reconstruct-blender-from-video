@@ -2,7 +2,7 @@
 """
 Automatic white-model pipeline:  video  ->  finished submission folder + zip, no manual steps.
 
-  python run_pipeline.py VIDEO_OR_FOLDER [...] [--stage fit|blend|all] [--force] [--device cpu|cuda]
+  python run_pipeline.py VIDEO_OR_FOLDER [...] [--stage fit|blend|all] [--force] [--device cuda]
 
   stage fit   : marks (automark), camera, ground, 3D people, grey set, preview.jpg  (no Blender)
   stage blend : fit + Blender build/render              (no videos)
@@ -707,7 +707,10 @@ def run_clip(video, c, args):
     info = {"W": W, "Hfull": Hfull, "y0": y0, "Hpic": Hp, "frames": N, "fps": fps}
     jsave(os.path.join(work, "clip_info.json"), dict(info, video=video, desc_path=os.path.join(os.path.dirname(pose_p), "desc.txt")))
     frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder
+    held_on = held_detect(name, video, work, c)            # before the set: the set leaves carried objects out
     rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
+    if held_on:
+        rep["held_objects"] = held_place(name, work)
     if args.stage in ("blend", "all"):
         blender_render(c, work, dp, N)
     if args.stage == "all":
@@ -716,6 +719,53 @@ def run_clip(video, c, args):
     jsave(os.path.join(work, "report.json"), rep)
     log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
     return rep
+
+def held_detect(name, video, work, c):
+    """objects people carry (held_objects.py): found once on the NVIDIA card (output\\<clip>\\held.json, kept while
+    pose.json is unchanged).  Off with config / hints.json "held_objects": false.  -> placed after the set or not"""
+    import held_objects as HO
+    hp = os.path.join(marks_dir(video, c), "hints.json")
+    hints = jload(hp) if os.path.exists(hp) else {}
+    if not HO.enabled(c, hints):
+        log("  held objects: switched off")
+        return False
+    if not HO.available():
+        log("  held objects: Grounding DINO not installed (models\\grounding_dino) - run Setup.bat")
+        return False
+    hj, pj = HO.held_path(name), os.path.join(marks_dir(video, c), "pose.json")
+    try:
+        fresh = os.path.getmtime(hj) >= os.path.getmtime(pj) and jload(hj).get("version") == HO.VERSION
+    except (OSError, ValueError):
+        fresh = False
+    if not fresh:
+        log("  held objects: looking for carried objects (Grounding DINO + CLIP, on the NVIDIA card) ...")
+        r = subprocess.run([sys.executable, os.path.join(HERE, "held_objects.py"), name, "--detect-only"], cwd=AGENT)
+        if r.returncode != 0 or not os.path.exists(hj):
+            log("  held objects: detection failed (exit %s) - none added" % r.returncode)
+            return False
+    return True
+
+
+def held_place(name, work):
+    """put the found objects into scene_data.json on the fitted hands / backs (after build_env, which moves people
+    onto the set's ground) -> [{"name", "label", "frames"}]"""
+    import held_objects as HO
+    try:
+        dp = os.path.join(work, "scene_data.json")
+        data, held = jload(dp), jload(HO.held_path(name))
+        ci = jload(os.path.join(work, "clip_info.json"))
+        made = HO.place(data, held, ci.get("y0", 0))
+        jsave(dp, data)
+        try:
+            HO.check_image(data, held, ci, os.path.join(work, "held_check.jpg"))
+        except Exception as e:
+            log("  held objects: held_check.jpg not made (%s)" % str(e)[:200])
+        log("  held objects: %s" % (", ".join("%s (%d frames)" % (l, n) for _, l, n in made) or "none"))
+        return [{"name": n_, "label": l, "frames": n} for n_, l, n in made]
+    except Exception as e:                                 # never stops a clip
+        log("  held objects: not placed (%s)" % str(e)[:200])
+        return []
+
 
 SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "models", "sam2", "sam2.1_hiera_large.pt"),
               os.path.join(AGENT, "third_party", "sam2", "sam2"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
@@ -774,7 +824,7 @@ def make_set(name, video, work, c, stage, hand_set):
         if fresh:
             log("  set: the automatic set from Prepare (%s)" % env_p)
         else:
-            log("  set: measuring the scene (MoGe-2 + SAM 2.1 + CLIP, a few minutes on the processor) ...")
+            log("  set: measuring the scene (MoGe-2 depth + SAM 2.1 pieces + Mask2Former names, on the NVIDIA card) ...")
             t1 = time.time()
             if os.path.exists(env_p):                          # never fall back on an older measurement
                 os.remove(env_p)
@@ -918,12 +968,13 @@ def main():
     ap.add_argument("inputs", nargs="*")
     ap.add_argument("--stage", default="all", choices=["fit", "blend", "all", "render"])
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")
     ap.add_argument("--require-confirm", action="store_true", help="only build/render clips whose key points were confirmed in the review app")
     ap.add_argument("--auto-set", action="store_true", help="build the automatic depth set even when the clip has a hand-built set (env_claude.json)")
     args = ap.parse_args()
-    args.device = pick_device(args.device)                 # "cpu" on a PC without an NVIDIA card
+    if args.stage != "render":                             # (rendering in Blender uses no model)
+        args.device = pick_device(args.device)             # stops here without a working NVIDIA card
     c = cfg(); c["device"] = args.device
     vids = collect(args.inputs or [c["source_root"]])
     if not args.inputs:                                    # whole Source folder: leave the client's sample folder out

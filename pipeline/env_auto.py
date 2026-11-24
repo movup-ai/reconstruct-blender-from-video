@@ -48,7 +48,8 @@ class Models:
     def __init__(self, points_per_side=32, device=None):
         setup()
         import torch
-        device = device or ("cuda" if torch.cuda.is_available() else "cpu")    # no NVIDIA card: the processor (slower)
+        from common import torch_device
+        device = torch_device()                              # the NVIDIA card only
         self.torch, self.dev = torch, device
         from moge.model.v2 import MoGeModel
         self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, "moge2", "model.pt")).to(device).eval()
@@ -57,16 +58,22 @@ class Models:
         sam = build_sam2("configs/sam2.1/sam2.1_hiera_l.yaml", os.path.join(MODELS, "sam2", "sam2.1_hiera_large.pt"), device=device)
         self.pps = points_per_side
         self.pred = SAM2ImagePredictor(sam)
+        self.seg = None                                      # what each piece is: Mask2Former ADE20K (semseg.py)
+        try:
+            import semseg
+            if semseg.available():
+                self.seg = semseg.Segmenter(device)
+        except Exception as e:
+            print("segmentation model not used (%s) - pieces are named by CLIP" % str(e)[:200])
 
     def amp(self):
-        """half precision on the GPU; full precision on the processor"""
-        import contextlib
-        return self.torch.autocast("cuda", dtype=self.torch.bfloat16) if self.dev == "cuda" else contextlib.nullcontext()
+        """half precision on the GPU"""
+        return self.torch.autocast("cuda", dtype=self.torch.bfloat16)
 
     def moge_run(self, rgb, fov_x=None):
         t = self.torch.tensor(rgb, dtype=self.torch.float32, device=self.dev).permute(2, 0, 1) / 255.0
         with self.torch.inference_mode():
-            out = self.moge.infer(t, fov_x=fov_x, use_fp16=(self.dev == "cuda"))   # half precision only on the GPU
+            out = self.moge.infer(t, fov_x=fov_x, use_fp16=True)                   # half precision on the GPU
         return {k: v.float().cpu().numpy() for k, v in out.items() if hasattr(v, "cpu")}
 
     def sam_auto(self, rgb, n=None, iou_t=0.7, stab_t=0.86, nms_t=0.6, min_area=0.002):
@@ -251,6 +258,10 @@ def people_boxes(pose, f, y0, k, W, H):
         x0, x1, ya, yb = min(xs), max(xs), min(ys) - y0, max(ys) - y0
         mw, mh = 0.08 * (x1 - x0), 0.05 * (yb - ya)
         out.append([max(0, (x0 - mw) * k), max(0, (ya - mh) * k), min(W - 1, (x1 + mw) * k), min(H - 1, (yb + mh * 1.5) * k)])
+    if pose.get("_held"):                                       # carried objects go with the people
+        import held_objects
+        for b in held_objects.boxes_at(pose["_held"], f):
+            out.append([max(0, b[0] * k), max(0, (b[1] - y0) * k), min(W - 1, b[2] * k), min(H - 1, (b[3] - y0) * k)])
     return out, feet
 
 
@@ -312,13 +323,47 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     t1 = time.time()
     masks = models.sam_auto(rgb)
     fr.t_moge, fr.t_sam = t1 - t0, time.time() - t1
+    fr.segm = getattr(models, "seg", None)
+    fr.sem = fr.segm(rgb) if fr.segm is not None else None      # class of every pixel (ADE20K)
     masks = sorted(masks, key=lambda m: -m["area"])
     lab = np.full((Hk, Wk), -1, np.int32)
     for i, m in enumerate(masks):                                # big first, smaller ones on top
         lab[m["segmentation"]] = i
     lab[fr.bars] = -1                                            # nothing is built from the bars
+    fr.soft = soft_parts(fr) if fr.sem is not None else []
+    for m, _ in fr.soft:                                         # the plants / curtains... are their own pieces: SAM's
+        lab[m] = -1                                              # regions (a wall with a plant in front) lose them
     fr.lab = lab; fr.n_masks = len(masks)
     return fr
+
+
+SOFT_GROUPS = {"plant": "plant", "pot": "plant", "flower": "plant", "vase": "plant", "tree": "plant", "palm": "plant"}
+
+
+def soft_parts(fr, min_area=0.003):
+    """the soft / irregular things the segmentation finds (semseg ROLE "relief", and trees indoors) as connected pieces,
+    straight from its map: a plant and its pot, flowers in a vase are one piece -> [(mask, class name)]"""
+    import semseg
+    names = fr.segm.names
+    group = {}
+    for k, n in enumerate(names):
+        if semseg.role(n) in ("relief", "tree"):
+            group.setdefault(SOFT_GROUPS.get(n, n), []).append(k)
+    free = fr.valid & ~fr.person & ~fr.bars
+    out = []
+    ker = np.ones((5, 5), np.uint8)
+    for gname, ks in group.items():
+        m = np.isin(fr.sem, ks) & free
+        if m.sum() < min_area * m.size:
+            continue
+        m8 = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_CLOSE, ker)        # leaves with gaps: one plant
+        n, cc, st, _ = cv2.connectedComponentsWithStats(m8, connectivity=8)
+        for i in range(1, n):
+            if st[i, cv2.CC_STAT_AREA] >= min_area * m.size:
+                piece = (cc == i) & free
+                name, _ = fr.segm.label(fr.sem, piece)
+                out.append((piece, name or gname))
+    return out
 
 
 def to_world(fr, Rw, Cl, s, gplane=(0.0, 0.0, 0.0)):
@@ -463,6 +508,99 @@ def name_regions(regs, fr, namer, indoor, min_p=0.3, max_area=0.2):
         if R["cls"] != was:
             print("    %s -> %s (CLIP: %s %.2f)" % (was, R["cls"], word, p))
     return regs
+
+
+def sem_decide(R, name, share, indoor):
+    """what a piece becomes from its segmentation class (semseg.ROLE) and its measured shape -> (cls, ptype, relief).
+    The geometry still decides where it is unsure: a "floor" piece must lie low, a "wall" piece must stand upright."""
+    import semseg
+    cls = R["cls"]; z5, z50, z95 = R["z"]; tol = 0.15 + 0.025 * R["rng"]
+    vertical = R["planar"] and abs(R["plane"][0][2]) < 0.35
+    if name is None or share < 0.45:
+        return cls, None, False
+    r = semseg.role(name)
+    big = R["area"] > 0.06 and cls in ("wall", "building", "floor", "terrain", "slope", "ceiling")
+    if big and r not in ("person", "sky", "floor", "ground", "ceiling", "wall", "building", "far"):
+        return cls, None, False                                  # a large surface stays one (a bookcase wall is a wall)
+    if r == "person":
+        return "sky", None, False                                 # a person the pose detector missed: not the set
+    if r == "sky":
+        return "sky", None, False
+    if r in ("floor", "ground"):
+        if cls in ("floor", "terrain", "slope"):
+            return cls, None, False
+        return ("floor" if abs(z50) < tol * 2 else cls), None, False
+    if r == "ceiling":
+        return ("ceiling" if z50 > 1.6 else cls), None, False
+    if r in ("wall", "building"):
+        if cls in ("wall", "building", "far"):
+            return cls, None, False
+        if vertical or R["area"] > 0.02:
+            return ("building" if r == "building" and not indoor else "wall"), None, False
+        if share >= 0.8 and cls in ("vegetation", "pole", "object", "rock"):
+            return "sky", None, False                            # a scrap of a wall the big wall piece already has
+        return cls, None, False
+    if r == "far":
+        return ("far" if cls not in ("floor", "terrain", "slope") else cls), None, False
+    if r == "rock":
+        return "rock", None, False
+    if r == "tree":
+        return ("vegetation", None, False) if not indoor else ("object", None, True)
+    if r == "relief":
+        return "object", None, True
+    if r == "pillar":
+        return "pole", "pillar", False
+    if r == "car":
+        return "vehicle", "car", False
+    if cls == "top" and r in ("table", "desk", "counter", "bed", "sink", "stove"):
+        return "top", r, False
+    return "object", r, False
+
+
+def sem_regions(regs, fr, indoor):
+    """name every piece from the segmentation (fr.sem): R["label"] = (class, share), and its class / props type /
+    measured shape (R["relief"]) from sem_decide"""
+    for R in regs:
+        if R.get("soft"):                                        # cut out by its class already (soft_parts)
+            print("    %s: measured shape" % R["label"][0])
+            continue
+        m = R["mask"] & ~fr.person
+        name, share = fr.segm.label(fr.sem, m) if m.any() else (None, 0.0)
+        R["label"] = (name, round(share, 2))
+        was = R["cls"]
+        cls, pt, rel = sem_decide(R, name, share, indoor)
+        R["cls"] = cls
+        if pt:
+            R["ptype"] = pt
+        if rel:
+            R["relief"] = True
+        if cls != was or rel:
+            print("    %s -> %s%s (%s %.2f)" % (was, cls, " measured shape" if rel else "", name, share))
+    return regs
+
+
+RELIEF_THICK = {"plant": 0.6, "flower": 0.6, "tree": 0.6, "palm": 0.6, "curtain": 0.08, "blind": 0.05, "sculpture": 0.5,
+                "vase": 0.9, "pot": 0.9, "bag": 0.5, "basket": 0.8, "animal": 0.5, "towel": 0.1, "blanket": 0.15, "flag": 0.05}
+
+
+def relief_object(fr, m, C, name, src, colour, label=None, kscale=1.0):
+    """a piece built from its measured surface (relief.py) -> env object {"type": "mesh", "v", "f"} or None"""
+    import relief
+    ok = m & fr.valid & ~fr.person & ~fr.bars
+    if ok.sum() < 30:
+        return None
+    P = C + kscale * (fr.X[ok] - C)
+    view = P.mean(0) - C; side = unit(np.array([-view[1], view[0], 0.0]))
+    a = P @ side
+    width = float(np.percentile(a, 95) - np.percentile(a, 5))      # across the view, measured
+    frac = RELIEF_THICK.get((label or "").strip(), 0.4)
+    thick = float(np.clip(frac * width, 0.03, 1.2)) if frac >= 0.2 else float(np.clip(frac, 0.02, 0.3))
+    mesh = relief.relief_mesh(fr.X, ok, C, thick, scale=kscale)
+    if mesh is None:
+        return None
+    V, F = mesh
+    src = dict(src, measured=True)
+    return {"name": name, "type": "mesh", "v": V, "f": F, "colour": colour, "what": label or "", "_src": src}
 
 
 def split_planes(fr, R, indoor, max_planes=4):
@@ -664,6 +802,12 @@ def make_object(R, C, indoor, fr, fpix, name):
     pt = R.get("ptype")
     if cls in ("sky", "floor", "ceiling"):
         return None
+    if R.get("relief"):                                          # plants, curtains, statues...: their measured shape
+        lab = (R.get("label") or (None,))[0]
+        col_r = "tree" if lab in ("plant", "flower", "tree", "palm") else colour_for("object", R, indoor)
+        o = relief_object(fr, R["mask"], C, name, src, col_r, lab, R.get("kscale", 1.0))
+        if o is not None:
+            return o
     if cls in ("wall", "building") or (cls == "far" and R["planar"] and abs(R["plane"][0][2]) < 0.35):
         n = R["plane"][0].copy(); n[2] = 0; n = unit(n); u = np.array([-n[1], n[0], 0.0])
         cen = R["plane"][1]; off = float(n @ cen)
@@ -810,8 +954,8 @@ BODY = (5, 6, 11, 12, 13, 14)                                    # shoulders, hi
 
 def inside(o, P, pad=0.03):
     """which world points are inside an object (box: its turned footprint and height; patch: its outline as a slab)"""
-    if "pts3" in o:
-        Q = np.array(o["pts3"], float)
+    if "pts3" in o or "v" in o:
+        Q = np.array(o.get("pts3") or o["v"], float)
         lo, hi = Q.min(0) - [pad, pad, 0.12], Q.max(0) + [pad, pad, 0.12]
         return np.all((P >= lo) & (P <= hi), axis=1)
     if "pos" not in o or "size" not in o:
@@ -848,6 +992,13 @@ def px_iou(a, b):
     return ix * iy / u if u > 0 else 0.0
 
 
+def px_inside(a, b):
+    """how much of picture box a lies inside box b (0..1)"""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    ar = (a[2] - a[0]) * (a[3] - a[1])
+    return ix * iy / ar if ar > 0 else 0.0
+
+
 def drawn_frames(env, shots):
     """{shot: {env_ai tag: absolute frame}} for the key frames the Objects step drew boxes on.  The tags are the
     regions' tags: "<shot tag>_<key frame within the shot, 3 digits>" ("_000", "_s2_014")"""
@@ -870,9 +1021,15 @@ def drawn_frames(env, shots):
     return out
 
 
-def user_objects(env, tag, fr, C, f0, first=0):
+RELIEF_DRAWN = {"plant_pot", "bush", "plant", "flowers", "flower", "curtain", "statue", "sculpture"}
+
+
+def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True):
     """the objects drawn on the clip page (Objects step, env_ai.json): each box at the distance MoGe measures inside it
-    (the near side of what is there), with the type picked; build_env sizes it from the box (from_bbox "dist")"""
+    (the near side of what is there), with the type picked; build_env sizes it from the box (from_bbox "dist").
+    A plant, curtain, statue or "other" - or a box the segmentation says holds one (whatever type was picked) - is
+    built from its measured shape inside the box instead (relief.py), cut to that class's pixels"""
+    import props
     out = []
     for i, o in enumerate(((env.get("shots") or {}).get(tag) or {}).get("objects", [])):
         b = o.get("bbox")
@@ -883,6 +1040,39 @@ def user_objects(env, tag, fr, C, f0, first=0):
         m &= fr.valid & ~fr.person & ~fr.bars
         if m.sum() < 20:
             continue
+        typed = str(o.get("type") or "other").strip().lower()
+        if getattr(fr, "sem", None) is not None:
+            import semseg
+            lab, share = fr.segm.label(fr.sem, m)
+            soft = share >= 0.4 and (semseg.role(lab) == "relief" or (indoor and semseg.role(lab) == "tree"))
+            if typed in RELIEF_DRAWN or soft:
+                softp = np.isin(fr.sem, [k for k, n_ in enumerate(fr.segm.names) if semseg.role(n_) in ("relief", "tree")])
+                m2 = m & softp                                     # just the plant / curtain..., not the wall behind it
+                if m2.sum() >= 0.15 * m.sum():
+                    m = m2
+                    lab = fr.segm.label(fr.sem, m)[0] or lab
+                elif props.norm_type(semseg.role(lab)) != "other" and share >= 0.4:
+                    o = dict(o, type=semseg.role(lab))             # the box holds furniture, not a plant: its model
+                    typed = None
+                elif lab is not None and share >= 0.25:
+                    m2 = m & (fr.sem == fr.segm.names.index(lab))
+                    if m2.sum() >= 0.3 * m.sum():
+                        m = m2
+            if typed is None:
+                pass
+            elif typed in RELIEF_DRAWN or soft:
+                k = 1.0
+                if fit:
+                    R = region(fr, m, indoor)
+                    if R is not None and R.get("cls") != "sky":
+                        k = onto_fit_floor(R, C, fr.gp).get("kscale", 1.0)
+                col = "tree" if lab in ("plant", "flower", "tree", "palm") or typed in ("plant_pot", "bush", "plant") else "set"
+                src = {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": o.get("what", ""), "area": 0.0,
+                       "label": [lab, round(share, 2)]}
+                ro = relief_object(fr, m, C, "drawn_%d" % (first + i), src, col, lab or typed, k)
+                if ro is not None:
+                    ro.update(frame=int(f0), bbox=[float(v) for v in b])     # (build_env skips "bbox" on a mesh)
+                    out.append(ro); continue
         hd = np.hypot(fr.X[m][:, 0] - C[0], fr.X[m][:, 1] - C[1])
         d = float(np.percentile(hd, 30))                          # its front, not what shows through behind it
         out.append({"name": "drawn_%d" % (first + i), "type": o.get("type") or "box", "bbox": [float(v) for v in b], "frame": int(f0),
@@ -893,8 +1083,8 @@ def user_objects(env, tag, fr, C, f0, first=0):
 
 def obj_box(o):
     """rough world footprint (x0, x1, y0, y1, z1) of an object for duplicate tests"""
-    if "pts3" in o:
-        P = np.array(o["pts3"]); return P[:, 0].min(), P[:, 0].max(), P[:, 1].min(), P[:, 1].max(), P[:, 2].max()
+    if "pts3" in o or "v" in o:
+        P = np.array(o.get("pts3") or o["v"]); return P[:, 0].min(), P[:, 0].max(), P[:, 1].min(), P[:, 1].max(), P[:, 2].max()
     x, y, z = o["pos"]; w, h, d = o["size"]; r = math.hypot(w, d) / 2
     return x - r, x + r, y - r, y + r, z + h
 
@@ -1024,8 +1214,7 @@ def main():
     ap.add_argument("--no-mid", action="store_true")
     ap.add_argument("--free-fov", action="store_true", help="also measure MoGe's own field of view on each shot's first "
                     "frame (a second MoGe run; the lens step already measures it)")
-    ap.add_argument("--points", type=int, default=None, help="SAM points per side (default: 32 on an NVIDIA card, "
-                    "config.json sam_points on the processor)")
+    ap.add_argument("--points", type=int, default=None, help="SAM points per side (default: config.json sam_points, 32)")
     ap.add_argument("--max-objects", type=int, default=30)
     ap.add_argument("--frame", default="fit", choices=["fit", "moge"], help="fit: build in the fit camera (lines up with env_check; MoGe ground becomes a slope); moge: MoGe-levelled camera (needs its camera hint)")
     ap.add_argument("--level", action="store_true", help="level the world with the walls (true vertical) and make the ground a slope; off by default: leaning retaining walls fool it")
@@ -1047,13 +1236,13 @@ def main():
     if not names:
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
-    import torch
-    pts = a.points or (32 if torch.cuda.is_available() else int(c.get("sam_points", 16)))
+    pts = a.points or int(c.get("sam_points", 32))
     models = Models(pts)
     print("SAM: %dx%d points" % (pts, pts))
     import namer as NM
-    models.namer = NM.Namer() if NM.available() else None
-    print("object names: %s" % ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)"))
+    models.namer = NM.Namer(models.dev) if (models.seg is None and NM.available()) else None   # only without Mask2Former
+    print("object names: %s" % ("Mask2Former ADE20K (models/mask2former_ade)" if models.seg is not None else
+                                ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)")))
     print("models loaded on %s in %.1f s" % (models.dev, time.time() - t_load))
     bad = []
     for n in names:
@@ -1091,6 +1280,8 @@ def run_clip(name, models, a, c):
     from run_pipeline import marks_dir
     pp = os.path.join(marks_dir(ci["video"], c), "pose.json")
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
+    hj = os.path.join(output_dir(), name, "held.json")          # objects people carry (held_objects.py): masked out
+    pose["_held"] = jload(hj) if os.path.exists(hj) else None   # with the people, never built as fixed boxes
     W, Hp = ci["W"], ci["Hpic"]
     user_env = jload(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) if os.path.exists(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) else {}
     f_full = data["lens"] / data["sensor"] * W
@@ -1241,7 +1432,16 @@ def run_clip(name, models, a, c):
                     else:
                         regs.append(R)
                 regs = merge_regions(regs, fr.H, fr.W)
-                regs_by_frame[f] = name_regions(merge_regions(regs, fr.H, fr.W), fr, getattr(models, "namer", None), indoor)
+                if fr.sem is not None:                           # the segmentation model names every piece
+                    regs = merge_regions(regs, fr.H, fr.W)
+                    for m, nm in fr.soft:                        # plants, curtains...: from the segmentation map
+                        R = region(fr, m, indoor)
+                        if R is not None and R["cls"] != "sky":
+                            R["cls"] = "object"; R["relief"] = True; R["label"] = (nm, 1.0); R["soft"] = True
+                            regs.append(R)
+                    regs_by_frame[f] = sem_regions(regs, fr, indoor)
+                else:
+                    regs_by_frame[f] = name_regions(merge_regions(regs, fr.H, fr.W), fr, getattr(models, "namer", None), indoor)
         place_all(R0, gplane0)
         # walls are upright: when they say the ground the people walk on is sloped, level the world (z = up) and
         # make the ground a slope instead (build_env Ground slope_deg / slope_dir_deg)
@@ -1344,10 +1544,11 @@ def run_clip(name, models, a, c):
         keep = keep[:a.max_objects]
         mine = []
         for tag, f in sorted(drawn.get(sid, {}).items()):        # each key frame's boxes, at that frame's view
-            mine += user_objects(user_env, tag, frs[f], fits[f][4], f, first=len(mine))
+            mine += user_objects(user_env, tag, frs[f], fits[f][4], f, first=len(mine), indoor=bool(indoor), fit=a.frame == "fit")
         if mine:                                                 # the boxes drawn on the clip page win over what is found there
             keep = [o for o in keep if not any(o["_src"].get("frame", u["frame"]) == u["frame"] and
-                                               px_iou(o["_src"]["px"], u["bbox"]) > 0.3 for u in mine)] + mine
+                                               (px_iou(o["_src"]["px"], u["bbox"]) > 0.3 or px_inside(o["_src"]["px"], u["bbox"]) > 0.6)
+                                               for u in mine)] + mine
             print("  %d object(s) drawn on the clip page" % len(mine))
         for o in keep:
             o.pop("_R", None)
