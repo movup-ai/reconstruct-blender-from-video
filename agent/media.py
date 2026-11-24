@@ -2,33 +2,15 @@
 """Thumbnails and crops (cached on disk).  OpenCV cannot open Chinese paths on Windows, so videos are copied to a
 temporary ASCII path when needed."""
 import os
-import shutil
-import tempfile
 import threading
 
 import cv2
 
 
 from .clips import folders, read_json
+from common import open_video, close_video  # pipeline (on sys.path through config)
 
 _lock = threading.Lock()
-
-
-def open_video(path):
-    cap = cv2.VideoCapture(path)
-    if cap.isOpened() and cap.get(cv2.CAP_PROP_FRAME_COUNT) > 0:
-        return cap, None
-    cap.release()
-    d = tempfile.mkdtemp(prefix="agent_")
-    t = os.path.join(d, "v" + os.path.splitext(path)[1].lower())
-    shutil.copyfile(path, t)
-    return cv2.VideoCapture(t), d
-
-
-def close_video(cap, tmp):
-    cap.release()
-    if tmp:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def write_jpg(path, img, q=85):
@@ -54,6 +36,29 @@ def read_frames_at(video, idxs):
     finally:
         close_video(cap, tmp)
     return out
+
+
+def shot_frame(c, cl, tag, frame):
+    """the Objects step's picture for one key frame: the ORIGINAL video frame (people and all, sharp), cut to the
+    picture area and sized like the set's background plate (plate<tag>.jpg, which the boxes are drawn in) -> path.
+    Cached as work/frame<tag>.jpg, made again when the plate is newer.  None when the video cannot be read."""
+    f = folders(c, cl)
+    plate = os.path.join(f["work"], "plate%s.jpg" % tag)
+    p = os.path.join(f["work"], "frame%s.jpg" % tag)
+    if os.path.exists(p) and (not os.path.exists(plate) or os.path.getmtime(p) >= os.path.getmtime(plate)):
+        return p
+    with _lock:
+        img = read_frames_at(cl.video, [int(frame)]).get(int(frame))
+        if img is None:
+            return None
+        pose = read_json(f["pose"], {}) or {}
+        _, y0, _, hp = pose.get("picture_area") or [0, 0, img.shape[1], img.shape[0]]
+        img = img[int(y0):int(y0) + int(hp)]
+        ref = cv2.imread(plate) if os.path.exists(plate) else None    # (ASCII work paths)
+        if ref is not None and ref.shape[:2] != img.shape[:2]:
+            img = cv2.resize(img, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
+        write_jpg(p, img, 90)
+    return p
 
 
 def clip_thumb(c, cl):

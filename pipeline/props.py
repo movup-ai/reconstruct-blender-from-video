@@ -62,23 +62,6 @@ def cyl(cx, cy, r, z0, z1, seg=12, r_top=None):
     return v, f
 
 
-def ell(cx, cy, cz, rx, ry, rz, seg=12, ring=8):
-    v = [(cx, cy, cz + rz)]
-    for i in range(1, ring):
-        th = math.pi * i / ring
-        for j in range(seg):
-            ph = 2 * math.pi * j / seg
-            v.append((cx + rx * math.sin(th) * math.cos(ph), cy + ry * math.sin(th) * math.sin(ph), cz + rz * math.cos(th)))
-    v.append((cx, cy, cz - rz))
-    f = [(0, 1 + j, 1 + (j + 1) % seg) for j in range(seg)]
-    for i in range(ring - 2):
-        for j in range(seg):
-            a = 1 + i * seg + j; b = 1 + i * seg + (j + 1) % seg
-            f.append((a, a + seg, b + seg, b))
-    last = len(v) - 1; base = 1 + (ring - 2) * seg
-    f += [(base + (j + 1) % seg, base + j, last) for j in range(seg)]
-    return v, f
-
 
 def lump(cx, cy, cz, rx, ry, rz, n=16, jit=0.18, rng=None, flat_bottom=None):
     """faceted low-poly blob (the convex hull of n jittered points on an ellipsoid): reads as a block-style bush,

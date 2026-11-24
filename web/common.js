@@ -93,10 +93,10 @@ async function startOver(cid, name) {
     cid ? 'Kept: the video, its delivery name and its thumbnail.' : 'Kept: the videos, their delivery names and their thumbnails.',
     cid ? 'Press Prepare this clip (or Start) to detect the people again.' : 'Press Start to prepare them again from the videos.'];
   if (r.busy.length) pts.push(`Skipped while they are being processed: ${r.busy.join(', ')}.`);
-  if (!(await ask('', 'Delete and start over', { title: cid ? 'Start this clip over?' : `Start over with ${r.clips.length} clip(s)?`, name: cid ? name : '', danger: true, points: pts }))) return false;
+  if (!(await ask('', cid ? 'Delete and start over' : 'Reset all', { title: cid ? 'Start this clip over?' : `Reset all ${r.clips.length} clip(s)?`, name: cid ? name : '', danger: true, points: pts }))) return false;
   const d = await post(base);
   if (d.failed.length) toast(`${d.failed.length} item(s) could not be deleted (${d.failed[0].reason}): close any program using them and try again.`, true);
-  else toast(cid ? 'Started over: prepare the clip again.' : `Started over with ${d.clips.length} clip(s). Press Start to prepare them.`);
+  else toast(cid ? 'Started over: prepare the clip again.' : `Reset ${d.clips.length} clip(s). Press Start to prepare them.`);
   return true;
 }
 

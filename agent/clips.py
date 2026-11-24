@@ -294,6 +294,10 @@ def fingerprint(c, cl):
     except OSError:
         pass
     h.update(str(pkg.package_name(cl.name, c)).encode("utf-8"))
+    settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in
+                ("pose_backend", "rtmo_model", "camera_backend", "da3_model", "da3_python", "da3_meters_per_unit",
+                 "da3_max_views", "foot_contact", "set_adaptive_frames", "set_max_frames")}
+    h.update(json.dumps({"pipeline_version": 2, **settings}, sort_keys=True).encode("utf-8"))
     return h.hexdigest()
 
 

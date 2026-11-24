@@ -38,15 +38,6 @@ def Rxyz(rx, ry, rz):  # degrees, Blender XYZ euler: R = Rz*Ry*Rx
     return mmul(Rz, mmul(Ry, Rx))
 def xf(M, p):
     return [M[i][0] * p[0] + M[i][1] * p[1] + M[i][2] * p[2] + M[i][3] for i in range(3)]
-def vadd(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
-def vsub(a, b): return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
-def vmul(a, s): return (a[0] * s, a[1] * s, a[2] * s)
-def vlerp(a, b, t): return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t)
-def vlen(a): return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
-def vnorm(a):
-    l = vlen(a) or 1.0
-    return (a[0] / l, a[1] / l, a[2] / l)
-def vcross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
 # ------------------------------------------------------------------ primitive meshes (verts, faces)
 BOX_F = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
@@ -54,18 +45,6 @@ def box(sx, sy, sz, c=(0, 0, 0)):
     x, y, z = sx / 2, sy / 2, sz / 2
     v = [(c[0] + i * x, c[1] + j * y, c[2] + k * z) for i in (-1, 1) for j in (-1, 1) for k in (-1, 1)]
     return v, list(BOX_F)
-def beam(p, q, th):
-    """square bar from p to q"""
-    d = vnorm(vsub(q, p))
-    a = vnorm(vcross(d, (0, 0, 1) if abs(d[2]) < 0.9 else (1, 0, 0)))
-    b = vcross(d, a)
-    v = []
-    for base in (p, q):
-        for i in (-1, 1):
-            for j in (-1, 1):
-                v.append(vadd(base, vadd(vmul(a, i * th / 2), vmul(b, j * th / 2))))
-    f = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
-    return v, f
 def sphere(r, c=(0, 0, 0), seg=16, ring=10, sc=(1, 1, 1)):
     v = [(c[0], c[1], c[2] + r * sc[2])]
     for i in range(1, ring):
@@ -498,9 +477,16 @@ def build_blender():
     cam_d = bpy.data.cameras.new("Camera"); cam_d.lens = DATA["lens"]; cam_d.sensor_width = DATA["sensor"]; cam_d.sensor_fit = "HORIZONTAL"
     cam_d.clip_start = 0.1; cam_d.clip_end = 20000
     cam = bpy.data.objects.new("Camera", cam_d); coll("Camera").objects.link(cam); scn.camera = cam
+    zoom = DATA.get("zoom") or []                       # the lens zooms: focal length keyed on every frame
+    zooms = bool(zoom) and max(abs(float(z) - 1.0) for z in zoom) > 1e-3
     for fr, c in enumerate(DATA["cam"]):
         cam.location = c[:3]; cam.rotation_euler = [math.radians(a) for a in c[3:]]
         cam.keyframe_insert("location", frame=fr + 1); cam.keyframe_insert("rotation_euler", frame=fr + 1)
+        if zooms:
+            cam_d.lens = DATA["lens"] * float(zoom[min(fr, len(zoom) - 1)])
+            cam_d.keyframe_insert("lens", frame=fr + 1)
+    if zooms:
+        print("camera zoom: lens %.1f -> %.1f mm" % (DATA["lens"] * min(zoom), DATA["lens"] * max(zoom)))
     scn.frame_set(1)
 
     os.makedirs(os.path.join(WORK_DIR, "render"), exist_ok=True)

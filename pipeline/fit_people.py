@@ -153,8 +153,8 @@ def project_b(world, X, f):
     """world.project for points (..., 3) -> uv (..., 2), depth (...)"""
     Xc = (X - world.C_at(f)) @ world.R_cw(f).T
     z = np.maximum(Xc[..., 2], 1e-6)
-    cam = world.cam
-    return np.stack([Xc[..., 0] / z * cam.f + cam.W / 2, Xc[..., 1] / z * cam.f + cam.H / 2], axis=-1), Xc[..., 2]
+    cam = world.cam; fl = world.f_at(f)
+    return np.stack([Xc[..., 0] / z * fl + cam.W / 2, Xc[..., 1] / z * fl + cam.H / 2], axis=-1), Xc[..., 2]
 
 def _c01(x):
     return np.minimum(np.maximum(x, 0.0), 1.0)
@@ -318,7 +318,7 @@ def p3_dirs_b(W, s, Rcw):
     d = d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
     return d @ Rcw.T
 
-def p3_target(lift, f, k, cam):
+def p3_target(lift, f, k, world):
     """lifted bone directions at frame f in the camera axes + how sure each is: (nbones, 3), (nbones,) or None.
     The lifter sees the person as if centred in the picture: its pose is turned onto the ray through the body."""
     fr, X, cf = lift
@@ -329,7 +329,7 @@ def p3_target(lift, f, k, cam):
     d = d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
     body = [j for j in (5, 6, 11, 12) if k[j, 2] > 0.3] or [j for j in range(17) if k[j, 2] > 0.3]
     if body:
-        r = np.r_[cam.norm(*k[body, :2].mean(0)), 1.0]; r /= np.linalg.norm(r)
+        r = np.r_[world.norm(f, *k[body, :2].mean(0)), 1.0]; r /= np.linalg.norm(r)
         ax = np.cross([0, 0, 1.0], r); sn = np.linalg.norm(ax); cs = r[2]
         if sn > 1e-6:                                         # rotation taking the optical axis onto the ray
             ax /= sn; Kx = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
@@ -502,7 +502,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         """(target directions (nb, 3), weights (nb,)) of frame f, or None"""
         if not use_p3 or p3_w <= 0 or lying_at(f):           # the lifter has hardly seen anyone lying down
             return None
-        tg = p3_target(lift, f, k, world.cam)
+        tg = p3_target(lift, f, k, world)
         if tg is None:
             return None
         keyed = {ANG[i_][0] for i_, _ in kt}
@@ -568,13 +568,32 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         if qprev is not None:
             st = np.r_[0.12 * dt, 0.12 * dt, 12.0 * dt, 0.05 * dt, np.full(len(ANG), 18.0 * dt)]
         p3t = p3_frame(f, k, kt, yh); Rcw = world.R_cw(f)
+        contacts = []
+        if qprev is not None and dt <= 4 and hint.get("foot_contact", True) and not lying and not bent and lg == "free":
+            previous = fk_b(rig, qprev[None])
+            for sd, joint in (("L", 15), ("R", 16)):
+                if any(ANG[index][0] in ("hip_" + sd, "knee_" + sd, "ankle_" + sd) for index, _ in kt):
+                    continue
+                ankle = previous["ankle_" + sd][1][0]
+                uv, depth = world.project(ankle, f)
+                tolerance = max(3.0, 0.012 * scale_px(k))
+                previous_index = fidx.get(f - dt)
+                previous_seen = previous_index is not None and K[previous_index, joint, 2] >= 0.6
+                observed = previous_seen and k[joint, 2] >= 0.6 and np.linalg.norm(uv[0] - k[joint, :2]) <= tolerance
+                if observed and depth[0] > 0 and abs(ankle[2] - rig.sole - fz_at(f)) < 0.06:
+                    target = ankle.copy()
+                    target[2] = rig.sole + fz_at(f)
+                    contacts.append((sd, target))
         col = lambda v: v[:, None]
 
         def fb(Q):
             W = fk_b(rig, Q)
+            contact_sigma = float(hint.get("foot_contact_sigma", 0.04))
             uv, _ = project_b(world, coco_b(rig, W), f)
             r = [((uv - k2) * kw).reshape(len(Q), -1), 0.35 * Q[:, NB:] / sig_f,
                  merge_b(W, rig.s)]                            # body blocks do not pass through each other
+            for sd, target in contacts:
+                r.append((W["ankle_" + sd][1] - target) / max(0.01, contact_sigma))
             if lg in ("seated", "hidden", "kneeling") and not lying:
                 r += [col((Q[:, 3] - pz_aim) / pz_sig), (Q[:, leg_c] - leg_v) / leg_s]
             elif lying:                                       # on the floor: pelvis low, nothing below the floor
@@ -663,7 +682,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             tor = [i for i in (5, 6, 11, 12) if k[i, 2] > 0.3]
             hp = k[[i for i in (11, 12, 5, 6) if k[i, 2] > 0.3] or [0], :2].mean(0)
             tl = np.linalg.norm(k[[5, 6], :2].mean(0) - k[[11, 12], :2].mean(0)) if len(tor) == 4 else scale_px(k) / 3.3
-            Z = world.cam.f * 0.50 * rig.s / max(tl, 4.0)
+            Z = world.f_at(f) * 0.50 * rig.s / max(tl, 4.0)
             d = world.ray(f, *hp); g = world.C_at(f) + d * Z / max(d @ (world.R_cw(f).T @ [0, 0, 1.0]), 0.2)
             g[2] = 0.0
         q[0], q[1] = g[0], g[1]
@@ -818,7 +837,8 @@ def fit_all(world, y0, people, N, c):
         height = float(r.get("height") or c["person_height"])
         log("    person %s: %d frames%s" % (pid, len(fs), ("  role " + r["role"]) if r.get("role") else ""))
         style = (c.get("_hints") or {}).get("character_style") or c.get("character_style", "sample")
-        hint = ((c.get("_hints") or {}).get("people") or {}).get(str(pid))
+        hint = {"foot_contact": c.get("foot_contact", True),
+                **(((c.get("_hints") or {}).get("people") or {}).get(str(pid)) or {})}
         rig, Q, err = fit_track(world, y0, fs, K, height, step=c.get("fit_step", 2), style=style, hint=hint,
                                 lift=lifts.get(pid), p3=p3)
         sm = (hint or {}).get("smooth", 1.0 if (hint or {}).get("follow_dots") else c.get("smooth_frames", 1.5))

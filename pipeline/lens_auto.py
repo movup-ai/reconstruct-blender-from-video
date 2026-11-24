@@ -14,6 +14,7 @@ Work_auto\\<clip>\\lens_auto.json, so a refit does not measure again.  About 15 
 processor.  config.json "lens_auto": false keeps the fixed "lens_mm"; a lens set in hints.json or in the review wins."""
 import os, sys, json, math, subprocess, tempfile, shutil
 import numpy as np
+from profiling import stage
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 MOGE_DIR = os.path.join(ROOT, "third_party", "MoGe")
@@ -98,6 +99,7 @@ def measure(pictures):
         shutil.rmtree(d, ignore_errors=True)
 
 
+@stage("lens")
 def clip_lens(frames, y0, Hp, shots, work=None, c=None):
     """frames: the clip's BGR frames; y0, Hp: picture area rows; shots: [(first, end), ...]"""
     if not available():

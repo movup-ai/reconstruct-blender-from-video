@@ -113,6 +113,14 @@ class Models:
             up = up.cpu().numpy()
         return [{"segmentation": m, "area": int(m.sum())} for m in up]
 
+    def sam_box_mask(self, rgb, box):
+        """the outline of the one thing inside a drawn box (SAM with the box as prompt) -> bool mask"""
+        with self.torch.inference_mode(), self.amp():
+            self.pred.set_image(rgb)
+            m, sc, _ = self.pred.predict(box=np.asarray(box, np.float32), multimask_output=True)
+        m = np.asarray(m).reshape(-1, *rgb.shape[:2]); sc = np.asarray(sc).reshape(-1)
+        return m[int(np.argmax(sc))].astype(bool)
+
     def sam_boxes(self, rgb, boxes):
         if not len(boxes):
             return np.zeros(rgb.shape[:2], bool)
@@ -124,14 +132,8 @@ class Models:
 
 
 # ----------------------------------------------------------------------------------------------- geometry helpers
-def cam_mats(c):
-    x, y, z, ex, ey, ez = c
-    a, b, g = [math.radians(v) for v in (ex, ey, ez)]
-    Rx = np.array([[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]])
-    Ry = np.array([[math.cos(b), 0, math.sin(b)], [0, 1, 0], [-math.sin(b), 0, math.cos(b)]])
-    Rz = np.array([[math.cos(g), -math.sin(g), 0], [math.sin(g), math.cos(g), 0], [0, 0, 1]])
-    return Rz @ Ry @ Rx, np.array([x, y, z], float)
-
+from build_env import cam_mats  # noqa: E402  (one definition of the camera key -> rotation, position)
+from common import box_iou as px_iou  # noqa: E402
 
 def unit(v):
     return v / max(np.linalg.norm(v), 1e-12)
@@ -288,6 +290,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
     img = cv2.resize(bgr, (Wk, Hk), interpolation=cv2.INTER_AREA) if k < 1 else bgr.copy()
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     fr = Frame(); fr.k, fr.W, fr.H, fr.img, fr.f = k, Wk, Hk, img, f
+    fr.rgb = rgb                                                 # (the drawn boxes' outlines: SAM with the box as prompt)
     fr.bars = side_bars(img)                                     # black pillarbox bars: not part of the room
     o = models.moge_run(rgb, fov_x=fov_x)
     fr.P = o["points"]; fr.N = o.get("normal"); fr.valid = o["mask"].astype(bool) & np.isfinite(fr.P).all(-1)
@@ -335,6 +338,23 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False):
         lab[m] = -1                                              # regions (a wall with a plant in front) lose them
     fr.lab = lab; fr.n_masks = len(masks)
     return fr
+
+
+def split_by_class(fr, m, min_share=0.2, min_area=0.004):
+    """one SAM region -> one mask per segmentation class that holds at least 20 % of it (SAM often takes a back
+    wall and the curtain in front of it as one piece; the segmentation tells them apart).  Pieces too small to be
+    built stay with the biggest class."""
+    if getattr(fr, "sem", None) is None or not m.any():
+        return [m]
+    v = fr.sem[m]
+    c = np.bincount(v.astype(np.int64), minlength=len(fr.segm.names))
+    big = [k for k in np.argsort(-c) if c[k] >= min_share * len(v) and c[k] >= min_area * m.size]
+    if len(big) < 2:
+        return [m]
+    out = [m & (fr.sem == k) for k in big]
+    rest = m & ~np.isin(fr.sem, big)
+    out[0] = out[0] | rest                                       # the leftover classes go with the biggest
+    return out
 
 
 SOFT_GROUPS = {"plant": "plant", "pot": "plant", "flower": "plant", "vase": "plant", "tree": "plant", "palm": "plant"}
@@ -687,8 +707,25 @@ def adjacency(regs, H, W):
     return A
 
 
-def merge_regions(regs, H, W):
-    """pieces of one thing -> one region (walls in the same plane, touching vegetation / rocks / objects)"""
+def same_label_join(a, b):
+    """two touching wall pieces the segmentation gives the same class (curtain folds, a door and its frame, wall
+    strips SAM cut apart), close in depth: one piece whatever their surfaces' angle"""
+    if a["cls"] not in ("wall", "building") or b["cls"] not in ("wall", "building"):
+        return False
+    la, lb = a.get("label") or (None, 0), b.get("label") or (None, 0)
+    if not la[0] or la[0] != lb[0] or min(la[1], lb[1]) < 0.45:
+        return False
+    if abs(a["rng"] - b["rng"]) > 0.15 * min(a["rng"], b["rng"]) + 0.25:   # one in front of the other: two things
+        return False
+    lo_a, hi_a = np.percentile(a["P"], 5, 0), np.percentile(a["P"], 95, 0)
+    lo_b, hi_b = np.percentile(b["P"], 5, 0), np.percentile(b["P"], 95, 0)
+    gap = np.maximum(0, np.maximum(lo_a - hi_b, lo_b - hi_a))[:2].max()
+    return gap < 0.25 + 0.03 * min(a["rng"], b["rng"])
+
+
+def merge_regions(regs, H, W, join=None):
+    """pieces of one thing -> one region (walls in the same plane, touching vegetation / rocks / objects).
+    join(a, b): a different rule for which touching pieces are one (same_label_join after naming)"""
     if not regs:
         return regs
     A = adjacency(regs, H, W)
@@ -701,6 +738,10 @@ def merge_regions(regs, H, W):
         for j in range(i + 1, len(regs)):
             a, b = regs[i], regs[j]
             if not A[i, j]:
+                continue
+            if join is not None:
+                if join(a, b):
+                    par[find(j)] = find(i)
                 continue
             ca, cb = a["cls"], b["cls"]
             same = ca == cb or {ca, cb} <= {"wall", "building"} or {ca, cb} <= {"floor", "terrain"} or {ca, cb} <= {"rock", "object"}
@@ -966,6 +1007,71 @@ def inside(o, P, pad=0.03):
     return (np.abs(lx) <= w / 2 + pad) & (np.abs(ly) <= d / 2 + pad) & (P[:, 2] >= z - pad) & (P[:, 2] <= z + h + pad)
 
 
+def body_scale(ppl, bcam, fr, Cfit, f, joints=(5, 6, 11, 12)):
+    """the depth model's scale from the fitted people's shoulders and hips: their distance in the fit / the depth
+    model's distance at their pixels (+ about 0.1 m: the joint is inside the body, the depth is its front) -> ratio or
+    None (fewer than 3 joints seen)"""
+    rs = []
+    for p in ppl:
+        for j in joints:
+            Pw = np.asarray(p["P"][j], float)
+            uv, z = bcam.project(Pw, f)
+            if z[0] <= 0.3:
+                continue
+            u, v = int(uv[0][0] * fr.k), int(uv[0][1] * fr.k)
+            if not (2 <= u < fr.W - 2 and 2 <= v < fr.H - 2):
+                continue
+            win = fr.valid[v - 2:v + 3, u - 2:u + 3]
+            if win.sum() < 5:
+                continue
+            rm = float(np.median(np.linalg.norm(fr.P[v - 2:v + 3, u - 2:u + 3][win], axis=-1))) + 0.1
+            rf = float(np.linalg.norm(Pw - Cfit))
+            if rm > 0.2:
+                rs.append(rf / rm)
+    return float(np.median(rs)) if len(rs) >= 3 else None
+
+
+def wall_plane(o):
+    """a wall object's (unit horizontal normal, point on it) or None"""
+    if "pts3" in o:
+        P = np.array(o["pts3"], float)
+        a, b = P[0], P[1]
+        t = np.array([b[0] - a[0], b[1] - a[1], 0.0])
+        if np.linalg.norm(t) < 1e-6:
+            return None
+        n = unit(np.array([-t[1], t[0], 0.0]))
+        return n, P.mean(0)
+    if "pos" in o and "yaw" in o:
+        y = math.radians(float(o["yaw"]))
+        return np.array([-math.sin(y), math.cos(y), 0.0]), np.array(o["pos"], float)
+    return None
+
+
+def behind_people(o, pts, pad=0.25, most=1.5):
+    """a big wall the people walk into (they come through a doorway in it, or the measured wall is a little short):
+    moved back along its normal, away from the camera side the people are on, until it is behind them (at most 1.5 m)"""
+    pl = wall_plane(o)
+    if pl is None or not pts:
+        return o
+    n, c = pl
+    P = np.vstack(pts)
+    if not inside(o, P).any():
+        return o
+    d = (P - c) @ n
+    side = -1.0 if np.median(d) < 0 else 1.0                     # the people's side of the wall
+    need = float(np.max(-side * d)) + pad                        # how far the wall must go back past the deepest point
+    if need <= 0 or need > most:
+        return o
+    sh = -side * n * need
+    o = dict(o)
+    if "pts3" in o:
+        o["pts3"] = [rnd(np.array(q) + sh, 3) for q in o["pts3"]]
+    else:
+        o["pos"] = rnd(np.array(o["pos"]) + sh, 2)
+    print("  wall %s moved %.2f m back: people walk where it was measured" % (o.get("name", ""), need))
+    return o
+
+
 def off_people(objs, data, frames, dx=0.0):
     """drop objects that a fitted person is inside (2+ of shoulders / hips / knees in any measured frame): a mask that
     took in a person or a big blob in front of them, never a real piece of the set"""
@@ -977,19 +1083,14 @@ def off_people(objs, data, frames, dx=0.0):
         print("  people test skipped (%s)" % e); return objs, []
     keep, gone = [], []
     for o in objs:
+        if o["_src"]["cls"] in ("wall", "building") and o["_src"].get("area", 0) >= 0.15:
+            keep.append(behind_people(o, pts)); continue         # a big wall: kept, moved back if people walk in it
         if o["_src"]["cls"] not in ("floor", "terrain", "ceiling") and any(inside(o, P).sum() >= 2 for P in pts):
             gone.append(o["_src"]["cls"]); continue
         keep.append(o)
     if gone:
         print("  dropped %d object(s) that people are inside: %s" % (len(gone), ", ".join(gone)))
     return keep, gone
-
-
-def px_iou(a, b):
-    """overlap of two picture boxes [x0, y0, x1, y1] (intersection over union)"""
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
-    return ix * iy / u if u > 0 else 0.0
 
 
 def px_inside(a, b):
@@ -1021,64 +1122,135 @@ def drawn_frames(env, shots):
     return out
 
 
-RELIEF_DRAWN = {"plant_pot", "bush", "plant", "flowers", "flower", "curtain", "statue", "sculpture"}
-
-
-def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True):
-    """the objects drawn on the clip page (Objects step, env_ai.json): each box at the distance MoGe measures inside it
-    (the near side of what is there), with the type picked; build_env sizes it from the box (from_bbox "dist").
-    A plant, curtain, statue or "other" - or a box the segmentation says holds one (whatever type was picked) - is
-    built from its measured shape inside the box instead (relief.py), cut to that class's pixels"""
-    import props
+def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=None):
+    """the objects annotated on the clip page (Objects step, env_ai.json), every one of them, at the frame it was
+    drawn on (that frame's camera and depth, so it lines up with the film there).  The description ("what") says
+    what it is (describe.py):
+      held by a person ("bag in his hand", "backpack")  -> not a set piece: held_objects.py puts it on the hand / back;
+      a regular thing it names (door, pillar, table, car...) or the type picked -> that library model, at the
+        distance MoGe measures inside its outline (the near side), sized from the box (build_env from_bbox "dist");
+      anything else (a plant, curtain, statue, or a thing the description does not name) -> its measured surface
+        (relief.py) inside its outline.
+    The outline is SAM's cut of the box (the thing itself, not the wall behind it); colour words set the shade."""
+    import props, describe
     out = []
     for i, o in enumerate(((env.get("shots") or {}).get(tag) or {}).get("objects", [])):
         b = o.get("bbox")
         if not b or len(b) != 4:
             continue
+        d = describe.parse(o.get("what"), o.get("type"))
+        what = (o.get("what") or o.get("type") or "").strip()
+        if d["mode"] == "held":
+            print("  annotation %r: held by a person - placed on the hand / back (held_objects)" % what)
+            continue
         x0, y0, x1, y1 = [int(round(v * fr.k)) for v in b]
         m = np.zeros((fr.H, fr.W), bool); m[max(0, y0):max(0, y1) + 1, max(0, x0):max(0, x1) + 1] = True
-        m &= fr.valid & ~fr.person & ~fr.bars
-        if m.sum() < 20:
-            continue
-        typed = str(o.get("type") or "other").strip().lower()
-        if getattr(fr, "sem", None) is not None:
-            import semseg
-            lab, share = fr.segm.label(fr.sem, m)
-            soft = share >= 0.4 and (semseg.role(lab) == "relief" or (indoor and semseg.role(lab) == "tree"))
-            if typed in RELIEF_DRAWN or soft:
-                softp = np.isin(fr.sem, [k for k, n_ in enumerate(fr.segm.names) if semseg.role(n_) in ("relief", "tree")])
-                m2 = m & softp                                     # just the plant / curtain..., not the wall behind it
-                if m2.sum() >= 0.15 * m.sum():
-                    m = m2
-                    lab = fr.segm.label(fr.sem, m)[0] or lab
-                elif props.norm_type(semseg.role(lab)) != "other" and share >= 0.4:
-                    o = dict(o, type=semseg.role(lab))             # the box holds furniture, not a plant: its model
-                    typed = None
-                elif lab is not None and share >= 0.25:
-                    m2 = m & (fr.sem == fr.segm.names.index(lab))
-                    if m2.sum() >= 0.3 * m.sum():
-                        m = m2
-            if typed is None:
-                pass
-            elif typed in RELIEF_DRAWN or soft:
-                k = 1.0
-                if fit:
-                    R = region(fr, m, indoor)
-                    if R is not None and R.get("cls") != "sky":
-                        k = onto_fit_floor(R, C, fr.gp).get("kscale", 1.0)
-                col = "tree" if lab in ("plant", "flower", "tree", "palm") or typed in ("plant_pot", "bush", "plant") else "set"
-                src = {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": o.get("what", ""), "area": 0.0,
-                       "label": [lab, round(share, 2)]}
-                ro = relief_object(fr, m, C, "drawn_%d" % (first + i), src, col, lab or typed, k)
-                if ro is not None:
-                    ro.update(frame=int(f0), bbox=[float(v) for v in b])     # (build_env skips "bbox" on a mesh)
-                    out.append(ro); continue
-        hd = np.hypot(fr.X[m][:, 0] - C[0], fr.X[m][:, 1] - C[1])
-        d = float(np.percentile(hd, 30))                          # its front, not what shows through behind it
-        out.append({"name": "drawn_%d" % (first + i), "type": o.get("type") or "box", "bbox": [float(v) for v in b], "frame": int(f0),
-                    "dist": round(max(0.3, d), 2), "colour": "orange" if o.get("colour_role") == "orange" else "set",
-                    "_src": {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": o.get("what", ""), "area": 0.0}})
+        boxm = m & fr.valid & ~fr.bars
+        m = boxm & ~fr.person
+        if m.sum() < 20:                                          # hidden behind a person here: no depth of its own ->
+            kind = d.get("kind") or props.norm_type(o.get("type"))   # a model standing on the floor under its box
+            print("  annotation %r: hidden by a person in this frame - %s model on the floor under its box" % (what, kind))
+            ob = {"name": "drawn_%d" % (first + i), "type": kind, "bbox": [float(v) for v in b], "frame": int(f0),
+                  "z": 0.0, "colour": "set", "what": what, "_level": None,
+                  "_src": {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": what, "area": 0.0,
+                           "label": [d["label"], 1.0], "built": "model"}}
+            role = o.get("role") or ("near" if o.get("colour_role") == "orange" else d.get("role"))
+            if role:
+                ob["role"] = role
+            if o.get("facing") in ("left", "right", "away"):
+                ob["facing"] = o["facing"]
+            out.append(ob); continue
+        if models is not None and getattr(fr, "rgb", None) is not None:      # the thing itself: SAM's cut of the box
+            try:
+                sm = models.sam_box_mask(fr.rgb, [x0, y0, x1, y1]) & m
+                if sm.sum() >= 0.12 * m.sum():
+                    m = sm
+            except Exception as e:
+                print("  annotation %r: no outline (%s) - the whole box is used" % (what, e))
+        role = o.get("role") or ("near" if o.get("colour_role") == "orange" else d.get("role"))   # colour card meaning asked for
+        colour = None
+        src = {"cls": "drawn", "frame": int(f0), "px": [int(v) for v in b], "what": what, "area": 0.0,
+               "label": [d["label"], 1.0], "built": d["mode"]}
+        k = 1.0                                                   # the measured depth -> the fit's world (where the people
+        if fit:                                                   # stand), as for every piece the set finds itself
+            R = region(fr, m, indoor)
+            if R is not None and R.get("cls") != "sky":
+                k = onto_fit_floor(R, C, fr.gp).get("kscale", 1.0)
+        V = fr.X[m] - C
+        hd = np.hypot(V[:, 0], V[:, 1]) * k
+        az = np.degrees(np.arctan2(V[:, 1], V[:, 0]))
+        lvl = {"_level": int(o["level"]) if str(o.get("level") or "").isdigit() else None, "_C": [float(v) for v in C],
+               "_reach": [float(np.percentile(hd, 30)), float(np.percentile(hd, 90))],
+               "_az": [float(np.percentile(az, 2)), float(np.percentile(az, 98))]}   # for by_level
+        if d["mode"] == "shape":
+            lab = d["label"] or ""
+            col = colour or ("tree" if any(w in lab for w in ("plant", "flower", "tree", "bush", "palm", "leaves", "hedge")) else "set")
+            ro = relief_object(fr, m, C, "drawn_%d" % (first + i), src, col, lab.split()[-1] if lab else None, k)
+            if ro is not None:
+                ro.update(frame=int(f0), bbox=[float(v) for v in b], what=what, **lvl)
+                if role:
+                    ro["role"] = role
+                print("  annotation %r: measured shape" % what)
+                out.append(ro); continue
+            d = dict(d, mode="model", kind=d.get("kind") or props.norm_type(o.get("type")))   # too little depth: a box
+        dist = lvl["_reach"][0]                                   # its front, not what shows through behind it
+        kind = d.get("kind") or props.norm_type(o.get("type"))
+        print("  annotation %r: %s model, %.1f m from the camera" % (what, kind, dist))
+        ob = {"name": "drawn_%d" % (first + i), "type": kind, "bbox": [float(v) for v in b], "frame": int(f0),
+              "dist": round(max(0.3, dist), 2), "colour": colour or "set", "_src": src, **lvl}
+        ob["what"] = what
+        if role:
+            ob["role"] = role
+        if o.get("facing") in ("left", "right", "away"):
+            ob["facing"] = o["facing"]
+        out.append(ob)
     return out
+
+
+def people_points(data, frames, dx=0.0):
+    """the fitted people's body points (shoulders / hips / knees) at these frames, in the set's world"""
+    import build_env as BE
+    cam = BE.Cam(data)
+    return [np.array([p["P"][j] for j in BODY]) - [dx, 0.0, 0.0] for f in frames for p in BE.people_at(data, cam, f, 0.0)]
+
+
+def push_back(o, s):
+    """moved s times as far from the camera along its view: the picture shows it at the same place and size"""
+    C = np.array(o["_C"])
+    if o.get("type") == "mesh":
+        o["v"] = [rnd(C + s * (np.array(q, float) - C), 3) for q in o["v"]]
+    else:
+        o["dist"] = round(float(o["dist"]) * s, 2)
+    o["_reach"] = [r * s for r in o["_reach"]]
+
+
+def by_level(objs, pts, gap=0.3, pad=0.4):
+    """the distance levels set on the clip page (1 near .. 9 far): an object is moved back along the camera's view
+    until it is behind every object of a smaller level in the shot.  The shot's biggest level (2 or more) is the back
+    of the set: it also goes behind every person who walks inside its view on any frame of the shot."""
+    lv = [o for o in objs if o.get("_level")]
+    if not lv:
+        return
+    top = max(o["_level"] for o in lv)
+    floor = 0.0
+    for L in sorted({o["_level"] for o in lv}):
+        back = floor
+        for o in (q for q in lv if q["_level"] == L):
+            C = np.array(o["_C"]); near = max(0.3, o["_reach"][0])
+            need, why = (floor + gap, "behind level %d" % (L - 1)) if floor else (0.0, "")
+            if L == top and L >= 2 and pts:
+                P = np.vstack(pts); V = P - C
+                a0, a1 = o["_az"]; az = np.degrees(np.arctan2(V[:, 1], V[:, 0]))
+                inv = ((az - a0 + 3) % 360) <= ((a1 - a0) % 360 + 6)      # inside its view (3 degrees each side)
+                if inv.any():
+                    far = float(np.hypot(V[inv, 0], V[inv, 1]).max()) + pad
+                    if far > need:
+                        need, why = far, "behind the people"
+            if need > near:
+                push_back(o, need / near)
+                print("  annotation %r (distance %d): moved back %.1f -> %.1f m, %s" % (o.get("what", ""), L, near, need, why))
+            back = max(back, o["_reach"][1])
+        floor = back
 
 
 def obj_box(o):
@@ -1164,16 +1336,19 @@ def gravity_slope(regs, n_ground, Rw):
 # ----------------------------------------------------------------------------------------------- sheet
 class AutoCam:
     """the env_check camera, with per-frame rotations / positions from env_auto (pixel frame = the picture area)"""
-    def __init__(self, W, H, f):
+    def __init__(self, W, H, f, zoom=None):
         self.W, self.H, self.f = W, H, f; self.R = {}; self.C = {}
+        self.zoom = zoom or None                                 # focal scale per frame (the lens zooms)
+    def f_at(self, fr):
+        return self.f * float(self.zoom[min(int(fr), len(self.zoom) - 1)]) if self.zoom else self.f
     def project(self, P, fr):
-        R, C = self.R[fr], self.C[fr]
+        R, C = self.R[fr], self.C[fr]; f = self.f_at(fr)
         Xc = (np.atleast_2d(P) - C) @ R
         z = -Xc[:, 2]; zz = np.maximum(z, 1e-6)
-        return np.c_[self.W / 2 + self.f * Xc[:, 0] / zz, self.H / 2 - self.f * Xc[:, 1] / zz], z
+        return np.c_[self.W / 2 + f * Xc[:, 0] / zz, self.H / 2 - f * Xc[:, 1] / zz], z
     def ray(self, u, v, fr):
-        R, C = self.R[fr], self.C[fr]
-        d = R @ np.array([(u - self.W / 2) / self.f, -(v - self.H / 2) / self.f, -1.0])
+        R, C = self.R[fr], self.C[fr]; f = self.f_at(fr)
+        d = R @ np.array([(u - self.W / 2) / f, -(v - self.H / 2) / f, -1.0])
         return C, d / np.linalg.norm(d)
 
 
@@ -1271,6 +1446,55 @@ def lens_fov(work):
         return None
 
 
+def sample_set_frames(data, start, end, c, first_only=False, pose=None, picture=None):
+    """Keep the usual views and add views when camera position, rotation or zoom changes."""
+    if first_only or end - start < 24:
+        return [start]
+    selected = {start, (start + end) // 2}
+    if not c.get("set_adaptive_frames", True):
+        return sorted(selected)
+    limit = max(2, int(c.get("set_max_frames", 5)))
+    candidates = np.unique(np.linspace(start, end, min(33, end - start + 1), dtype=int))
+    poses = {int(f): cam_mats(data["cam"][f]) for f in set(candidates) | selected}
+    zoom = data.get("zoom") or [1.0] * (end + 1)
+    masks = {}
+    if pose is not None and picture is not None:
+        width, height, y0 = picture
+        for f in set(candidates) | selected:
+            mask = np.zeros((64, 64), bool)
+            for person in pose.get("people", []):
+                box = person.get("boxes", {}).get(str(f))
+                if box:
+                    x0, ya, x1, yb = box[:4]
+                    x0, x1 = np.clip(np.array([x0, x1]) * 64 / width, 0, 64).astype(int)
+                    ya, yb = np.clip((np.array([ya, yb]) - y0) * 64 / height, 0, 64).astype(int)
+                    mask[ya:yb, x0:x1] = True
+            masks[int(f)] = mask
+    def separation(f, g):
+        rf, cf = poses[f]; rg, cg = poses[g]
+        angle = math.degrees(math.acos(float(np.clip((np.trace(rf.T @ rg) - 1) / 2, -1, 1))))
+        return max(np.linalg.norm(cf - cg) / 0.5, angle / 12.0,
+                   abs(math.log(max(zoom[f], 1e-6) / max(zoom[g], 1e-6))) / math.log(1.15))
+    while len(selected) < limit:
+        hidden = np.logical_and.reduce([masks[g] for g in selected]) if masks else None
+        scores = []
+        for f in candidates:
+            if f in selected:
+                continue
+            score = min(separation(int(f), g) for g in selected)
+            # Occlusion masks share image coordinates only while the view stays nearly fixed.
+            if hidden is not None and max(separation(int(f), g) for g in selected) < 0.25:
+                score = max(score, float(np.mean(hidden & ~masks[int(f)])) / 0.03)
+            scores.append((score, int(f)))
+        if not scores:
+            break
+        score, frame = max(scores)
+        if score < 1.0:
+            break
+        selected.add(frame)
+    return sorted(selected)
+
+
 def run_clip(name, models, a, c):
     T0 = time.time()
     work = os.path.join(c["work_root"], name)
@@ -1282,6 +1506,13 @@ def run_clip(name, models, a, c):
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
     hj = os.path.join(output_dir(), name, "held.json")          # objects people carry (held_objects.py): masked out
     pose["_held"] = jload(hj) if os.path.exists(hj) else None   # with the people, never built as fixed boxes
+    try:                                                        # (and the ones annotated as held on the clip page)
+        import held_objects
+        ann = held_objects.annotated(ci["video"], c, ci, pose, work)
+        if ann:
+            pose["_held"] = held_objects.with_annotated(pose["_held"], ann)
+    except Exception as e:
+        print("annotated held objects not read (%s)" % e)
     W, Hp = ci["W"], ci["Hpic"]
     user_env = jload(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) if os.path.exists(os.path.join(marks_dir(ci["video"], c), "env_ai.json")) else {}
     f_full = data["lens"] / data["sensor"] * W
@@ -1290,12 +1521,13 @@ def run_clip(name, models, a, c):
     want = {}
     for s in shots:
         a0, a1 = s["frames"]
-        want[s["shot"]] = [a0] + ([] if a.no_mid or a1 - a0 < 24 else [(a0 + a1) // 2])
+        want[s["shot"]] = sample_set_frames(data, a0, a1, c, first_only=a.no_mid,
+                                            pose=pose, picture=(W, Hp, ci["y0"]))
     drawn = drawn_frames(user_env, shots)                     # frames the Objects step drew boxes on: measured too
     for sid_, fs_ in drawn.items():
         want[sid_] = sorted(set(want.get(sid_, [])) | set(fs_.values()))
     frames = read_frames_at(ci["video"], [f for v in want.values() for f in v])
-    acam = AutoCam(W, Hp, f_full)
+    acam = AutoCam(W, Hp, f_full, data.get("zoom"))        # (with the lens zoom: each frame's own focal length)
     out_shots, report, sheet_rows = {}, {}, []
     for s in shots:
         sid = s["shot"]; a0 = s["frames"][0]; dx = 200.0 * (sid - 1)
@@ -1309,7 +1541,8 @@ def run_clip(name, models, a, c):
         fits = {}
         for f in want[sid]:
             t1 = time.time()
-            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_x, free_fov=bool(a.free_fov) and f == a0)
+            fov_f = 2 * math.degrees(math.atan(W / 2 / acam.f_at(f)))     # this frame's field of view (zoom)
+            fr = analyse(models, frames[f][ci["y0"]:ci["y0"] + Hp], f, pose, ci, fov_f, free_fov=bool(a.free_fov) and f == a0)
             fr.t_start = t1
             Rp, Cp = cam_mats(data["cam"][f])
             up0 = unit(D @ (Rp.T @ np.array([0, 0, 1.0])))
@@ -1379,6 +1612,11 @@ def run_clip(name, models, a, c):
                     rf = np.median(np.linalg.norm(Fk - fits[f][2], axis=1)); rm = np.median(np.linalg.norm(frs[f].feet, axis=1))
                     if rm > 1e-3:
                         feet_scale[f] = float(rf / rm)
+                rs_ = body_scale(ppl, bcam, frs[f], fits[f][2], f) if ppl else None   # shoulders / hips, fitted vs depth
+                if rs_ and (f not in feet_scale or abs(feet_scale[f] / rs_ - 1) > 0.3):   # feet hidden, or the depth at the
+                    print("  f%d scale from the people's bodies: x%.2f%s" % (f, rs_, "" if f not in feet_scale else   # ankles is
+                          " (feet said x%.2f: something in front of them)" % feet_scale[f]))                            # a desk
+                    feet_scale[f] = rs_
             rep["feet_scale"] = {str(k_): round(v_, 3) for k_, v_ in feet_scale.items()}
         if a.frame == "fit" and not cands and a0 in feet_scale:
             s0 = feet_scale[a0]
@@ -1423,6 +1661,16 @@ def run_clip(name, models, a, c):
                     rep["indoor"] = indoor; rep["sky_frac"] = round(float(skyf), 3)
                 regs = []
                 for i in range(fr.n_masks):
+                    for mi in split_by_class(fr, fr.lab == i):
+                        R = region(fr, mi, indoor)
+                        if R is None or R["cls"] == "sky":
+                            continue
+                        if R["area"] > 0.04 and R["cls"] not in ("vegetation", "pole", "floor", "terrain") and \
+                                (not R["planar"] or R["cls"] in ("object", "far", "building", "top")):
+                            regs += split_planes(fr, R, indoor)
+                        else:
+                            regs.append(R)
+                    continue
                     R = region(fr, fr.lab == i, indoor)
                     if R is None or R["cls"] == "sky":
                         continue
@@ -1439,7 +1687,11 @@ def run_clip(name, models, a, c):
                         if R is not None and R["cls"] != "sky":
                             R["cls"] = "object"; R["relief"] = True; R["label"] = (nm, 1.0); R["soft"] = True
                             regs.append(R)
-                    regs_by_frame[f] = sem_regions(regs, fr, indoor)
+                    regs = sem_regions(regs, fr, indoor)
+                    n0 = len(regs)
+                    regs_by_frame[f] = merge_regions(regs, fr.H, fr.W, join=same_label_join)   # curtain folds: one curtain
+                    if len(regs_by_frame[f]) < n0:
+                        print("    %d wall pieces of the same kind joined" % (n0 - len(regs_by_frame[f])))
                 else:
                     regs_by_frame[f] = name_regions(merge_regions(regs, fr.H, fr.W), fr, getattr(models, "namer", None), indoor)
         place_all(R0, gplane0)
@@ -1472,7 +1724,7 @@ def run_clip(name, models, a, c):
             place_all(R0, (a_, b_, c_))
         for f in want[sid]:
             fr = frs[f]; gfit, Rp, Cp, up0, Cl = fits[f]; t1 = fr.t_start
-            fpix = f_full * fr.k
+            fpix = acam.f_at(f) * fr.k
             regs = regs_by_frame[f]
             Cw = Cl.copy()
             k = 0
@@ -1504,6 +1756,8 @@ def run_clip(name, models, a, c):
                         nq, nr = Rq["plane"][0], R["plane"][0]
                         if abs(nq @ nr) < math.cos(math.radians(15)) or abs((R["plane"][1] - Rq["plane"][1]) @ nq) > 0.6 + 0.04 * R["rng"]:
                             continue
+                        if os.environ.get("ENV_AUTO_DEBUG"):
+                            print("    f%d wall area %.3f -> joins %s (area %.3f)" % (f, R["area"], q["name"], Rq["area"]))
                         Rm = dict(Rq); Rm["P"] = np.vstack([Rq["P"], R["P"]]); Rm["Pabs"] = np.vstack([Rq["Pabs"], R["Pabs"]])
                         Rm["N"] = np.vstack([Rq["N"], R["N"]]); Rm["area"] = Rq["area"] + R["area"]
                         Rm["plane"] = plane_fit(Rm["P"]); Rm["ext"] = np.percentile(Rm["P"], 95, 0) - np.percentile(Rm["P"], 5, 0)
@@ -1511,15 +1765,21 @@ def run_clip(name, models, a, c):
                         frq = frs[q["_src"]["frame"]]; gk = frq.gp
                         if a.frame == "fit":
                             frq.gp = (0.0, 0.0, 0.0)
-                        o2 = make_object(Rm, Cw, indoor, frq, f_full * frq.k, q["name"])
+                        o2 = make_object(Rm, Cw, indoor, frq, acam.f_at(q["_src"]["frame"]) * frq.k, q["name"])
                         frq.gp = gk
                         if o2 is not None:
                             o2["_R"] = Rm; o2["_src"]["area"] = round(Rm["area"], 3); objs[qi] = o2; merged = True
                         break
                     if merged:
                         continue
-                if f != a0 and any(overlaps(o, q) > 0.35 and (GROUP.get(o["_src"]["cls"], o["_src"]["cls"]) == GROUP.get(q["_src"]["cls"], q["_src"]["cls"])) for q in objs):
-                    continue
+                dup = [q for q in objs if f != a0 and overlaps(o, q) > 0.35 and
+                       GROUP.get(o["_src"]["cls"], o["_src"]["cls"]) == GROUP.get(q["_src"]["cls"], q["_src"]["cls"])]
+                if dup:
+                    wide = R["cls"] in ("wall", "building") and R["area"] >= 0.15 and R["area"] > 2 * sum(q["_src"]["area"] for q in dup)
+                    if os.environ.get("ENV_AUTO_DEBUG"):
+                        print("    f%d %s area %.3f: same place as one already found - %s" % (f, R["cls"], R["area"], "kept too (much more of it seen here)" if wide else "left out"))
+                    if not wide:                                 # a wall seen much more fully here (the camera moved): kept as well
+                        continue
                 o["_R"] = R
                 objs.append(o)
             rep.setdefault("time_s", {})[str(f)] = {"moge": round(fr.t_moge, 2), "sam": round(fr.t_sam, 2), "total": round(time.time() - t1, 2), "masks": fr.n_masks}
@@ -1544,7 +1804,15 @@ def run_clip(name, models, a, c):
         keep = keep[:a.max_objects]
         mine = []
         for tag, f in sorted(drawn.get(sid, {}).items()):        # each key frame's boxes, at that frame's view
-            mine += user_objects(user_env, tag, frs[f], fits[f][4], f, first=len(mine), indoor=bool(indoor), fit=a.frame == "fit")
+            mine += user_objects(user_env, tag, frs[f], fits[f][4], f, first=len(mine), indoor=bool(indoor), fit=a.frame == "fit", models=models)
+        if any(u.get("_level") for u in mine):                   # distance levels: order them, the back one behind the people
+            try:
+                by_level(mine, people_points(data, range(s["frames"][0], s["frames"][1] + 1, 3), dx))
+            except Exception as e:
+                print("  distance levels not applied (%s)" % e)
+        for u in mine:
+            for k_ in ("_level", "_C", "_reach", "_az"):
+                u.pop(k_, None)
         if mine:                                                 # the boxes drawn on the clip page win over what is found there
             keep = [o for o in keep if not any(o["_src"].get("frame", u["frame"]) == u["frame"] and
                                                (px_iou(o["_src"]["px"], u["bbox"]) > 0.3 or px_inside(o["_src"]["px"], u["bbox"]) > 0.6)

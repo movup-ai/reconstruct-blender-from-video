@@ -1,0 +1,19 @@
+# Install into downloads/da3-venv (Python 3.12), alongside CUDA PyTorch 2.8 / torchvision 0.23.
+# DA3 source lives in third_party/da3. Its optional Gaussian renderer is outside this camera workflow.
+numpy==1.26.4
+opencv-python==4.11.0.86
+einops
+huggingface_hub
+imageio
+imageio-ffmpeg
+omegaconf
+evo
+e3nn
+trimesh
+plyfile
+pillow_heif
+safetensors
+addict
+timm
+moviepy==1.0.3
+pycolmap

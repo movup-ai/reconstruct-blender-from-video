@@ -5,9 +5,7 @@ source's own width / height / frame rate / bit rate, comparison original-over-wh
 
   python pipeline\\render_lzhd.py <video> <clip name> <out_root> --pkg dragon-22 [--frames 1-24] [--still 40]
 
-Set colours (env_claude.json "colour"): bg (背景 #B8B8B8), fg (前景物体 #9A6B3B), near (近处交互物 #DF872F),
-far_i (远处交互物 #D4689E), lamp (光源 #F5F5F5), special (特殊对象 #7A4EC2).  The older grey names (white, grey,
-dark, light, set, ground ...) become bg, brown -> fg, orange -> near, pink -> far_i, purple -> special.
+Colours: the colour card (colour_card.py, docs/COLOUR_CARD.md), as for every render.
 Light: hints.json "light": {"az": deg from the camera view (0 behind the camera, -90 screen left, 180 back light),
 "el": deg, "sun": W/m2, "ambient": world strength}."""
 import argparse, json, os, sys
@@ -16,26 +14,13 @@ from common import cfg, jload, jsave, output_dir
 import run_pipeline as rp
 import package as pkg
 
-SPEC = {"red": [214, 62, 61], "blue": [45, 107, 216], "green": [46, 157, 90], "yellow": [217, 160, 20],
-        "bg": [184, 184, 184], "fg": [154, 107, 59], "near": [223, 135, 47], "far_i": [212, 104, 158],
-        "lamp": [245, 245, 245], "special": [122, 78, 194], "marker": [255, 255, 255],
-        "cyan": [32, 168, 184], "magenta": [176, 40, 120]}                 # 5th / 6th person (spec: assign and keep)
-LEGACY = {"brown": "fg", "orange": "near", "pink": "far_i", "purple": "special"}
-PEOPLE = ("red", "blue", "green", "yellow")
+import colour_card
 
 
 def spec_palette(data):
-    pal = data.setdefault("palette", {})
-    used = {m["colour"] for m in data.get("meshes", [])} | {p["colour"] for p in data.get("props", [])}
-    for k in list(pal) + list(used):
-        if k in SPEC:
-            continue
-        pal[k] = SPEC[LEGACY.get(k, "bg")]                      # every other set colour is background grey
-    pal.update(SPEC)
-    order = list(PEOPLE) + ["cyan", "magenta"]
-    for i, ch in enumerate(sorted(data.get("chars", {}).values(), key=lambda c: order.index(c["colour"]) if c["colour"] in order else 9)):
-        if ch["colour"] not in order:                          # purple (5th) -> cyan: purple is the special-object colour
-            ch["colour"] = "cyan"
+    """the colour card (colour_card.py, docs/COLOUR_CARD.md) and the official human_master characters"""
+    colour_card.apply(data, log=None)
+    for ch in data.get("chars", {}).values():
         ch["style"] = "master"
 
 

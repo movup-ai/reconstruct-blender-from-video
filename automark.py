@@ -17,11 +17,13 @@ Usage:  python automark.py VIDEO_OR_FOLDER [more ...] [--out DIR] [--step 8] [--
 GPU only (NVIDIA card): TensorRT fp16 engines (built once, ~15 min, cached in models\\trt_cache), CUDA as fallback; RTMPose crops batched.
 --detect-stride / --engine default to config.json "detect_stride" / "pose_engine".
 """
-import argparse, json, os, sys, shutil, tempfile, time, base64, math
+import argparse, json, os, sys, time, base64, math
 import numpy as np
 import cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "pipeline"))
+from common import box_iou as iou, read_frames, imwrite_u, cfg, pick_device  # noqa: E402  (pipeline\common.py)
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 KP_NAMES = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
             "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
@@ -37,26 +39,6 @@ LEFT = {1, 3, 5, 7, 9, 11, 13, 15}
 def log(*a):
     print(*a, flush=True)
 
-def imwrite_u(path, img, q=88):
-    """cv2.imwrite does not like non-ASCII (Chinese) paths on Windows - encode in memory instead"""
-    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])
-    with open(path, "wb") as fh:
-        fh.write(buf.tobytes())
-    return buf.tobytes()
-
-def open_video(path):
-    """open a video even when its path has Chinese characters (copy to a temp ASCII path if needed)"""
-    cap = cv2.VideoCapture(path)
-    if cap.isOpened() and cap.get(cv2.CAP_PROP_FRAME_COUNT) > 0:
-        return cap, None
-    tmpdir = tempfile.mkdtemp(prefix="automark_")
-    tmp = os.path.join(tmpdir, "clip" + os.path.splitext(path)[1].lower())
-    shutil.copyfile(path, tmp)
-    cap = cv2.VideoCapture(tmp)
-    if not cap.isOpened():
-        raise RuntimeError("cannot open video: %s" % path)
-    return cap, tmpdir
-
 def picture_area(frames):
     """(y0, y1) rows that are not black bars, from a few sample frames"""
     g = np.mean([cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).mean(axis=1) for f in frames], axis=0)
@@ -67,12 +49,6 @@ def picture_area(frames):
     if y1 - y0 < frames[0].shape[0] * 0.3:            # something odd - keep the whole frame
         return 0, frames[0].shape[0]
     return y0, y1
-
-def iou(a, b):
-    x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0, x1 - x0) * max(0, y1 - y0)
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / ua if ua > 0 else 0.0
 
 def contained(a, b):
     """fraction of box a that lies inside box b"""
@@ -174,58 +150,55 @@ class Marker:
         if device != "cuda":
             log("ERROR: the pose models run on the NVIDIA card only (device %r)." % device)
             sys.exit(1)
-        if True:                                         # GPU sessions (there is no processor path)
-            sys.path.insert(0, os.path.join(HERE, "pipeline"))
-            from common import gpu_dlls, gpu_session
-            gpu_dlls()                                   # CUDA / cuDNN (and TensorRT) installed by pip
-            ort.set_default_logger_severity(3)           # errors only (TensorRT prints pages of tactic warnings)
-            if "CUDAExecutionProvider" not in ort.get_available_providers():
-                log("ERROR: the NVIDIA (CUDA) runtime is not available - run Setup.bat (installs onnxruntime-gpu).")
+        from common import gpu_dlls, gpu_session
+        gpu_dlls()                                   # CUDA / cuDNN (and TensorRT) installed by pip
+        ort.set_default_logger_severity(3)           # errors only (TensorRT prints pages of tactic warnings)
+        if "CUDAExecutionProvider" not in ort.get_available_providers():
+            log("ERROR: the NVIDIA (CUDA) runtime is not available - run Setup.bat (installs onnxruntime-gpu).")
+            sys.exit(1)
+        # build the two rtmlib models without their own sessions, then give them GPU sessions
+        # (TensorRT fp16 with engine cache, CUDA as fallback for nodes / whole models TensorRT cannot take)
+        from rtmlib.tools.file import download_checkpoint
+        cfg_m = Body.MODE[mode]
+        det_p, pose_p = cfg_m["det"], cfg_m["pose"]
+        det_p = det_p if os.path.exists(det_p) else download_checkpoint(det_p)
+        pose_p = pose_p if os.path.exists(pose_p) else download_checkpoint(pose_p)
+        det = YOLOX.__new__(YOLOX)
+        det.model_input_size, det.mean, det.std = cfg_m["det_input_size"], None, None
+        det.backend, det.device, det.det_mode, det.nms_thr, det.score_thr = backend, device, "human", 0.45, 0.7
+        det.onnx_model = det_p
+        pose = RTMPose.__new__(RTMPose)
+        pose.model_input_size, pose.mean, pose.std = cfg_m["pose_input_size"], (123.675, 116.28, 103.53), (58.395, 57.12, 57.375)
+        pose.backend, pose.device, pose.to_openpose, pose.onnx_model = backend, device, False, pose_p
+        pw, ph = cfg_m["pose_input_size"]
+        dw, dh = cfg_m["det_input_size"][1], cfg_m["det_input_size"][0]
+        # the person detector: the batched copy (pipeline/det_batch_model.py) takes the full picture and its 4 tiles
+        # in one call - same boxes as the original, which takes one picture a call; the original is the fallback
+        self.det_b = None
+        import det_batch_model as dbm
+        src = dbm.source_model()
+        if src and os.path.basename(src) == os.path.basename(det_p) and os.path.exists(dbm.OUT):
+            try:
+                self.det_b, e1 = gpu_session(dbm.OUT, engine, warm=[np.zeros((n, 3, dh, dw), np.float32) for n in (1, 5)],
+                                             profile=("input", (1, 3, dh, dw), (5, 3, dh, dw), (DET_MAX_BATCH, 3, dh, dw)))
+                e1 += " batched"
+            except Exception as e:
+                log("  batched person detector not used (%s) - one picture a call" % str(e).splitlines()[0][:200])
+                self.det_b = None
+        if self.det_b is None:
+            det.session, e1 = gpu_session(det_p, engine, warm=[np.zeros((1, 3, dh, dw), np.float32)],
+                                          exclude="NonMaxSuppression,NonZero,RoiAlign,TopK")
+        pose.session, e2 = gpu_session(pose_p, engine, warm=[np.zeros((n, 3, ph, pw), np.float32) for n in (1, 4)],
+                                       profile=("input", (1, 3, ph, pw), (8, 3, ph, pw), (POSE_MAX_BATCH, 3, ph, pw)))
+        for s in ([self.det_b] if self.det_b is not None else [det.session]) + [pose.session]:
+            if "CUDAExecutionProvider" not in s.get_providers() and "TensorrtExecutionProvider" not in s.get_providers():
+                log("ERROR: the pose models did not load on the NVIDIA card (CUDA / cuDNN libraries failed to load).")
                 sys.exit(1)
-            # build the two rtmlib models without their own sessions, then give them GPU sessions
-            # (TensorRT fp16 with engine cache, CUDA as fallback for nodes / whole models TensorRT cannot take)
-            from rtmlib.tools.file import download_checkpoint
-            cfg_m = Body.MODE[mode]
-            det_p, pose_p = cfg_m["det"], cfg_m["pose"]
-            det_p = det_p if os.path.exists(det_p) else download_checkpoint(det_p)
-            pose_p = pose_p if os.path.exists(pose_p) else download_checkpoint(pose_p)
-            det = YOLOX.__new__(YOLOX)
-            det.model_input_size, det.mean, det.std = cfg_m["det_input_size"], None, None
-            det.backend, det.device, det.det_mode, det.nms_thr, det.score_thr = backend, device, "human", 0.45, 0.7
-            det.onnx_model = det_p
-            pose = RTMPose.__new__(RTMPose)
-            pose.model_input_size, pose.mean, pose.std = cfg_m["pose_input_size"], (123.675, 116.28, 103.53), (58.395, 57.12, 57.375)
-            pose.backend, pose.device, pose.to_openpose, pose.onnx_model = backend, device, False, pose_p
-            pw, ph = cfg_m["pose_input_size"]
-            dw, dh = cfg_m["det_input_size"][1], cfg_m["det_input_size"][0]
-            # the person detector: the batched copy (pipeline/det_batch_model.py) takes the full picture and its 4 tiles
-            # in one call - same boxes as the original, which takes one picture a call; the original is the fallback
-            self.det_b = None
-            import det_batch_model as dbm
-            src = dbm.source_model()
-            if src and os.path.basename(src) == os.path.basename(det_p) and os.path.exists(dbm.OUT):
-                try:
-                    self.det_b, e1 = gpu_session(dbm.OUT, engine, warm=[np.zeros((n, 3, dh, dw), np.float32) for n in (1, 5)],
-                                                 profile=("input", (1, 3, dh, dw), (5, 3, dh, dw), (DET_MAX_BATCH, 3, dh, dw)))
-                    e1 += " batched"
-                except Exception as e:
-                    log("  batched person detector not used (%s) - one picture a call" % str(e).splitlines()[0][:200])
-                    self.det_b = None
-            if self.det_b is None:
-                det.session, e1 = gpu_session(det_p, engine, warm=[np.zeros((1, 3, dh, dw), np.float32)],
-                                              exclude="NonMaxSuppression,NonZero,RoiAlign,TopK")
-            pose.session, e2 = gpu_session(pose_p, engine, warm=[np.zeros((n, 3, ph, pw), np.float32) for n in (1, 4)],
-                                           profile=("input", (1, 3, ph, pw), (8, 3, ph, pw), (POSE_MAX_BATCH, 3, ph, pw)))
-            for s in ([self.det_b] if self.det_b is not None else [det.session]) + [pose.session]:
-                if "CUDAExecutionProvider" not in s.get_providers() and "TensorrtExecutionProvider" not in s.get_providers():
-                    log("ERROR: the pose models did not load on the NVIDIA card (CUDA / cuDNN libraries failed to load).")
-                    sys.exit(1)
-                s.disable_fallback()                     # a GPU error must stop the job, not quietly use the CPU
-            self.engine = "det %s, pose %s" % (e1, e2)
-            self.det, self.pose = det, pose
+            s.disable_fallback()                     # a GPU error must stop the job, not quietly use the CPU
+        self.engine = "det %s, pose %s" % (e1, e2)
+        self.det, self.pose = det, pose
         log("pose backend: %s (%s, %s; %s)" % (backend, device, mode, self.engine))
         self.tiles = tiles
-        self.full_only = False                           # (was the processor's no-tiles path)
         self.n_det = self.n_pose_calls = self.n_crops = 0
 
     def detect(self, img):
@@ -259,7 +232,7 @@ class Marker:
         boxes = []
         # 2 x 2 overlapping tiles -> small far-away people become big enough for the detector
         tw, th = int(w * 0.6), int(h * 0.6)
-        tiles = [(tx, ty) for ty in (() if self.full_only else (0, h - th)) for tx in (0, w - tw)]
+        tiles = [(tx, ty) for ty in (0, h - th) for tx in (0, w - tw)]
         if self.det_b is not None:                       # the picture and its tiles in one call
             try:
                 res = self.detect_many([img] + [img[ty:ty + th, tx:tx + tw] for tx, ty in tiles])
@@ -316,7 +289,7 @@ class Marker:
 
     def run_many(self, imgs):
         """several picture areas (BGR) -> per picture list of (kps(17,2), scores(17), box)"""
-        if not self.tiles and not self.full_only:
+        if not self.tiles:
             return [self(img) for img in imgs]
         bxs = [self.boxes(img) for img in imgs]
         res = self.poses(list(zip(imgs, bxs)))
@@ -370,7 +343,7 @@ class Marker:
 
     def __call__(self, img):
         """img = picture area (BGR). returns list of (kps(17,2), scores(17), box)"""
-        if not self.tiles and not self.full_only:
+        if not self.tiles:
             b = self.detect(img)                         # what rtmlib's Body does (detector, then pose)
             kps, sc = self.poses([(img, b if b else [[0, 0, img.shape[1], img.shape[0]]])])[0]
             out = []
@@ -386,15 +359,33 @@ class Marker:
 TRACK_JUMP = 0.45   # box centre farther than this x box height from where the track was predicted (per frame, more
                     # across gaps) -> never the same person (stops a track jumping to a neighbour when its person is lost)
 
-def track(per_frame, max_gap=15):
+def track(per_frame, max_gap=15, frames=None, y0=0, cuts=()):
     """per_frame: list over frames of [(kps, sc, box)].  returns {track_id: {frame: (kps, sc, box)}}"""
     from scipy.optimize import linear_sum_assignment
     tracks, last = {}, {}          # last[id] = (frame, box, kps)
     vel = {}                       # vel[id] = box centre motion per frame (px) - the box is predicted across gaps
     nid = 1
+    appearance = {}
+    cuts = set(cuts)
+    def descriptor(f, box):
+        if frames is None:
+            return None
+        img = frames[f]
+        x0, ya, x1, yb = box
+        w, h = x1 - x0, yb - ya
+        x0 = max(0, int(x0 + 0.2 * w)); x1 = min(img.shape[1], int(x1 - 0.2 * w))
+        ya = max(0, int(ya + y0 + 0.2 * h)); yb = min(img.shape[0], int(yb + y0 - 0.2 * h))
+        if x1 <= x0 or yb <= ya:
+            return None
+        hsv = cv2.cvtColor(img[ya:yb, x0:x1], cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1], None, [16, 8], [0, 180, 0, 256]).ravel()
+        return hist / max(float(hist.sum()), 1.0)
     def ctr(b):
         return np.array([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2])
     for f, people in enumerate(per_frame):
+        if f in cuts:
+            last.clear(); vel.clear(); appearance.clear()
+        desc = [descriptor(f, p[2]) for p in people]
         active = [t for t, (lf, _, _) in last.items() if f - lf <= max_gap]
         cost = np.full((len(active), len(people)), 1e6)
         for i, t in enumerate(active):
@@ -407,26 +398,46 @@ def track(per_frame, max_gap=15):
                 if dc > TRACK_JUMP * (1 + 0.5 * (f - lf - 1)):
                     continue                                     # the box jumped: another person, not this one
                 dh = abs(math.log(max(10.0, b[3] - b[1]) / hb))
-                good = (s > 0.3)
+                good = (s > 0.3) & (tracks[t][lf][1] > 0.3)
                 dk = np.median(np.linalg.norm(k[good] - lk[good] - v, axis=1)) / hb if good.sum() >= 4 else dc
                 c = dc + 0.7 * dk + 1.5 * dh + 0.05 * (f - lf - 1)
+                if t in appearance and desc[j] is not None:
+                    distance = np.sqrt(max(0.0, 1.0 - float(np.sqrt(appearance[t] * desc[j]).sum())))
+                    c += 0.45 * distance
                 if c < 1.0:
                     # small extra cost for young tracks: when a duplicate box flickers next to a person, the person keeps
                     # their long track instead of moving to the 2-frame-old one (ties otherwise go either way)
                     cost[i, j] = c + 0.1 * (1 - min(1.0, len(tracks[t]) / 30.0))
         used = set()
         if len(active) and len(people):
-            r, c = linear_sum_assignment(cost)
-            for i, j in zip(r, c):
+            # Reliable poses claim tracks first. Weak detections can recover an unmatched track.
+            reliable = [j for j, p in enumerate(people) if np.mean(p[1] > 0.5) >= 0.5]
+            weak = [j for j in range(len(people)) if j not in reliable]
+            pairs = []
+            available = list(range(len(active)))
+            for group in (reliable, weak):
+                if available and group:
+                    rr, cc = linear_sum_assignment(cost[np.ix_(available, group)])
+                    accepted = [(available[i], group[j]) for i, j in zip(rr, cc) if cost[available[i], group[j]] < 1e5]
+                    pairs.extend(accepted)
+                    assigned = {i for i, _ in accepted}
+                    available = [i for i in available if i not in assigned]
+            for i, j in pairs:
                 if cost[i, j] < 1e5:
                     t = active[i]
                     lf, lb = last[t][0], last[t][1]
                     nv = (ctr(people[j][2]) - ctr(lb)) / max(1, f - lf)
                     vel[t] = nv if t not in vel else 0.6 * vel[t] + 0.4 * nv
                     tracks[t][f] = people[j]; last[t] = (f, people[j][2], people[j][0]); used.add(j)
+                    if desc[j] is not None and j in reliable:
+                        appearance[t] = desc[j] if t not in appearance else 0.9 * appearance[t] + 0.1 * desc[j]
         for j, p in enumerate(people):
             if j not in used:
+                if np.mean(p[1] > 0.3) < 0.25:
+                    continue
                 tracks[nid] = {f: p}; last[nid] = (f, p[2], p[0]); nid += 1
+                if desc[j] is not None:
+                    appearance[nid - 1] = desc[j]
     return tracks
 
 
@@ -671,17 +682,7 @@ def process(path, out_root, args, marker):
         log("skip (already done):", path)
         return
     os.makedirs(os.path.join(out, "review"), exist_ok=True)
-    cap, tmpdir = open_video(path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frames = []
-    while True:
-        ok, fr = cap.read()
-        if not ok:
-            break
-        frames.append(fr)
-    cap.release()
-    if tmpdir:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+    frames, fps = read_frames(path)
     n = len(frames)
     if n == 0:
         log("no frames:", path); return
@@ -695,7 +696,9 @@ def process(path, out_root, args, marker):
     if os.environ.get("AUTOMARK_DUMP"):                 # tests: raw per-frame people before tracking
         import pickle
         pickle.dump(per_frame, open(os.path.join(out, "per_frame.pkl"), "wb"))
-    tr = track(per_frame)
+    from shots import split_shots
+    cuts = [start for start, end in split_shots(frames, y0, y1 - y0)][1:]
+    tr = track(per_frame, frames=frames, cuts=cuts)
     if not getattr(args, "no_gap_fill", False):
         nf = fill_gaps(tr, per_frame, frames, y0, y1, marker)
         if nf:
@@ -773,16 +776,12 @@ def main():
     args = ap.parse_args()
     if args.detect_stride is None or args.engine is None or args.mode is None:
         try:
-            sys.path.insert(0, os.path.join(HERE, "pipeline"))
-            from common import cfg
             c = cfg()
         except Exception:
             c = {}
         args.detect_stride = args.detect_stride or str(c.get("detect_stride", "auto"))
         args.engine = args.engine or str(c.get("pose_engine", "tensorrt"))
         args.mode = args.mode or str(c.get("pose_mode", "performance"))
-    sys.path.insert(0, os.path.join(HERE, "pipeline"))
-    from common import pick_device
     args.device = pick_device(args.device)               # stops here without a working NVIDIA card
     global KEEP_OVERLAPPING, SPLIT_WIDE
     if args.split_wide:
@@ -790,9 +789,7 @@ def main():
     if args.no_overlap_split:
         KEEP_OVERLAPPING = SPLIT_WIDE = False
     if not args.inputs:
-        sys.path.insert(0, os.path.join(HERE, "pipeline"))
-        from common import cfg as _cfg
-        args.inputs = [_cfg()["source_root"]]                # no input given: the Source folder of config.json
+        args.inputs = [cfg()["source_root"]]                 # no input given: the Source folder of config.json
     vids = []
     for p in args.inputs:
         if os.path.isdir(p):
@@ -809,7 +806,14 @@ def main():
     if not vids:
         log("no videos found"); return
     log("%d video(s) to process" % len(vids))
-    marker = Marker(args.mode, args.device, not args.no_tiles, args.engine)
+    settings = cfg()
+    if settings.get("pose_backend", "rtmpose") == "rtmo":
+        from rtmo_marker import RTMOMarker
+        marker = RTMOMarker(settings.get("rtmo_model", ""), args.engine, not args.no_tiles)
+        args.mode = "RTMO"
+        args.detect_stride = "1"  # one-stage model measures every frame; no top-down pose-only pass
+    else:
+        marker = Marker(args.mode, args.device, not args.no_tiles, args.engine)
     for i, v in enumerate(vids, 1):
         log("[%d/%d] %s" % (i, len(vids), v))
         try:

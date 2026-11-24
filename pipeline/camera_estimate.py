@@ -260,17 +260,6 @@ def _fit_flow(a, b, d, use_t, thr, wt=None):
     return q, inl
 
 
-def _grid_features(g, mask, nx=8, ny=5, per=45):
-    """corners spread over the whole picture (a textured foreground must not take all of them)"""
-    H, W = g.shape; out = []
-    for j in range(ny):
-        for i in range(nx):
-            xa, xb = W * i // nx, W * (i + 1) // nx; ya, yb = H * j // ny, H * (j + 1) // ny
-            p = cv2.goodFeaturesToTrack(g[ya:yb, xa:xb], per, 0.003, 6, mask=mask[ya:yb, xa:xb])
-            if p is not None:
-                out.append(p.reshape(-1, 2) + [xa, ya])
-    return np.vstack(out).reshape(-1, 1, 2).astype(np.float32) if out else None
-
 
 def _dense_points(g0, g1, mask, dis, step=8):
     """point moves g0 -> g1 from dense optical flow, sampled on a grid where the picture has some texture, kept
@@ -634,10 +623,18 @@ def estimate_shot(frames, pose, people, cam, y0, Hp, c, depth="auto"):
     """everything for one shot: (camj like camera_solve.solve after steadying, up (cam0), height, ground info)"""
     if isinstance(depth, str):
         depth = get_depth(c) if c.get("camera_depth", True) else None
-    camj = solve(frames, pose, c, depth if c.get("camera_far_weight", True) else None)
-    camj = steady(camj, c)
+    da3_depth = None
+    if c.get("camera_backend", "flow") == "da3":
+        import da3_camera
+        camj, da3_depth = da3_camera.solve(frames, cam, y0, Hp, c)
+    else:
+        camj = solve(frames, pose, c, depth if c.get("camera_far_weight", True) else None)
+        camj = steady(camj, c)
     cues = picture_cues(frames, pose, y0, cam, camj["R"], depth) if c.get("camera_cues", True) else []
     u, hc, info = estimate_ground(people, cam, y0, c, cues, R=camj["R"])
+    if da3_depth is not None:
+        da3_camera.align_scale(camj, da3_depth, people, cam, y0, u, hc, c)
+        return camj, u, hc, info
     camj = level_roll(camj, u, c)
     return camj, u, hc, info
 

@@ -13,17 +13,10 @@ import zipfile
 
 from . import config
 from common import ffmpeg_exe                     # pipeline
-from package import SUBDIRS, META_KEYS            # pipeline
+from package import SUBDIRS                       # pipeline
 
 MIN_KBPS = 18000
 
-
-def _out_width():
-    """the configured white model width (config.json "out_width"; 2560 = client spec 2K, 3840 = like the sample)"""
-    try:
-        return config.load().get("out_width", 3840)
-    except Exception:
-        return 3840
 
 
 def probe(ff, path):
@@ -58,7 +51,7 @@ def check_package(sub, ff=None):
     ff = ff or ffmpeg_exe()
     if os.path.exists(os.path.join(sub, "meta", "meta.json")):
         return check_package_v21(sub, ff)
-    return check_package_v1(sub, ff)
+    return (["not the v2.1 layout (no meta/meta.json) - finish the clip again"], {"name": os.path.basename(sub.rstrip("\\/"))})
 
 
 def check_package_v21(sub, ff):
@@ -95,10 +88,12 @@ def check_package_v21(sub, ff):
          "comparison": probe(ff, os.path.join(sub, "comparison", "comparison.mp4")),
          "target": probe(ff, os.path.join(sub, "target", "original.mp4"))}
     F.update(v)
+    sizes = {"white_model": ((1920, 1080), (1080, 1920)),            # the 1080P white model
+             "comparison": ((1920, 2160), (2160, 1920))}             # two 1080P frames stacked (vertical: side by side)
     for d in ("white_model", "comparison"):
         x = v[d]
-        if (x.get("width"), x.get("height")) not in ((1920, 1080), (1080, 1920)):
-            P.append("%s is %sx%s, must be 1920x1080 (1080x1920 vertical)" % (d, x.get("width"), x.get("height")))
+        if (x.get("width"), x.get("height")) not in sizes[d]:
+            P.append("%s is %sx%s, must be %s" % (d, x.get("width"), x.get("height"), " or ".join("%dx%d" % s for s in sizes[d])))
         if x.get("vcodec") != "h264":
             P.append("%s is %s, expected H.264" % (d, x.get("vcodec")))
         if v["target"].get("duration") and abs(x.get("duration", 0) - v["target"]["duration"]) > 0.15:
@@ -117,85 +112,6 @@ def check_package_v21(sub, ff):
         F["blend_mb"] = round(os.path.getsize(bp) / 1e6, 1)
     return P, F
 
-
-def check_package_v1(sub, ff=None):
-    """-> (problems, facts) for one unpacked submission folder (earlier sample layout)"""
-    ff = ff or ffmpeg_exe()
-    name = os.path.basename(sub.rstrip("\\/"))
-    P, F = [], {"name": name}
-    if sorted(d for d in os.listdir(sub) if os.path.isdir(os.path.join(sub, d))) != sorted(SUBDIRS):
-        P.append("folders must be exactly: " + ", ".join(SUBDIRS))
-    want = {"comparison": name + ".mp4", "meta": "meta.jsonl", "model_3d": name + "blend.blend",
-            "target": name + ".mp4", "white_model": name + ".mp4"}
-    for d, fn in want.items():
-        have = sorted(os.listdir(os.path.join(sub, d))) if os.path.isdir(os.path.join(sub, d)) else []
-        if have != [fn]:
-            P.append("%s/ should contain only %s (has: %s)" % (d, fn, ", ".join(have) or "nothing"))
-    # meta
-    meta = None
-    mp = os.path.join(sub, "meta", "meta.jsonl")
-    try:
-        with open(mp, encoding="utf-8") as fh:
-            lines = [l for l in fh.read().splitlines() if l.strip()]
-        if len(lines) != 1:
-            P.append("meta.jsonl must have exactly one line")
-        meta = json.loads(lines[0])
-        if list(meta.keys()) != META_KEYS:
-            P.append("meta.jsonl keys differ from the sample (order or names)")
-        for k in ("source_video_video_path", "pattern_video_video_path", "comparison_video_path"):
-            if not os.path.isfile(os.path.join(sub, meta.get(k, ""))):
-                P.append("meta %s points to a missing file: %s" % (k, meta.get(k)))
-        if not os.path.isfile(os.path.join(sub, (meta.get("ext_json") or {}).get("model_3d_path", ""))):
-            P.append("meta ext_json.model_3d_path points to a missing file")
-        if (meta.get("ext_json") or {}).get("code_type") != "H.264":
-            P.append("ext_json.code_type must be H.264")
-    except (OSError, ValueError, IndexError) as e:
-        P.append("meta.jsonl unreadable: %s" % e)
-    # videos
-    v = {d: probe(ff, os.path.join(sub, d, name + ".mp4")) for d in ("white_model", "comparison", "target")}
-    F.update({d: v[d] for d in v})
-    wm, cm, tg = v["white_model"], v["comparison"], v["target"]
-    for d in ("white_model", "comparison"):
-        x = v[d]
-        if x.get("vcodec") != "h264":
-            P.append("%s is %s, must be H.264" % (d, x.get("vcodec")))
-        if abs(x.get("fps", 0) - 24) > 0.01:
-            P.append("%s is %s fps, must be 24" % (d, x.get("fps")))
-        if x.get("kbps", 0) < MIN_KBPS:
-            P.append("%s bitrate %s kb/s is below 18 Mb/s" % (d, x.get("kbps")))
-        if "bt709" not in x.get("colour", ""):
-            P.append("%s is not tagged Rec.709 (%s)" % (d, x.get("colour")))
-        if tg.get("acodec") and (x.get("acodec") != "aac" or x.get("hz") != 48000 or x.get("channels") != "stereo"):
-            P.append("%s audio must be AAC 48 kHz stereo (is %s %s %s)" % (d, x.get("acodec"), x.get("hz"), x.get("channels")))
-        if tg.get("duration") and abs(x.get("duration", 0) - tg["duration"]) > 0.15:
-            P.append("%s lasts %.2fs, target %.2fs" % (d, x.get("duration", 0), tg["duration"]))
-    want_w = int(_out_width())
-    if wm.get("width") != want_w:
-        P.append("white_model is %s wide, the configured output width is %d" % (wm.get("width"), want_w))
-    if tg.get("width") and wm.get("width") and abs(wm["height"] - wm["width"] * tg["height"] / float(tg["width"])) > 2.5:
-        P.append("white_model aspect %sx%s does not match the target %sx%s" % (wm["width"], wm["height"], tg["width"], tg["height"]))
-    if cm.get("width") != wm.get("width") or cm.get("height") != 2 * (wm.get("height") or 0):
-        P.append("comparison must be the target over the white model (%sx%s, is %sx%s)" % (
-            wm.get("width"), 2 * (wm.get("height") or 0), cm.get("width"), cm.get("height")))
-    if meta:
-        if meta.get("source_video_resolution") != [wm.get("width"), wm.get("height")]:
-            P.append("meta source_video_resolution does not match the white model")
-        if meta.get("pattern_video_resolution") != [tg.get("width"), tg.get("height")]:
-            P.append("meta pattern_video_resolution does not match the target")
-        if cm.get("width"):
-            from math import gcd
-            g = gcd(cm["width"], cm["height"])
-            if (meta.get("ext_json") or {}).get("aspect_ratio") != "%d:%d" % (cm["width"] // g, cm["height"] // g):
-                P.append("meta aspect_ratio must be the comparison's (%d:%d)" % (cm["width"] // g, cm["height"] // g))
-    # blend
-    bp = os.path.join(sub, "model_3d", name + "blend.blend")
-    if os.path.exists(bp):
-        with open(bp, "rb") as fh:
-            head = fh.read(12)
-        if not (head.startswith(b"BLENDER") or head[:2] == b"\x1f\x8b" or head[:4] == b"\x28\xb5\x2f\xfd"):
-            P.append("model_3d file is not a Blender file")
-        F["blend_mb"] = round(os.path.getsize(bp) / 1e6, 1)
-    return P, F
 
 
 def check_zip(zp, sub):

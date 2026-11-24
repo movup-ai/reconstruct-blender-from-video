@@ -538,7 +538,7 @@ def object_shots(c, cl):
         m = PLATE_TAG.match(tag)
         sid = int(m.group(1)) if m and m.group(1) else 1
         frame = starts.get(sid, 0) + (int(m.group(2)) if m else 0)
-        shots.append({"tag": tag, "size": r.get("size"), "plate": "/media/plate/%s/%s" % (cl.id, tag), "shot": sid, "frame": frame,
+        shots.append({"tag": tag, "size": r.get("size"), "plate": "/media/shotframe/%s/%s" % (cl.id, tag), "shot": sid, "frame": frame,
                       "scene": sh.get("scene", ""), "objects": [o for o in sh.get("objects", []) if "bbox" in o],
                       "dropped": [d for d in sh.get("dropped", []) if len(d.get("bbox") or []) == 4],
                       "found": [], "placed": sum(1 for o in sh.get("objects", []) if "pos" in o), "built": r.get("added", [])})
@@ -548,6 +548,26 @@ def object_shots(c, cl):
             s = min(cand, key=lambda s: abs(s["frame"] - o["frame"]))
             s["found"].append(dict(o, here=s["frame"] == o["frame"]))
     return {"shots": shots, "source": env.get("provider", ""), "edited": bool(env.get("edited"))}
+
+
+def distance_level(v):
+    """an annotation's distance level: 1 (nearest) .. 9 (farthest), or None (auto: as measured)"""
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if 1 <= v <= 9 else None
+
+
+CARD_ROLES = ("bg", "fg", "near", "far_i", "lamp", "special")   # pipeline/colour_card.py ROLES: the set's colour meanings
+
+
+def card_role(o):
+    """an annotation's colour-card meaning, picked on the clip page (None: decided from what it is and where)"""
+    r = o.get("role")
+    if r in CARD_ROLES:
+        return r
+    return "near" if o.get("interactive") or o.get("colour_role") == "orange" else None   # older notes
 
 
 def save_objects(c, cl, body):
@@ -572,11 +592,12 @@ def save_objects(c, cl, body):
             b = [max(0.0, min(W, b[0])), max(0.0, min(H, b[1])), max(0.0, min(W, b[2])), max(0.0, min(H, b[3]))]
             if b[2] - b[0] < 3 or b[3] - b[1] < 3:
                 continue
-            objs.append({"what": str(o.get("what", ""))[:40], "type": props.norm_type(o.get("type")), "bbox": [round(v, 1) for v in b],
+            objs.append({"what": str(o.get("what", ""))[:200], "type": props.norm_type(o.get("type")), "bbox": [round(v, 1) for v in b],
                          "attach": o.get("attach") if o.get("attach") in ("floor", "wall") else None,
                          "facing": o.get("facing") if o.get("facing") in ("camera", "left", "right", "away") else "camera",
                          "size": o.get("size") if isinstance(o.get("size"), list) and len(o.get("size")) == 3 else None,
-                         "colour_role": "orange" if o.get("interactive") or o.get("colour_role") == "orange" else None})
+                         "role": card_role(o),
+                         "level": distance_level(o.get("level"))})
         cur = shots.setdefault(tag, {"scene": "", "labels": {}, "drop": []})
         if "dropped" in sh:                                           # found objects deleted or replaced on this page
             cur["dropped"] = [{"frame": int(d["frame"]), "bbox": [round(float(v), 1) for v in d["bbox"]],
@@ -849,6 +870,8 @@ def make_handler(app):
                 out = {k: app.c.get(k) for k in config.EDITABLE if k not in config.SECRETS}
                 out["source_root"] = c["source_root"]                   # the member's own folder
                 out["deepseek_key_set"] = bool(ai.api_key(app.c))
+                import claude_set  # pipeline
+                out["anthropic_key_set"] = bool(claude_set.api_key(app.c))
                 from common import has_nvidia
                 out["nvidia"] = has_nvidia()
                 out["local"] = self.local()
@@ -905,6 +928,10 @@ def make_handler(app):
                     return self.file(cl.video, "video/mp4")
                 if kind == "plate" and len(parts) == 4 and re.match(r"^_[\w]+$", parts[3]):
                     return self.file(os.path.join(f["work"], "plate%s.jpg" % parts[3]), "image/jpeg")
+                if kind == "shotframe" and len(parts) == 4 and re.match(r"^_[\w]+$", parts[3]):   # the original key frame
+                    sh = next((s for s in object_shots(c, cl)["shots"] if s["tag"] == parts[3]), None)
+                    p = media.shot_frame(c, cl, parts[3], sh["frame"]) if sh else None
+                    return self.file(p or os.path.join(f["work"], "plate%s.jpg" % parts[3]), "image/jpeg")
                 if kind == "preview":
                     return self.file(f["preview"], "image/jpeg")
                 if kind == "clipthumb":
@@ -1019,9 +1046,14 @@ def make_handler(app):
                 app.runner.wake()
                 out = {k: app.c.get(k) for k in config.EDITABLE if k not in config.SECRETS}
                 out["source_root"] = ws.c["source_root"]
-                return self.send(200, {"ok": True, "settings": out, "deepseek_key_set": bool(ai.api_key(app.c))})
+                import claude_set  # pipeline
+                return self.send(200, {"ok": True, "settings": out, "deepseek_key_set": bool(ai.api_key(app.c)),
+                                       "anthropic_key_set": bool(claude_set.api_key(app.c))})
             if parts == ["api", "ai_test"]:
                 return self.send(200, ai.test_key(app.c))
+            if parts == ["api", "claude_test"]:                          # Settings -> Background set -> Test
+                import claude_set  # pipeline
+                return self.send(200, claude_set.test_key(app.c))
             if parts in (["api", "start"], ["api", "prepare_all"]):
                 return self.send(200, ws.start())
             if parts == ["api", "restore"]:                              # put a removed video back on the list

@@ -119,6 +119,10 @@ def export(bpy, path, blend_name, data=None):
                          "shots": [{"shot": s.get("shot"), "frames": [s["frames"][0] + 1, s["frames"][1] + 1]}
                                    for s in (data.get("shots") or []) if "frames" in s],
                          "note": "camera keyed every frame (location + rotation); shot frames are 1-based Blender frames"}
+        zoom = data.get("zoom") or []
+        if zoom and max(abs(float(z) - 1.0) for z in zoom) > 1e-3:    # the lens zooms: the camera data's lens is keyed too
+            out["camera"]["lens_mm_per_frame"] = [_r(float(data["lens"]) * float(z), 3) for z in zoom]
+            out["camera"]["note"] = "camera keyed every frame (location + rotation, and the lens: it zooms); shot frames are 1-based Blender frames"
         out["source"] = {"clip": data.get("name"), "picture_size": data.get("res"), "fps": data.get("fps"), "frames": data.get("frames")}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:

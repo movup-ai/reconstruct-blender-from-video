@@ -22,6 +22,9 @@ from common import cfg, jload, jsave, imwrite_u, read_frames_at, output_dir
 import props
 
 SHADE = {"main": "set", "dark": "dark", "light": "light"}
+# a hand-built set's colour names that mean a colour-card meaning (colour_card.py): kept as the object's role
+MEANING = {"brown": "fg", "orange": "near", "pink": "far_i", "purple": "special",
+           "fg": "fg", "near": "near", "far_i": "far_i", "lamp": "lamp", "special": "special", "bg": "bg"}
 
 
 def cam_mats(c):
@@ -36,15 +39,19 @@ def cam_mats(c):
 class Cam:
     def __init__(self, data):
         self.d = data; self.W, self.H = data["res"]; self.f = data["lens"] / data["sensor"] * self.W
+        self.zoom = data.get("zoom") or None                 # focal scale per frame when the lens zooms
+    def f_at(self, fr):
+        """focal length (px) at frame fr"""
+        return self.f * float(self.zoom[min(int(fr), len(self.zoom) - 1)]) if self.zoom else self.f
     def project(self, P, fr):
         R, C = cam_mats(self.d["cam"][fr])
         Xc = (np.atleast_2d(P) - C) @ R
         z = -Xc[:, 2]
-        zz = np.maximum(z, 1e-6)
-        return np.c_[self.W / 2 + self.f * Xc[:, 0] / zz, self.H / 2 - self.f * Xc[:, 1] / zz], z
+        zz = np.maximum(z, 1e-6); f = self.f_at(fr)
+        return np.c_[self.W / 2 + f * Xc[:, 0] / zz, self.H / 2 - f * Xc[:, 1] / zz], z
     def ray(self, u, v, fr):
-        R, C = cam_mats(self.d["cam"][fr])
-        d = R @ np.array([(u - self.W / 2) / self.f, -(v - self.H / 2) / self.f, -1.0])
+        R, C = cam_mats(self.d["cam"][fr]); f = self.f_at(fr)
+        d = R @ np.array([(u - self.W / 2) / f, -(v - self.H / 2) / f, -1.0])
         return C, d / np.linalg.norm(d)
 
 
@@ -193,7 +200,7 @@ def from_bbox(o, cam, zg, frame0=0, dx=0.0):
         C, d = cam.ray((x0 + x1) / 2, y0, fr)
         p = C + d * float(o["dist"]) / max(math.hypot(d[0], d[1]), 1e-6)
         rng = float(np.linalg.norm(p - C))
-        w = (x1 - x0) * rng / cam.f
+        w = (x1 - x0) * rng / cam.f_at(fr)
         o["pos"] = [float(p[0]), float(p[1]), zg]
         o["size"] = [w, max(0.05, float(p[2] - zg)), float(thick if thick is not None else w)]
         if "yaw" not in o:
@@ -210,9 +217,14 @@ def from_bbox(o, cam, zg, frame0=0, dx=0.0):
         C, d = cam.ray((x0 + x1) / 2, y1, fr)
         p = C + d * float(o["dist"]) / max(math.hypot(d[0], d[1]), 1e-6)
     rng = float(np.linalg.norm(p - C))
-    w, h = (x1 - x0) * rng / cam.f, (y1 - y0) * rng / cam.f
+    w, h = (x1 - x0) * rng / cam.f_at(fr), (y1 - y0) * rng / cam.f_at(fr)
+    if thick is None:                                        # depth in the type's own proportions: a 3 m wall is ~0.25 m
+        (dw, _, dd), _ = props.TYPES[props.norm_type(o.get("type"))]   # thick, a pillar as deep as it is wide (never the
+        thick = float(np.clip(dd * w / dw, 0.5 * dd, max(dd, w)))      # picture width: a wall would reach out at the people)
+    hv = np.array([d[0], d[1], 0.0]) / max(math.hypot(d[0], d[1]), 1e-6)
+    p = p + hv * float(thick) / 2                            # the measured / drawn place is its FRONT face, not its middle
     o["pos"] = [float(p[0]), float(p[1]), float(p[2])]
-    o["size"] = [w, h, float(thick if thick is not None else w)]
+    o["size"] = [w, h, float(thick)]
     if "yaw" not in o:
         o["face"] = "camera"
     return o
@@ -224,15 +236,30 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
     gz = Ground(g, dx, origin)
     meshes = []
     if g is not None and g.get("size", 60):
-        meshes += gz.mesh(float(g.get("size", 60)), g.get("colour", "ground"), tag)
+        for m_ in gz.mesh(float(g.get("size", 60)), g.get("colour", "ground"), tag):
+            m_.update(obj="ground%s" % tag, cls="ground")
+            meshes.append(m_)
     for n, o in enumerate(env.get("objects", [])):
         if o.get("off"):
             continue
+        k0 = len(meshes)
+        _build_one(o, n, meshes, cam, frame0, dx, tag, zg, gz)
+        src = o.get("_src") or {}
+        info = {"obj": "obj%s_%02d" % (tag, n), "kind": o.get("type"), "cls": src.get("cls") or o.get("type"),
+                "label": (src.get("label") or [None])[0], "what": o.get("what") or src.get("what") or o.get("name"),
+                "role": o.get("role") or MEANING.get(str(o.get("colour") or ""))}
+        for m_ in meshes[k0:]:                               # what each part belongs to (colour_card.py decides its colour)
+            m_.update({k: v for k, v in info.items() if v is not None})
+    return meshes
+
+
+def _build_one(o, n, meshes, cam, frame0, dx, tag, zg, gz):
+    if True:
         if o.get("type") == "mesh" and o.get("v") and o.get("f"):   # a measured shape (env_auto / relief.py), in metres
             V = [[float(q[0]) + dx, float(q[1]), float(q[2])] for q in o["v"]]
             meshes.append({"name": "obj%s_%02d_%s" % (tag, n, o.get("name", "mesh")), "v": V, "f": [list(f) for f in o["f"]],
                            "colour": o.get("colour", "set"), "layer": 2, "smooth": True})
-            continue
+            return
         if o.get("type") == "patch":                        # flat shape on the floor: {"px": [[u, v], ...]} or {"pts": [[x, y], ...]}
             z = float(o.get("z", zg + 0.02))
             if "pts3" in o:                                  # any flat polygon in metres [[x, y, z], ...] (env_auto: walls with
@@ -251,7 +278,7 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
                     F += [list(range(2 * k - 1, k - 1, -1))] + [[i, k + i, k + (i + 1) % k, (i + 1) % k] for i in range(k)]
                 meshes.append({"name": "obj%s_%02d_%s" % (tag, n, o.get("name", "patch")), "v": V, "f": F,
                                "colour": o.get("colour", "set"), "layer": 2 if o.get("thick") else 1})
-                continue
+                return
             if "pts" in o:
                 V = [[float(q[0]) + dx, float(q[1]), z + (gz.at(float(q[0]) + dx, float(q[1])) - zg if gz.active else 0.0)] for q in o["pts"]]
             else:
@@ -262,7 +289,7 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
                 F += [list(range(2 * k - 1, k - 1, -1))] + [[i, k + i, k + (i + 1) % k, (i + 1) % k] for i in range(k)]
             meshes.append({"name": "obj%s_%02d_%s" % (tag, n, o.get("name", "patch")), "v": V, "f": F,
                            "colour": o.get("colour", "far"), "layer": 1})
-            continue
+            return
         if "bbox" in o:
             o = from_bbox(o, cam, zg, frame0, dx)
         kind = props.norm_type(o.get("type"))
@@ -289,7 +316,6 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
             if pname.rstrip("0123456789") in FOLIAGE:            # leafy clumps (props.puff) are smooth-shaded
                 m_["smooth"] = True
             meshes.append(m_)
-    return meshes
 
 
 FOLIAGE = {"crown", "clump", "bushbody", "front", "hedgeseg", "leaves"}
@@ -422,7 +448,7 @@ def people_at(data, cam, fr, zg):
         if z[17] < 0.15:
             continue
         out.append({"name": kind, "col": P_COL.get(ch.get("colour"), (200, 200, 200)), "s": rig.s, "P": P, "head": head,
-                    "uv": uv[:17], "z": z[:17], "head_uv": uv[17], "head_r": cam.f * hr / z[17], "head_z": z[17],
+                    "uv": uv[:17], "z": z[:17], "head_uv": uv[17], "head_r": cam.f_at(fr) * hr / z[17], "head_z": z[17], "fl": cam.f_at(fr),
                     "sole_uv": uv[18:20], "sole_z": z[18:20], "floor_uv": uv[20:22], "ring_uv": uv[22:].reshape(2, 16, 2),
                     "ring_z": z[22:].reshape(2, 16), "gap": float((soles[:, 2] - floor[:, 2]).min())})
     return out
@@ -439,7 +465,7 @@ def body_polys(people, cam):
                 continue
             a, b = uv[i], uv[j]; d = b - a; n = np.linalg.norm(d)
             nn = np.array([-d[1], d[0]]) / n if n > 1e-6 else np.array([1.0, 0.0])
-            wa, wb = cam.f * 0.06 * p["s"] / z[i], cam.f * 0.06 * p["s"] / z[j]
+            fl = p.get("fl", cam.f); wa, wb = fl * 0.06 * p["s"] / z[i], fl * 0.06 * p["s"] / z[j]
             pts = np.array([a + nn * wa, b + nn * wb, b - nn * wb, a - nn * wa])
             polys.append((float((z[i] + z[j]) / 2), pts.astype(np.int32), col))
         if min(z[[5, 6, 11, 12]]) >= 0.15:
@@ -768,6 +794,11 @@ def main():
         data["sky"] = env["sky"]
     for k, v in (env.get("palette") or {}).items():
         data["palette"][k] = v
+    try:                                                     # every video follows the colour card (docs/COLOUR_CARD.md)
+        import colour_card
+        colour_card.apply(data)
+    except Exception as e:
+        print("colour card not applied (%s)" % e)
     jsave(dp, data)
     N = data["frames"]
     frs = [int(x) for x in a.frames.split(",") if x != ""] or sorted({v for s in shots for v in (s["frames"][0], (s["frames"][0] + s["frames"][1]) // 2, s["frames"][1])})[:9]

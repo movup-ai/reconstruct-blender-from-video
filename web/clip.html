@@ -29,7 +29,7 @@
     <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
     <div id="prevbox"><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the models found: <b class="bad">red dots</b> are the detected joints, the coloured skeleton is each 3D person, thin lines are the set.</p></div>
   </div>
-  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p></div>
+  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p></div>
 
   <section class="tocheck" id="s-check" style="display:none" aria-labelledby="chk-h">
     <h2 id="chk-h">Things to check</h2>
@@ -51,7 +51,10 @@
 
   <section class="step" id="s-objects">
     <h2><span class="num">3</span>Objects in the set</h2>
-    <p class="hint">Dashed boxes are what Prepare found. Click a box to fix its type, drag it to move, drag a corner to resize, <kbd>Delete</kbd> removes it. Drag on the picture to add a missing one. <b>Re-check</b> builds the set again with your changes.</p>
+    <p class="hint">Dashed boxes are what Prepare found. Click a box to fix its type, drag it to move, drag a corner to resize, <kbd>Delete</kbd> removes it. Drag on the picture to add a missing one. Describe each one in your own words; with type <i>other</i> the
+      description decides how it is built (a named thing like a door, pillar or table becomes that model; plants, curtains,
+      statues and anything else get their measured shape; “in his hand”, “held”, “backpack” put it on the person).
+      <b>Re-check</b> builds the set again with your changes, and Finish uses them.</p>
     <div id="objshots"><div class="empty">Loading…</div></div>
   </section>
 
@@ -291,6 +294,10 @@ function envAi() {
 // Changing a found one makes it yours; deleting one remembers it, so the next set leaves it out.
 let OBJ = null, OSEL = null, ODIRTY = false;
 const FACINGS = [['camera', 'the camera'], ['left', 'left'], ['right', 'right'], ['away', 'away']];
+// the colour card's set meanings (docs/COLOUR_CARD.md); the character colours are for people, not here
+const CARD_KINDS = [['bg', 'Background · grey', '#B8B8B8'], ['fg', 'Foreground · brown', '#9A6B3B'], ['near', 'Near interactive · orange', '#DF872F'],
+  ['far_i', 'Far interactive · pink', '#D4689E'], ['lamp', 'Light source · white', '#F5F5F5'], ['special', 'Special · purple', '#7A4EC2']];
+const roleOf = o => o.role || (o.colour_role === 'orange' ? 'near' : '');
 const OCOL = ['#ff9f43', '#54a0ff', '#5f27cd', '#1dd1a1', '#ff6b6b', '#feca57', '#48dbfb', '#c8d6e5'];
 const FOUNDCOL = '#e8eef2';
 function boxIou(a, b) {
@@ -313,7 +320,8 @@ async function loadObjects() {
 function objectsBody() {                            // what Save sends: your objects, and the found ones deleted or changed
   const body = { shots: {} };
   OBJ.shots.forEach(sh => body.shots[sh.tag] = {
-    objects: sh.objects.filter(o => !o.found || o.edited).map(({ what, type, bbox, attach, facing, size, colour_role }) => ({ what, type, bbox, attach, facing, size, colour_role })),
+    objects: sh.objects.filter(o => !o.found || o.edited).map(({ what, type, bbox, attach, facing, size, role, colour_role, level }) =>
+      ({ what, type, bbox, attach, facing, size, role: role || (colour_role === 'orange' ? 'near' : null), level: level || null })),
     dropped: sh.dropped.concat(sh.objects.filter(o => o.found && o.edited).map(o => ({ frame: o.frame, bbox: o.orig, why: 'changed' }))) });
   return body;
 }
@@ -327,7 +335,18 @@ function typeOpts(sel) {
   const ks = Object.keys(OBJ.types).sort(); if (sel && !ks.includes(sel)) ks.unshift(sel);
   return ks.map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t.replace(/_/g, ' ')}</option>`).join('');
 }
+// every change redraws the objects section: keep where each shot's list (and the page) was scrolled
 function renderObjects() {
+  const box = $('objshots');
+  const keepScroll = [...box.querySelectorAll('.objgrid')].map(g => g.scrollTop), keepY = window.scrollY;
+  drawObjects();
+  box.querySelectorAll('.objgrid').forEach((g, i) => { if (!keepScroll[i]) return;
+    g.scrollTop = keepScroll[i];
+    const img = g.querySelector('img');                   // (a picture not loaded yet makes the block shorter: again once it is)
+    if (img && !img.complete) img.addEventListener('load', () => { g.scrollTop = keepScroll[i]; }, { once: true }); });
+  if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY);
+}
+function drawObjects() {
   const box = $('objshots');
   if (!OBJ.shots.length) { box.innerHTML = '<div class="empty">The background pictures appear once the clip is prepared.</div>'; return; }
   box.innerHTML = '';
@@ -350,19 +369,21 @@ function renderObjects() {
       if (sel) tr.classList.add('osel');
       const id = `o${si}_${oi}`, lock = o.nobox ? 'disabled' : '';
       tr.innerHTML = `<div class="objtop"><span class="sw" style="background:${col(o, oi)}"></span>
-          <input type="text" value="${esc(o.what)}" placeholder="Name, e.g. office chair" aria-label="Object name" ${lock}>
+          <input type="text" value="${esc(o.what)}" maxlength="200" placeholder="Describe it, e.g. white pillar, potted plant, bag in his left hand" title="With type “other”, the description decides how it is built: a thing it names (door, pillar, table, car…) becomes that model; a plant, curtain, statue or anything else is built from its measured shape; “held / in his hand / backpack” puts it on the person’s hand or back." aria-label="Object description" ${lock}>
           ${o.found && !o.edited ? `<span class="objtag" title="${o.nobox ? `Found in frame ${o.frame}, which has no picture here: you can only delete it` : 'Prepare found this one. Change it and it becomes yours.'}">${o.nobox ? 'found, frame ' + o.frame : 'found'}</span>` : ''}
           <button class="objrm" title="Delete this object: the set leaves it out" aria-label="Delete this object">&#10005;</button></div>
         <div class="objprops">
           <label>Type<select id="${id}t" ${lock}>${typeOpts(o.type)}</select></label>
-          <label>Placed on<select id="${id}o" ${lock}><option value="">auto</option><option value="floor" ${o.attach === 'floor' ? 'selected' : ''}>floor</option><option value="wall" ${o.attach === 'wall' ? 'selected' : ''}>wall</option></select></label>
-          <label>Facing<select id="${id}f" ${lock}>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label title="Its colour-card meaning, which sets its colour in the video. Auto: decided from what it is and where it is against the people (walls grey, lamps white, a door near a person orange...)."><span class="kindlab">Kind${roleOf(o) ? `<i class="kdot" style="background:${CARD_KINDS.find(k => k[0] === roleOf(o))[2]}"></i>` : ''}</span><select id="${id}k" ${lock}><option value="">auto</option>${CARD_KINDS.map(([v, l]) => `<option value="${v}" ${v === roleOf(o) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label title="Which way its front points. Used for library models (door, car, cabinet...); a shape built from the measured surface ignores it.">Facing<select id="${id}f" ${lock}>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label title="How far from the camera, compared with the other objects you numbered in this shot: a bigger number is farther away. The biggest number in the shot (2 or more) is the back of the set: it is placed behind every person, so nobody walks through it. Auto: where the depth measures it.">Distance<select id="${id}d" ${lock}><option value="">auto</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => `<option value="${v}" ${v === o.level ? 'selected' : ''}>${v}${v === 1 ? ' · near' : v === 9 ? ' · far' : ''}</option>`).join('')}</select></label>
         </div>`;
-      const [nm] = tr.querySelectorAll('input'); const [ty, on, fa] = tr.querySelectorAll('select');
+      const [nm] = tr.querySelectorAll('input'); const [ty, kd, fa, dl] = tr.querySelectorAll('select');
+      kd.onchange = () => { o.role = kd.value || null; delete o.colour_role; touch(o); renderObjects(); };
+      dl.onchange = () => { o.level = dl.value ? +dl.value : null; touch(o); renderObjects(); };
       nm.oninput = () => { o.what = nm.value; touch(o); };
       nm.onchange = () => renderObjects();
       ty.onchange = () => { o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); touch(o); renderObjects(); };
-      on.onchange = () => { o.attach = on.value || null; touch(o); renderObjects(); };
       fa.onchange = () => { o.facing = fa.value; touch(o); renderObjects(); };
       tr.querySelector('button').onclick = () => removeObject(si, oi);
       tr.onclick = e => { if (!e.target.closest('input, select, button')) { OSEL = [si, oi]; renderObjects(); } };

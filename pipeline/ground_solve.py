@@ -7,9 +7,10 @@ from scipy.spatial.transform import Rotation
 from common import *
 
 class World:
-    def __init__(self, cam, Rlist, up_c, hc):
+    def __init__(self, cam, Rlist, up_c, hc, zoom=None):
         self.cam = cam
         self.Ri = [np.asarray(r) for r in Rlist]          # frame-0 cam -> frame-i cam
+        self.zoom = None if zoom is None or np.allclose(zoom, 1.0) else np.asarray(zoom, float)   # focal f_i = zoom[i] * cam.f
         Z = up_c / np.linalg.norm(up_c)
         Y = np.array([0, 0, 1.0]) - Z * Z[2]; Y /= np.linalg.norm(Y)
         X = np.cross(Y, Z)
@@ -35,12 +36,17 @@ class World:
         self.Ri = Ri; self.T = np.array(T, float)
     def R_cw(self, i):                                     # world -> cam i
         return self.Ri[min(i, len(self.Ri) - 1)] @ self.M
+    def f_at(self, i):                                     # focal length (px) at frame i: the lens zooms
+        return self.cam.f if self.zoom is None else self.cam.f * float(self.zoom[min(i, len(self.zoom) - 1)])
     def project(self, X, i):
         Xc = (np.atleast_2d(X) - self.C_at(i)) @ self.R_cw(i).T
-        z = np.maximum(Xc[:, 2], 1e-6)
-        return np.c_[Xc[:, 0] / z * self.cam.f + self.cam.W / 2, Xc[:, 1] / z * self.cam.f + self.cam.H / 2], Xc[:, 2]
+        z = np.maximum(Xc[:, 2], 1e-6); f = self.f_at(i)
+        return np.c_[Xc[:, 0] / z * f + self.cam.W / 2, Xc[:, 1] / z * f + self.cam.H / 2], Xc[:, 2]
+    def norm(self, i, x, y):                               # pixel -> normalised camera coords at frame i
+        f = self.f_at(i)
+        return np.array([(x - self.cam.W / 2) / f, (y - self.cam.H / 2) / f])
     def ray(self, i, x, y):
-        d = self.R_cw(i).T @ np.r_[self.cam.norm(x, y), 1.0]
+        d = self.R_cw(i).T @ np.r_[self.norm(i, x, y), 1.0]
         return d / np.linalg.norm(d)
     def on_ground(self, i, x, y, z=0.0):
         d = self.ray(i, x, y)

@@ -17,8 +17,6 @@ def style_asset(style):
         with open(p, encoding="utf-8") as fh:
             _ASSETS[style] = json.load(fh)
     return _ASSETS[style]
-def base21_asset():
-    return style_asset("base21")
 
 def joint_defs(height, style="sample"):
     """style "base21": the v2.1 supplied base model (character-base.blend): torso block, sphere head on the torso,

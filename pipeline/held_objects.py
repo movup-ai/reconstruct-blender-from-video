@@ -21,7 +21,7 @@ import argparse, json, math, os, sys, time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
-from common import cfg, jload, jsave, output_dir, AGENT
+from common import cfg, jload, jsave, output_dir, AGENT, box_iou as iou
 
 MODEL_DIR = os.path.join(AGENT, "models", "grounding_dino")
 VERSION = 1
@@ -54,12 +54,6 @@ def enabled(c, hints):
 
 
 # ------------------------------------------------------------------ geometry helpers (pure, tested)
-def iou(a, b):
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
-    return ix * iy / u if u > 0 else 0.0
-
-
 def person_box(kp, thr=0.2):
     g = kp[kp[:, 2] > thr]
     if len(g) < 3:
@@ -194,12 +188,15 @@ def place(data, held, y0=0):
     data["props"] = [p for p in (data.get("props") or []) if not p.get("held")]
     cam = BE.Cam(data)
     N = data["frames"]
-    by_track = {ch.get("track_id"): (kind, ch) for kind, ch in data["chars"].items()}
+    by_track = {}                                           # one person can be a character in each shot of a clip
+    for kind, ch in data["chars"].items():
+        by_track.setdefault(ch.get("track_id"), []).append((kind, ch))
     made = []
     for n_, o in enumerate(held.get("objects", [])):
         if o["track"] not in by_track:
             continue
-        kind, ch = by_track[o["track"]]
+        fs_ = [int(f) for f in o["boxes"] if int(f) < N]          # the character seen on the object's frames
+        kind, ch = max(by_track[o["track"]], key=lambda kc: sum(1 for f in fs_ if (kc[1].get("visible") or [True] * N)[f]))
         rig = Rig(ch["height"], ch.get("style", "sample"))
         vis = ch.get("visible") or [True] * N
         Ws = {}
@@ -241,12 +238,12 @@ def place(data, held, y0=0):
             if not depth:
                 continue
             whole = [f for f in depth if not any(cut(boxes[f]))] or list(depth)   # size from boxes the edge does not cut
-            size = [((boxes[f][2] - boxes[f][0]) * depth[f] / cam.f, (boxes[f][3] - boxes[f][1]) * depth[f] / cam.f) for f in whole]
+            size = [((boxes[f][2] - boxes[f][0]) * depth[f] / cam.f_at(f), (boxes[f][3] - boxes[f][1]) * depth[f] / cam.f_at(f)) for f in whole]
             w, h = [float(np.clip(v, 0.04, 1.2)) for v in np.median(np.array(size), axis=0)]
             off = {}
             for f, t in depth.items():
                 b = list(boxes[f]); l_, t_, r_, b_ = cut(b)
-                pw, ph = w * cam.f / t, h * cam.f / t                # its whole size in pixels at that depth
+                pw, ph = w * cam.f_at(f) / t, h * cam.f_at(f) / t                # its whole size in pixels at that depth
                 if l_ and not r_: b[0] = b[2] - pw                   # cut by the edge: from the side that is seen
                 if r_ and not l_: b[2] = b[0] + pw
                 if t_ and not b_: b[1] = b[3] - ph
@@ -259,7 +256,7 @@ def place(data, held, y0=0):
             V, F = shape_mesh(o["shape"], w, h)
             seen = sorted(off)
             share = len(seen) / float(max(1, sum(1 for f in range(0, N, held.get("step", 2)) if vis[f])))
-            lo, hi = (0, N - 1) if share >= 0.6 else (max(0, seen[0] - 3), min(N - 1, seen[-1] + 3))   # carried throughout
+            lo, hi = (0, N - 1) if (share >= 0.6 or o.get("manual")) else (max(0, seen[0] - 3), min(N - 1, seen[-1] + 3))   # carried throughout
             shown = 0
             for f in range(N):
                 if not vis[f] or not lo <= f <= hi:
@@ -280,6 +277,77 @@ def place(data, held, y0=0):
                               "keys": [[round(x, 4) for x in k] for k in keys]})
         made.append((name, o["label"], shown))
     return made
+
+
+def annotated(video, c, ci, pose, work):
+    """objects annotated on the clip page (Objects step) as held by a person ("bag in his left hand", "backpack") ->
+    held.json objects ("manual": shown for the whole time the person is seen).  The box is the one drawn on that
+    frame; the person is the one the box touches (nearest when none), the hand the description names, else the
+    nearer wrist; a backpack / "on his back" / "wearing" goes on the back."""
+    import describe
+    from run_pipeline import marks_dir
+    from env_auto import drawn_frames
+    p = os.path.join(marks_dir(video, c), "env_ai.json")
+    if not os.path.exists(p):
+        return []
+    env = jload(p)
+    camj = os.path.join(work, "camera.json")
+    shots = (jload(camj).get("shots") if os.path.exists(camj) else None) or [{"shot": 1, "frames": [0, ci["frames"] - 1]}]
+    y0 = ci.get("y0", 0)
+    out = []
+    for sid, tags in drawn_frames(env, shots).items():
+        for tag, f in tags.items():
+            for o in ((env.get("shots") or {}).get(tag) or {}).get("objects", []):
+                d = describe.parse(o.get("what"), o.get("type"))
+                b = o.get("bbox")
+                if d["mode"] != "held" or not b or len(b) != 4:
+                    continue
+                box = [float(b[0]), float(b[1]) + y0, float(b[2]), float(b[3]) + y0]       # full frame
+                cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+                best = None
+                for t in pose.get("people", []):
+                    kp = None
+                    for dd in (0, 1, -1, 2, -2, 3, -3):
+                        if str(f + dd) in t["frames"]:
+                            kp = np.array(t["frames"][str(f + dd)], float); break
+                    pb = None if kp is None else person_box(kp)
+                    if pb is None:
+                        continue
+                    gap = max(0.0, max(pb[0] - box[2], box[0] - pb[2])) + max(0.0, max(pb[1] - box[3], box[1] - pb[3]))
+                    if best is None or gap < best[0]:
+                        best = (gap, t["id"], kp)
+                if best is None:
+                    print("  annotation %r: no person near it in frame %d - left out" % (o.get("what"), f))
+                    continue
+                _, tid, kp = best
+                if d.get("worn"):
+                    joint = "chest"
+                elif d.get("side") in ("L", "R"):
+                    joint = "wrist_" + d["side"]
+                else:
+                    joint = min(WRISTS.values(), key=lambda j: math.hypot(*(kp[9 if j == "wrist_L" else 10, :2] - [cx, cy])))
+                label = d["label"] or "object"
+                shape = next((s for w, (l, s) in WORDS.items() if l == label and s), None) or ("bag" if d.get("worn") else "box")
+                out.append({"track": tid, "joint": joint, "kind": "worn" if d.get("worn") else "held", "label": label,
+                            "shape": shape, "boxes": {str(f): [round(v, 1) for v in box]}, "manual": True,
+                            "what": o.get("what", "")})
+    return out
+
+
+def with_annotated(held, ann):
+    """held.json + the annotated ones: an annotation on a hand where one was found renames it (the person's words
+    win) and keeps it the whole time; otherwise it is added"""
+    held = dict(held or {"objects": [], "step": 2})
+    objs = [dict(o) for o in held.get("objects", [])]
+    for a in ann:
+        same = next((o for o in objs if o["track"] == a["track"] and o["joint"] == a["joint"] and o["kind"] == a["kind"]), None)
+        if same is not None:
+            same.update(label=a["label"], shape=a["shape"], manual=True)
+            same["boxes"] = dict(same["boxes"], **a["boxes"])
+        else:
+            objs.append(a)
+    held["objects"] = objs
+    return held
 
 
 def check_image(data, held, ci, out, n=4):
@@ -446,10 +514,10 @@ def main():
             held = detect(ci["video"], jload(pose_p), ci["frames"])
             os.makedirs(os.path.dirname(hp), exist_ok=True)
             jsave(hp, held)
-    if os.path.exists(hp) and not a.detect_only:
+    if not a.detect_only:
         dp = os.path.join(work, "scene_data.json")
         data = jload(dp)
-        held = jload(hp)
+        held = with_annotated(jload(hp) if os.path.exists(hp) else None, annotated(ci["video"], c, ci, jload(pose_p), work))
         made = place(data, held, ci.get("y0", 0))
         jsave(dp, data)
         print("held objects placed:", made)

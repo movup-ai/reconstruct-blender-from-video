@@ -4,6 +4,7 @@
 import os, json, math, numpy as np, cv2
 from scipy.optimize import least_squares
 from common import *
+from profiling import stage
 
 MODEL_DIR = os.path.join(AGENT, "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "depth_anything_v2_small.onnx")
@@ -807,11 +808,7 @@ KIND_DEPTH = {"car": 1.8, "bus": 2.5, "truck": 2.5, "table": 0.9, "bench": 0.5, 
               "fence": 0.1, "pole": 0.25, "sign": 0.1, "chair": 0.5, "bed": 2.0, "sofa": 0.9, "cabinet": 0.5, "rock": 1.0}
 
 
-def iou(a, b):
-    x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0, x1 - x0) * max(0, y1 - y0)
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / ua if ua > 0 else 0.0
+iou = box_iou                                                    # (common.py)
 
 
 def apply_env_ai(meshes, regions, env, plate, world, k, palette, grey, info, plane=None, Z=None, main_deg=None):
@@ -1122,6 +1119,7 @@ def flat_set(world, N, far):
     meshes.append({"name": "backdrop", "v": v, "f": f, "colour": "backdrop", "layer": 0})
     return meshes
 
+@stage("depth_set")
 def build_set(frames, y0, world, people_keys, boxes, c, log_=log, fake=False):
     """returns (meshes for DATA, info)"""
     N = len(frames); far = float(c.get("far_distance", 1500.0)); step = int(c.get("mesh_step", 10))

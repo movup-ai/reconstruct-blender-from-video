@@ -117,14 +117,20 @@ class JobStore:
         submittable package.  A run starts when the first job after the last finished package starts and ends when the
         next Finish job ("all") is done.  wall = start -> zip (queue waits and your review included); machine = the
         time jobs actually ran.  "open": a run that has started but has no package yet (so far).
-        "last": the clip's latest job that ran: {stage, state, ran} (seconds it ran, so far when still running)."""
+        "last": the clip's latest job that ran: {stage, state, ran} (seconds it ran, so far when still running).
+        "steps": per step ("prepare" = fit jobs, "finish" = all / render jobs) its latest job that ran:
+        {state, ran, ended} - what the progress table on the Clips page shows."""
         now = now or time.time()
         with self.lock:
             rows = self.db.execute("SELECT clip, stage, state, started, ended FROM jobs WHERE started IS NOT NULL ORDER BY id").fetchall()
         out = {}
         for r in rows:
-            t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "_s": None, "_m": 0.0})
+            t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "steps": {}, "_s": None, "_m": 0.0})
             t["last"] = {"stage": r["stage"], "state": r["state"], "ran": round(max(0.0, (r["ended"] or now) - r["started"]))}
+            if r["state"] != "cancelled":
+                step = "prepare" if r["stage"] == "fit" else ("finish" if r["stage"] in ("all", "render", "blend") else None)
+                if step:
+                    t["steps"][step] = {"state": r["state"], "ran": t["last"]["ran"], "ended": r["ended"]}
             if t["_s"] is None:
                 t["_s"] = r["started"]
             t["_m"] += max(0.0, (r["ended"] or now) - r["started"]) if r["state"] != "queued" else 0.0

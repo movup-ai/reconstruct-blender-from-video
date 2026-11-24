@@ -21,6 +21,10 @@ from fit_people import fit_all
 from rig import Rig, JOINTS
 import package as pkg
 import quality
+from profiling import stage, profile_clip
+
+fit_all = stage("people_fit")(fit_all)
+estimate_shot = stage("camera")(estimate_shot)
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 199], "backdrop": [205, 205, 207],
@@ -70,6 +74,7 @@ def load_review(video, c):
     p = os.path.join(marks_dir(video, c), "review.json")
     return jload(p) if os.path.exists(p) else None
 
+@stage("marks")
 def find_marks(video, c, device):
     out = marks_base(c)
     d = marks_dir(video, c)
@@ -441,6 +446,7 @@ def carry_over(work, name, c, chars, N, sky):
         sky = prev["sky"]
     return sky
 
+@profile_clip
 def run_clip(video, c, args):
     name = getattr(args, "name", None) or clip_name(video, c)
     work = os.path.join(c["work_root"], name); c["_work"] = work
@@ -513,6 +519,7 @@ def run_clip(video, c, args):
         log("  hand-built set: %s  (automatic depth set skipped)" % hand_set_path(video, name, c))
     palette = dict(PALETTE); sky = None
     cam_all, chars_all, meshes_all, prep_all, warns, shot_rep, tiles = [None] * N, {}, [], [], [], [], []
+    zoom_all = [1.0] * N                                   # focal scale per frame (the lens zooms): f = zoom * lens
     # the clip's lens from the picture (lens_auto.py, MoGe-2) unless it was set by hand (hints.json / review)
     lens_info = None
     rl = (review or {}).get("camera", {}).get("lens")          # the review form is pre-filled with config.json's lens:
@@ -555,9 +562,24 @@ def run_clip(video, c, args):
             camj = steady_camera(camj, c)
             log("    camera %s" % camj.get("steady", ""))
             u, hc, ginfo = solve_ground(people, cam, y0, Hp, c)
+        z = camj.get("zoom")
+        if z and lens_info and lens_info.get("frames_mm") and not lens_info.get("why"):
+            # the lens was measured a quarter, half and three quarters into the shot, the zoom is from its first frame:
+            # each measurement divided by the zoom there is the first frame's lens -> folded into this shot's zoom
+            import lens_auto
+            idx = lens_auto.sample_frames(shots)
+            if si < len(idx) and si < len(lens_info["frames_mm"]):
+                l0 = [mm / z[f - s0] for f, mm in zip(idx[si], lens_info["frames_mm"][si]) if 0 <= f - s0 < len(z) and z[f - s0] > 0]
+                if l0:
+                    k0 = float(np.clip(np.median(l0), 12.0, 300.0)) / c["lens_mm"]
+                    if abs(k0 - 1.0) > 0.03:
+                        camj["zoom"] = [float(v) * k0 for v in z]
+                        log("    zoom x%.2f over the shot: the first frame's lens is %.1f mm (%.1f -> %.1f mm)" % (
+                            z[-1] / z[0], c["lens_mm"] * k0, c["lens_mm"] * k0 * z[0], c["lens_mm"] * k0 * z[-1]))
         if c.get("_static_camera"):                        # reviewer said the camera does not move
             I3 = np.eye(3).tolist()
-            camj["R"] = [I3 for _ in camj["R"]]; camj["max_rotation_deg"] = 0.0
+            camj["R"] = [I3 for _ in camj["R"]]; camj["max_rotation_deg"] = 0.0; camj.pop("zoom", None)
+            camj.pop("travel_cam0", None)
             camj["warnings"] = [w for w in camj["warnings"] if "travel" not in w.lower()]
         hcam = (c.get("_hints") or {}).get("camera") or {}
         hcam = dict(hcam, **(hcam.get("shots") or {}).get(str(si + 1), {}))
@@ -567,7 +589,9 @@ def run_clip(video, c, args):
             u = _Rot.from_euler("xz", [np.radians(float(hcam.get("pitch_down_deg", ginfo.get("pitch_deg", 0.0)))),
                                        np.radians(float(hcam.get("roll_deg", 0.0)))]).apply([0, -1.0, 0])
             ginfo = {"source": "hints.json", "camera_height": hc, "pitch_deg": float(hcam.get("pitch_down_deg", 0.0))}
-        world = World(cam, camj["R"], u, hc)
+        world = World(cam, camj["R"], u, hc, zoom=camj.get("zoom"))
+        if camj.get("travel_cam0"):
+            world.T = np.asarray(camj["travel_cam0"]) @ world.M
         if hcam.get("path"):                                   # camera move set by hand (turn + travel)
             world.set_path(hcam["path"], Ns)
             ginfo["camera_path"] = "hints.json (%d keys)" % len(hcam["path"])
@@ -582,7 +606,9 @@ def run_clip(video, c, args):
         if dz:
             hc2 = float(np.clip(hc + dz, 0.3, 12.0))
             log("    nobody's feet are in the picture: floor moved %+.2f m to stand the people on it (camera height %.2f -> %.2f m)" % (-dz, hc, hc2))
-            world = World(cam, camj["R"], u, hc2)
+            world = World(cam, camj["R"], u, hc2, zoom=camj.get("zoom"))
+            if camj.get("travel_cam0"):
+                world.T = np.asarray(camj["travel_cam0"]) @ world.M
             if hcam.get("path"):
                 world.set_path(hcam["path"], Ns)
             ginfo = dict(ginfo, camera_height=hc2, floor="under the people (no feet in the picture)", camera_height_before=hc)
@@ -631,7 +657,8 @@ def run_clip(video, c, args):
             # moving a person up or down without refitting shifts them in the picture by about the same share of
             # their height; keep the move only when the character still lines up with the person in the film
             # (a pedestal, a step or a wall base under a statue / a far person read as "ground" otherwise)
-            scam = Cam({"res": [W, Hp], "lens": c["lens_mm"], "sensor": 36.0, "cam": [world.blender_cam(i) for i in range(Ns)]})
+            scam = Cam({"res": [W, Hp], "lens": c["lens_mm"], "sensor": 36.0, "cam": [world.blender_cam(i) for i in range(Ns)],
+                        "zoom": [world.f_at(i) / cam.f for i in range(Ns)]})
             stracks = {p["id"]: p for p in spose["people"]}
             for k, ch in grounded.items():
                 new = [ground_z(r) for r in ch["root"]]
@@ -659,7 +686,7 @@ def run_clip(video, c, args):
         # every shot gets its own spot in the world (200 m apart) so sets never overlap; the camera cuts between them
         dx = 200.0 * si
         for i in range(Ns):
-            bc = world.blender_cam(i); bc[0] += dx; cam_all[s0 + i] = bc
+            bc = world.blender_cam(i); bc[0] += dx; cam_all[s0 + i] = bc; zoom_all[s0 + i] = round(world.f_at(i) / cam.f, 5)
         for m in meshes:
             m["v"] = [[v[0] + dx, v[1], v[2]] for v in m["v"]]
             if tag and not m["name"].endswith(tag) and tag not in m["name"]:
@@ -676,6 +703,9 @@ def run_clip(video, c, args):
                   [w for w in camj["warnings"] if not w.startswith("camera lost")] + [x for x in (ginfo.get("warning"), sinfo.get("warning")) if x]]
         shot_rep.append({"shot": si + 1, "frames": [s0, s1 - 1], "max_rotation_deg": round(camj["max_rotation_deg"], 2),
                          "parallax_px": round(camj["parallax_px"], 2), "ground": ginfo, "set": {k: v for k, v in sinfo.items() if k != "palette"}})
+        shot_rep[-1]["camera_backend"] = camj.get("backend", "flow")
+        if "meters_per_unit" in camj:
+            shot_rep[-1]["meters_per_unit"] = camj["meters_per_unit"]
     c["_shot_tag"] = ""
     if hand_set:
         sky = carry_over(work, name, c, chars_all, N, sky)
@@ -686,7 +716,7 @@ def run_clip(video, c, args):
     stack_previews(tiles, os.path.join(work, "preview.jpg"))
     data = {"name": name, "package_name": pkg.package_name(name, c), "submit_dir": os.path.join(c["submit_root"], name), "work_dir": work,
             "res": [W, Hp], "fps": int(round(fps)), "frames": N, "render_scale": float(c.get("out_width", 3840)) / W,
-            "lens": c["lens_mm"], "sensor": 36.0, "cam": cam_all,
+            "lens": c["lens_mm"], "sensor": 36.0, "cam": cam_all, "zoom": zoom_all,
             "palette": palette, "sky": sky or [228, 229, 232], "exposure": 1.2, "gain": {"_video": c.get("video_gain", 2.2), "_ground": c.get("ground_gain", 3.2)},
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
@@ -709,8 +739,8 @@ def run_clip(video, c, args):
     frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder
     held_on = held_detect(name, video, work, c)            # before the set: the set leaves carried objects out
     rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
-    if held_on:
-        rep["held_objects"] = held_place(name, work)
+    if held_on is not None:                                # found ones + the ones annotated as held on the clip page
+        rep["held_objects"] = held_place(name, work, video, c)
     if args.stage in ("blend", "all"):
         blender_render(c, work, dp, N)
     if args.stage == "all":
@@ -720,6 +750,7 @@ def run_clip(video, c, args):
     log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
     return rep
 
+@stage("held_objects")
 def held_detect(name, video, work, c):
     """objects people carry (held_objects.py): found once on the NVIDIA card (output\\<clip>\\held.json, kept while
     pose.json is unchanged).  Off with config / hints.json "held_objects": false.  -> placed after the set or not"""
@@ -728,9 +759,9 @@ def held_detect(name, video, work, c):
     hints = jload(hp) if os.path.exists(hp) else {}
     if not HO.enabled(c, hints):
         log("  held objects: switched off")
-        return False
+        return None
     if not HO.available():
-        log("  held objects: Grounding DINO not installed (models\\grounding_dino) - run Setup.bat")
+        log("  held objects: Grounding DINO not installed (models\\grounding_dino) - only the annotated ones; run Setup.bat")
         return False
     hj, pj = HO.held_path(name), os.path.join(marks_dir(video, c), "pose.json")
     try:
@@ -746,14 +777,20 @@ def held_detect(name, video, work, c):
     return True
 
 
-def held_place(name, work):
-    """put the found objects into scene_data.json on the fitted hands / backs (after build_env, which moves people
-    onto the set's ground) -> [{"name", "label", "frames"}]"""
+def held_place(name, work, video, c):
+    """put the found objects and the ones annotated as held into scene_data.json on the fitted hands / backs (after
+    build_env, which moves people onto the set's ground) -> [{"name", "label", "frames"}]"""
     import held_objects as HO
     try:
         dp = os.path.join(work, "scene_data.json")
-        data, held = jload(dp), jload(HO.held_path(name))
+        hj = HO.held_path(name)
+        data = jload(dp)
+        held = jload(hj) if os.path.exists(hj) else {"objects": [], "step": 2}
         ci = jload(os.path.join(work, "clip_info.json"))
+        ann = HO.annotated(video, c, ci, jload(os.path.join(marks_dir(video, c), "pose.json")), work)
+        if ann:
+            log("  held objects annotated on the clip page: %s" % ", ".join("%s (%s)" % (a["label"], a["joint"]) for a in ann))
+        held = HO.with_annotated(held, ann)
         made = HO.place(data, held, ci.get("y0", 0))
         jsave(dp, data)
         try:
@@ -777,7 +814,7 @@ def set_inputs(work, drawn):
     d = jload(os.path.join(work, "scene_data.json"))
     ea = hashlib.md5(open(drawn, "rb").read()).hexdigest() if os.path.exists(drawn) else ""
     return {"lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
-            "env_ai": ea}
+            "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea}
 
 
 def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
@@ -786,12 +823,16 @@ def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
         return False
     if abs(float(a.get("lens") or 0) - float(b.get("lens") or 0)) > lens or len(a.get("cam", [])) != len(b.get("cam", [])):
         return False
+    za, zb = a.get("zoom") or [1.0] * len(a["cam"]), b.get("zoom") or [1.0] * len(b["cam"])
+    if len(za) != len(zb) or any(abs(x - y) > 0.01 for x, y in zip(za, zb)):
+        return False
     for p, q in zip(a["cam"], b["cam"]):
         if max(abs(x - y) for x, y in zip(p[:3], q[:3])) > pos or max(abs((x - y + 180.0) % 360.0 - 180.0) for x, y in zip(p[3:], q[3:])) > ang:
             return False
     return True
 
 
+@stage("environment")
 def make_set(name, video, work, c, stage, hand_set):
     """the set the render uses, built into scene_data.json by build_env.py (people and camera stay as fitted):
     a hand-built set (env_claude.json) when there is one; otherwise the automatic set of env_auto.py (MoGe-2 + SAM 2.1,
@@ -809,6 +850,7 @@ def make_set(name, video, work, c, stage, hand_set):
         env_p = os.path.join(output_dir(), name, "env_auto.json")
         drawn = os.path.join(marks_dir(video, c), "env_ai.json")
         now = set_inputs(work, drawn)
+        now["sampling"] = {"version": 2, "adaptive": c.get("set_adaptive_frames", True), "limit": c.get("set_max_frames", 5)}
         fresh = False
         if stage == "all" and os.path.exists(env_p):
             try:
@@ -816,9 +858,9 @@ def make_set(name, video, work, c, stage, hand_set):
             except (OSError, ValueError):
                 was = None
             if was is None:                                    # measured before the inputs were recorded
-                fresh = not os.path.exists(drawn) or os.path.getmtime(drawn) < os.path.getmtime(env_p)
+                fresh = False
             else:                                              # same camera, lens and drawn boxes as when it was measured
-                fresh = same_set_inputs(was, now)
+                fresh = same_set_inputs(was, now) and was.get("sampling") == now["sampling"]
             if not fresh:
                 log("  set: the camera, lens or drawn objects changed since Prepare - measuring the set again")
         if fresh:
@@ -834,17 +876,50 @@ def make_set(name, video, work, c, stage, hand_set):
                 return "depth set (automatic set failed)"
             env = jload(env_p); env["_inputs"] = now; jsave(env_p, env)
             log("    measured in %.0fs" % (time.time() - t1))
+    what = "hand-built set (env_claude.json)" if hand_set else "automatic set (env_auto.json)"
+    if not hand_set and c.get("set_builder", "auto") == "claude":  # Claude builds the set from the frames + measurements
+        import claude_set
+        cl_p = os.path.join(output_dir(), name, "env_claude_ai.json")
+        if not claude_set.available(c):
+            log("  set: Claude set builder chosen but no Claude key (Settings) - the local set is used")
+        else:
+            drawn = os.path.join(marks_dir(video, c), "env_ai.json")
+            now = dict(set_inputs(work, drawn), model=claude_set.model_of(c),
+                       sampling={"version": 2, "adaptive": c.get("set_adaptive_frames", True), "limit": c.get("set_max_frames", 5)})
+            reuse = False
+            if stage == "all" and os.path.exists(cl_p):
+                try:
+                    was = jload(cl_p).get("_inputs")
+                    reuse = bool(was) and was.get("model") == now["model"] and same_set_inputs(was, now) and was.get("sampling") == now["sampling"]
+                except (OSError, ValueError):
+                    reuse = False
+            if reuse:
+                log("  set: Claude's set from Prepare (%s)" % cl_p)
+                env_p, what = cl_p, "Claude set (%s, from Prepare)" % now["model"]
+            else:
+                log("  set: Claude builds the set (%s) from the frames and the measurements ..." % now["model"])
+                r = subprocess.run([py, os.path.join(here, "claude_set.py"), name], cwd=AGENT)
+                if r.returncode == 0 and os.path.exists(cl_p):
+                    env_p, what = cl_p, "Claude set (%s)" % now["model"]
+                else:
+                    log("  set: Claude set failed (exit %s) - the local set is used" % r.returncode)
     r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT)
     if r.returncode != 0:
         log("  set: build_env failed (exit %s) - depth set kept" % r.returncode)
         return "depth set (build_env failed)"
-    return "hand-built set (env_claude.json)" if hand_set else "automatic set (env_auto.json)"
+    return what
 
 
+@stage("blender")
 def blender_render(c, work, dp, N, extra=("render",)):
     be = blender_exe(c)
     if not be:
         raise RuntimeError("Blender not found - set the Blender path in Settings (config.json)")
+    try:                                                   # every video follows the colour card (docs/COLOUR_CARD.md)
+        import colour_card
+        d_ = jload(dp); colour_card.apply(d_, log=log); jsave(dp, d_)
+    except Exception as e:
+        log("  colour card not applied (%s)" % str(e)[:200])
     log("  blender build + render (%d frames) ..." % N)
     done = os.path.join(work, "render_done.txt")
     if os.path.exists(done): os.remove(done)
@@ -853,6 +928,7 @@ def blender_render(c, work, dp, N, extra=("render",)):
     if not os.path.exists(done):
         raise RuntimeError("Blender did not finish - see %s" % os.path.join(work, "blender_log.txt"))
 
+@stage("encoding_and_package")
 def make_zip(name, video, work, c):
     log("  videos + zip ...")
     ci = jload(os.path.join(work, "clip_info.json"))
@@ -899,6 +975,8 @@ def retime_pulldown(data, video, c):
         ch["rot"] = {j: rs(v) for j, v in ch["rot"].items()}
     if data.get("cam"):
         data["cam"] = rs(data["cam"])
+    if data.get("zoom"):
+        data["zoom"] = rs(data["zoom"])
     for p in data.get("props", []):
         if p.get("keys"):
             p["keys"] = rs(p["keys"])
@@ -916,7 +994,7 @@ def render_only(name, video, work, c, args, t0):
     try:                                                                        # v2.1: render at the size the 1080P canvas shows
         ci = jload(os.path.join(work, "clip_info.json"))
         CW, CH = pkg.canvas(ci["W"], ci["Hfull"])
-        data["render_scale"] = pkg.fit_even(ci["W"], ci["Hfull"], CW, CH)[0] / float(data["res"][0])
+        data["render_scale"] = pkg.cover_even(ci["W"], ci["Hfull"], CW, CH)[0] / float(data["res"][0])
     except (OSError, KeyError, ValueError):
         pass
     data["package_name"] = pkg.package_name(name, c)

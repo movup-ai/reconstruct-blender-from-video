@@ -29,6 +29,26 @@
       <label class="k" for="max_attempts">Tries per job</label>
       <div><select id="max_attempts"><option>1</option><option>2</option><option>3</option></select></div>
       <div class="help">A failed job is tried again automatically this many times in total.</div>
+      <label class="k" for="foot_contact">Foot contact</label>
+      <div><input id="foot_contact" type="checkbox"> Hold visible planted feet during fitting</div>
+      <label class="k" for="set_adaptive_frames">Set views</label>
+      <div><input id="set_adaptive_frames" type="checkbox"> Measure additional views when the camera moves</div>
+      <label class="k" for="set_max_frames">Maximum automatic views per shot</label>
+      <div><input id="set_max_frames" type="number" min="2" max="12" value="5"></div>
+      <label class="k" for="pose_backend">Pose model</label>
+      <div><select id="pose_backend"><option value="rtmpose">YOLOX + RTMPose</option><option value="rtmo">RTMO</option></select></div>
+      <label class="k" for="rtmo_model">RTMO ONNX file</label>
+      <div><input id="rtmo_model" type="text"></div>
+      <label class="k" for="camera_backend">Camera solver</label>
+      <div><select id="camera_backend"><option value="flow">Optical flow + depth</option><option value="da3">Depth Anything 3</option></select></div>
+      <label class="k" for="da3_model">DA3 checkpoint folder</label>
+      <div><input id="da3_model" type="text"></div>
+      <label class="k" for="da3_python">DA3 Python executable</label>
+      <div><input id="da3_python" type="text"></div>
+      <label class="k" for="da3_meters_per_unit">DA3 translation scale</label>
+      <div><input id="da3_meters_per_unit" type="number" min="0.000001" step="any" placeholder="Auto"></div>
+      <div class="help">Metres per model unit. Leave blank to estimate from visible floor contacts. Clips with hidden feet may need a measured scale.</div>
+      <div class="help">DA3 requires its own compatible Python environment and checkpoint. Pose model changes apply when joint marks are generated. Stage timings are saved in each clip's work folder.</div>
     </div>
   </section>
 
@@ -41,6 +61,29 @@
     </div>
     <div class="form" style="margin-top:12px" id="folders"></div>
     <div class="row"><button id="savefolders">Save SUBMIT, Work and Blender</button><span class="small muted" id="fmsg"></span></div>
+  </section>
+
+  <section class="step">
+    <h2>Background set · Claude</h2>
+    <p class="hint">Who builds the walls, pillars, curtains, doors and furniture behind the people. <b>Claude</b> looks at the
+      frames like an artist, uses the local measurements (camera, distances, people, outlines) as its ruler, includes every
+      object you annotated, then checks its set over the film and corrects it. <b>Local models</b> build it from the
+      measurements alone (free, but weaker on walls and pillars). With Claude, frames of each clip are sent to the Claude
+      API (about $0.10–0.40 per clip with Sonnet). The key is stored only on this PC and is never shown again.</p>
+    <div class="form">
+      <label class="k">Built by</label>
+      <div><span class="seg" id="set_builder"><button data-v="claude">Claude</button><button data-v="auto">Local models</button></span></div>
+      <div class="help" id="sb_help"></div>
+      <label class="k" for="cl_key">Claude API key</label>
+      <div class="row" style="margin:0"><input type="password" id="cl_key" autocomplete="off" spellcheck="false" placeholder="Paste your Anthropic API key (sk-ant-…)" style="flex:1;min-width:200px"><button id="cl_save">Save key</button><button id="cl_test">Test</button></div>
+      <div class="help" id="cl_state"></div>
+      <label class="k" for="set_model">Model</label>
+      <div><select id="set_model"><option value="claude-sonnet-5-5">Claude Sonnet 5.5 (recommended)</option><option value="claude-opus-5-5">Claude Opus 5.5 (stronger, about twice the cost)</option></select></div>
+      <div class="help">Used for the next Prepare. Finish reuses the set Prepare made unless the camera or your objects changed.</div>
+      <label class="k" for="set_rounds">Check rounds</label>
+      <div><select id="set_rounds"><option value="1">1 – write the set only</option><option value="2">2 – write, check over the film, correct (recommended)</option><option value="3">3 – one more check</option></select></div>
+      <div class="help">Each check shows Claude its set laid over the film and lets it fix positions; each round adds about the same cost again.</div>
+    </div>
   </section>
 
   <section class="step">
@@ -63,7 +106,7 @@
     <ul class="checks">
       <li><code>target/original.mp4</code>: the source clip, unchanged</li>
       <li><code>white_model/blendervid.mp4</code>: the white model on a 1920×1080 frame (1080×1920 for a vertical source)</li>
-      <li><code>comparison/comparison.mp4</code>: source on top, white model below, in one 1080P frame</li>
+      <li><code>comparison/comparison.mp4</code>: source on top, white model below, each 1920x1080 (1920x2160 in all)</li>
       <li><code>model_3d/&lt;package&gt;.blend</code> with <code>model_3d/reconstruction/scene.json</code></li>
       <li><code>meta/meta.json</code>: paths, Blender version, frames, fps, duration</li>
       <li>Both videos carry the source's own audio, copied unchanged.</li>
@@ -91,11 +134,21 @@ async function load() {
   $('parhelp').textContent = S.nvidia ? 'This PC has an NVIDIA card: 2–3 at once is usually fine. Lower it if the PC gets slow or the card runs out of memory.'
     : 'No working NVIDIA card was found. The models run on the NVIDIA card only: run Setup.bat, then start the app again.';
   segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
+  for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python', 'set_max_frames']) $(key).value = S[key] ?? '';
+  for (const key of ['foot_contact', 'set_adaptive_frames']) $(key).checked = S[key] !== false;
+  $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
     <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' && S.local ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
   document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(S[b.dataset.open]));
   $('ai_enabled').checked = !!S.ai_enabled; $('ai_send_images').checked = S.ai_send_images !== false; $('deepseek_model').value = S.deepseek_model || '';
   $('ds_state').innerHTML = S.deepseek_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="ds_del">remove</a>' : '<span class="muted">○ no key yet: AI suggestions are off, everything else works</span>';
+  segSet($('set_builder'), S.set_builder === 'claude' ? 'claude' : 'auto');
+  $('set_model').value = S.set_model || 'claude-sonnet-5-5'; $('set_rounds').value = String(S.set_rounds || 2);
+  $('sb_help').innerHTML = S.set_builder === 'claude' ? (S.anthropic_key_set ? 'The next Prepare asks Claude to build each clip\'s set.' :
+    '<span class="warn">Claude is chosen but no key is saved yet: the local models build the set until you save one.</span>') :
+    'The local models build the set. Choose Claude for walls, pillars and curtains placed like in the film.';
+  $('cl_state').innerHTML = S.anthropic_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="cl_del">remove</a>' : '<span class="muted">○ no key yet</span>';
+  const cdel = $('cl_del'); if (cdel) cdel.onclick = async e => { e.preventDefault(); if (!(await ask('Sets are built by the local models until you add a key again.', 'Remove the key', { title: 'Remove the Claude key?', danger: true }))) return; await post('/api/settings', { anthropic_key: '', set_builder: 'auto' }); toast('Key removed'); load(); };
   const del = $('ds_del'); if (del) del.onclick = async e => { e.preventDefault(); if (!(await ask('Ask DeepSeek stays hidden until you add a key again.', 'Remove the key', { title: 'Remove the DeepSeek key?', danger: true }))) return; await post('/api/settings', { deepseek_key: '' }); toast('Key removed'); load(); };
 }
 async function set(obj, msg) { try { await post('/api/settings', obj); toast(msg || 'Saved'); load(); } catch (e) { load(); } }
@@ -110,6 +163,19 @@ $('ds_save').onclick = async () => { const k = $('ds_key').value.trim(); if (!k)
   await set({ deepseek_key: k, ai_enabled: true }, 'Key saved'); $('ds_key').value = ''; };
 $('ds_test').onclick = async () => { $('ds_state').innerHTML = '<span class="muted">Testing… (up to a minute)</span>';
   const r = await post('/api/ai_test'); $('ds_state').innerHTML = `<span class="${r.ok ? (r.images ? 'good' : 'warn') : 'bad'}">● ${esc(r.detail)}</span>`; };
+segInit($('set_builder'), v => set({ set_builder: v }, v === 'claude' ? 'Claude builds the sets from the next Prepare' : 'The local models build the sets'));
+for (const key of ['pose_backend', 'rtmo_model', 'camera_backend', 'da3_model', 'da3_python']) {
+  $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
+}
+for (const key of ['foot_contact', 'set_adaptive_frames']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
+$('set_max_frames').onchange = e => set({ set_max_frames: +e.target.value }, 'Set view limit saved');
+$('da3_meters_per_unit').onchange = e => set({ da3_meters_per_unit: e.target.value === '' ? null : +e.target.value }, 'Camera scale saved');
+$('set_model').onchange = e => set({ set_model: e.target.value }, 'Set model saved');
+$('set_rounds').onchange = e => set({ set_rounds: +e.target.value }, 'Check rounds: ' + e.target.value);
+$('cl_save').onclick = async () => { const k = $('cl_key').value.trim(); if (!k) { toast('Paste the key first', true); return; }
+  await set({ anthropic_key: k, set_builder: 'claude' }, 'Key saved · Claude builds the sets'); $('cl_key').value = ''; };
+$('cl_test').onclick = async () => { $('cl_state').innerHTML = '<span class="muted">Testing…</span>';
+  const r = await post('/api/claude_test'); $('cl_state').innerHTML = `<span class="${r.ok ? 'good' : 'bad'}">● ${esc(r.detail)}</span>`; };
 $('savefolders').onclick = async () => { const o = {}; FOLDERS.forEach(([k]) => o[k] = $('f_' + k).value.trim()); if (!o.blender_exe) delete o.blender_exe;
   if ((o.submit_root !== S.submit_root || o.work_root !== S.work_root) && !(await ask('Every member\'s clips, results and packages are looked for in the new folders from now on. Nothing is moved.', 'Change the folders', { title: 'Change the shared folders?' }))) return;
   await set(o, 'Folders saved'); health(); };

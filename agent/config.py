@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Settings and folders.  One config.json next to the launcher holds both the pipeline settings and the app settings."""
 import json
+import math
 import os
 import sys
 import threading
@@ -32,12 +33,21 @@ APP_DEFAULTS = {
     "open_browser": True,
     "render_on_confirm": False,       # False: confirming writes the hand-off for Claude, who builds the set and renders
     "set_detail": "clean",            # clean = readable L2 set (whole facades, simple masses); detailed = every depth block
+    "set_builder": "auto",            # auto = the local models build the set; claude = Claude does (pipeline/claude_set.py)
+    "set_model": "claude-sonnet-5-5",
+    "set_rounds": 2,                  # Claude: write the set, then check it over the film and correct it once
 }
-SECRETS = ("deepseek_key",)            # saved in config.json, never sent back to the browser
+SECRETS = ("deepseek_key", "anthropic_key")   # saved in config.json, never sent back to the browser
+SET_BUILDERS = ("auto", "claude")       # who builds the background set: the local models, or Claude (needs a key)
+SET_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")
 EDITABLE = {"parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_model": str, "deepseek_key": str,
             "ai_send_images": bool, "max_attempts": int, "set_detail": str,
+            "set_builder": str, "set_model": str, "set_rounds": int, "anthropic_key": str,
             "source_root": str, "submit_root": str, "work_root": str, "blender_exe": str, "person_height": float, "lens_mm": float}
 AUTOPILOT_MODES = ("off", "prepare", "full")
+EDITABLE.update({"pose_backend": str, "rtmo_model": str, "camera_backend": str, "da3_model": str,
+                 "da3_python": str, "da3_meters_per_unit": float,
+                 "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int})
 
 _lock = threading.Lock()
 
@@ -64,20 +74,37 @@ def save(updates):
     for k, v in updates.items():
         if k not in EDITABLE:
             raise ValueError("setting %r cannot be changed here" % k)
+        if k == "da3_meters_per_unit" and v in (None, ""):
+            clean[k] = None
+            continue
         try:
             v = EDITABLE[k](v) if EDITABLE[k] is not bool else (v in (True, "true", "1", 1, "on"))
         except (TypeError, ValueError):
             raise ValueError("bad value for %s: %r" % (k, v))
         if k == "parallel" and not 1 <= v <= 8:
             raise ValueError("parallel must be 1-8")
+        if k == "pose_backend" and v not in ("rtmpose", "rtmo"):
+            raise ValueError("pose_backend must be rtmpose or rtmo")
+        if k == "camera_backend" and v not in ("flow", "da3"):
+            raise ValueError("camera_backend must be flow or da3")
+        if k == "set_max_frames" and not 2 <= v <= 12:
+            raise ValueError("set_max_frames must be 2-12")
+        if k == "da3_meters_per_unit" and (not math.isfinite(v) or v <= 0):
+            raise ValueError("DA3 translation scale must be positive and finite")
         if k == "set_detail" and v not in ("clean", "detailed"):
             raise ValueError("set_detail must be clean or detailed")
         if k == "autopilot" and v not in AUTOPILOT_MODES:
             raise ValueError("autopilot must be one of %s" % ", ".join(AUTOPILOT_MODES))
-        if k == "deepseek_key":
+        if k in ("deepseek_key", "anthropic_key"):
             v = v.strip()
-            if v and (len(v) < 20 or len(v) > 200 or any(ch.isspace() for ch in v)):
+            if v and (len(v) < 20 or len(v) > 300 or any(ch.isspace() for ch in v)):
                 raise ValueError("that does not look like an API key")
+        if k == "set_builder" and v not in SET_BUILDERS:
+            raise ValueError("set_builder must be one of %s" % ", ".join(SET_BUILDERS))
+        if k == "set_model" and v not in SET_MODELS:
+            raise ValueError("set_model must be one of %s" % ", ".join(SET_MODELS))
+        if k == "set_rounds" and not 1 <= v <= 3:
+            raise ValueError("set_rounds must be 1-3")
         if k in ("source_root", "submit_root", "work_root") and not os.path.isabs(v):
             raise ValueError("%s must be a full path" % k)
         clean[k] = v

@@ -1,13 +1,6 @@
 # -*- coding: utf-8 -*-
 """Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring);
-package_v1() below is the earlier layout of the client's sample (11月2日试稿):
-
-  <name>/comparison/<name>.mp4     target on top, white model below (3840 x 2*H)
-  <name>/meta/meta.jsonl           same keys, same order as the sample
-  <name>/model_3d/<name>blend.blend
-  <name>/target/<name>.mp4         the source clip, unchanged
-  <name>/white_model/<name>.mp4    3840 wide, the source's aspect ratio, 24 fps
-  <name>.zip                       one top folder, folder entries for the five sub-folders, GBK names (as the sample)
+package_lzhd() the LZHD V1.0 trial layout (render_lzhd.py).
 
 Video: H.264 High, yuv420p, Rec.709 (tagged), 24 fps, ~30 Mbit/s constant; audio AAC stereo 48 kHz 320 kbit/s.
 Encoder: h264_nvenc (GPU) when it works and the frame fits NVENC (<= 4096 per side: the white model), else libx264
@@ -20,7 +13,6 @@ import subprocess
 import tempfile
 import threading
 import zipfile
-from math import gcd
 
 from common import ffmpeg_exe
 
@@ -51,11 +43,6 @@ def run(cmd):
     if p.returncode != 0:
         raise RuntimeError("ffmpeg failed:\n" + p.stderr[-2000:])
 
-
-def out_size(W, Hfull, out_w):
-    OW = int(out_w)
-    OH = int(round(out_w * Hfull / float(W)))
-    return OW - OW % 2, OH - OH % 2
 
 
 COLOUR_ARGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
@@ -338,11 +325,20 @@ def fit_even(w, h, bw, bh):
     return a - a % 2, b - b % 2
 
 
+def cover_even(w, h, bw, bh):
+    """w x h scaled to cover all of bw x bh (the overflow is cropped), even sizes"""
+    f = max(bw / float(w), bh / float(h))
+    a, b = max(bw, int(round(w * f))), max(bh, int(round(h * f)))
+    return a + a % 2, b + b % 2
+
+
 def package(name, video, render_dir, submit_root, ci, c, desc=""):
     """v2.1 (2026-11-12): one clip = one package, five folders at the zip root, six fixed files:
-      comparison/comparison.mp4      original on top, white model below, both fitted into one 1080P frame
+      comparison/comparison.mp4      original on top, white model below, each 1920x1080 framed as the white model:
+                                     1920x2160, no bars (a vertical source: side by side, 2160x1920)
       target/original.mp4            the source clip, byte for byte
-      white_model/blendervid.mp4     1920x1080 (1080x1920 vertical), the source framing letterboxed
+      white_model/blendervid.mp4     1920x1080 (1080x1920 vertical), the source framing scaled to fill it, the
+                                     overflow cropped evenly (a 2:1 source loses its side edges, no black bars)
       model_3d/<package>.blend       master project (+ reconstruction/scene.json, reconstruct.py, README.md)
       meta/meta.json                 id, paths, blender version, frames, fps, duration (+ meta/README.md)
     The white model and the comparison carry the source's own audio stream, copied (identical in all three).
@@ -361,7 +357,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
     shutil.copyfile(video, tgt)
     W, Hfull, y0, Hp, N, fps = ci["W"], ci["Hfull"], ci["y0"], ci["Hpic"], ci["frames"], ci["fps"]
     CW, CH = canvas(W, Hfull)
-    FW, FH = fit_even(W, Hfull, CW, CH)                      # the source frame inside the canvas
+    FW, FH = cover_even(W, Hfull, CW, CH)                    # the source frame filling the canvas (no black bars)
     f = FH / float(Hfull)
     PH = int(round(Hp * f)); PH -= PH % 2; PY = int(round(y0 * f)); PY -= PY % 2
     ofps = int(c.get("out_fps", 24))
@@ -382,15 +378,14 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
     WMF = "[0:v]%sscale=%d:%d:flags=lanczos,pad=%d:%d:0:%d:black" % (retime, FW, PH, FW, FH, PY)
     wm = os.path.join(sub, "white_model", "blendervid.mp4")
     cmp_ = os.path.join(sub, "comparison", "comparison.mp4")
-    encode(ff, c, CW, CH, inp, WMF + ",pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,%s[v]" % (CW, CH, tail), video, D, wm)
-    # comparison: original on top, white model below, each fitted into half of the same canvas
-    if CW >= CH:
-        hw, hh = fit_even(W, Hfull, CW, CH // 2); stack = "vstack"
-    else:
-        hw, hh = fit_even(W, Hfull, CW, CH // 2); stack = "vstack"
-    encode(ff, c, CW, CH, inp,
-           WMF + ",scale=%d:%d:flags=lanczos[b];[1:v]%sscale=%d:%d:flags=lanczos[a];[a][b]%s=inputs=2,"
-           "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,%s[v]" % (hw, hh, retime, hw, hh, stack, CW, CH, tail), video, D, cmp_)
+    encode(ff, c, CW, CH, inp, WMF + ",crop=%d:%d:(iw-ow)/2:(ih-oh)/2,%s[v]" % (CW, CH, tail), video, D, wm)
+    # comparison: the original and the white model, each exactly as blendervid.mp4 frames it (filled, centre-cropped),
+    # stacked at full size with no bars: original on top (1920x2160); a vertical source side by side (2160x1920)
+    crop = "crop=%d:%d:(iw-ow)/2:(ih-oh)/2" % (CW, CH)
+    stack, SW, SH = ("vstack", CW, 2 * CH) if CW >= CH else ("hstack", 2 * CW, CH)
+    encode(ff, c, SW, SH, inp,
+           WMF + ",%s[b];[1:v]%sscale=%d:%d:flags=lanczos,%s[a];[a][b]%s=inputs=2,%s[v]" % (crop, retime, FW, FH, crop, stack, tail),
+           video, D, cmp_)
     # the master project and its reconstruction data (written by blender_build.py)
     md = os.path.join(sub, "model_3d")
     blend = os.path.join(md, pkg + ".blend")
@@ -479,8 +474,9 @@ def meta_readme(pkg, meta, desc, drops, W, H, CW, CH):
         "## 视频", "",
         "- `target/original.mp4`：原片，未改动（%dx%d）。%s" % (W, H, "" if (W, H) in ((1920, 1080), (1080, 1920)) else
                                                          "原片尺寸不是 1920x1080，按规范不拉伸、不重编码，原样提交。"),
-        "- `white_model/blendervid.mp4`：%dx%d，%d fps，%d 帧；原片画面按原比例放入 1080P 画布，多余部分为黑边。" % (CW, CH, ov["fps"], ov["frames"]),
-        "- `comparison/comparison.mp4`：%dx%d，上为原片、下为白模，同一时间基准，按原比例放入同一 1080P 画布。" % (CW, CH),
+        "- `white_model/blendervid.mp4`：%dx%d，%d fps，%d 帧；原片画面按原比例放大铺满 1080P 画布，超出部分居中裁掉，无黑边。" % (CW, CH, ov["fps"], ov["frames"]),
+        ("- `comparison/comparison.mp4`：%dx%d，上为原片、下为白模，同一时间基准；两者取景与白模视频相同（铺满 %dx%d），全尺寸上下拼接，无黑边。" % (CW, 2 * CH, CW, CH)
+         if CW >= CH else "- `comparison/comparison.mp4`：%dx%d，左为原片、右为白模，同一时间基准；两者取景与白模视频相同（铺满 %dx%d），全尺寸左右拼接，无黑边。" % (2 * CW, CH, CW, CH)),
         "- 帧率：%s" % ov["retime"],
         "- 音轨：%s。" % ov["audio"],
         "",
@@ -514,67 +510,6 @@ def zip_v21(src_dir, pkg, zp):
         raise RuntimeError("package incomplete, missing " + ", ".join(miss))
     os.replace(tmp, zp)
 
-
-def package_v1(name, video, render_dir, submit_root, ci, c, desc=""):
-    """the earlier (v1.0 sample) layout, kept for reference"""
-    ff = ffmpeg_exe()
-    sub = os.path.join(submit_root, name)
-    for d in SUBDIRS:
-        os.makedirs(os.path.join(sub, d), exist_ok=True)
-    tgt = os.path.join(sub, "target", name + ".mp4")
-    shutil.copyfile(video, tgt)
-    W, Hfull, y0, Hp, N, fps = ci["W"], ci["Hfull"], ci["y0"], ci["Hpic"], ci["frames"], ci["fps"]
-    OW, OH = out_size(W, Hfull, c.get("out_width", 3840))
-    sy = OH / float(Hfull)                                           # picture area inside the full frame (letterbox)
-    PH = int(round(Hp * sy)); PH -= PH % 2; PY = int(round(y0 * sy)); PY -= PY % 2
-    ofps = int(c.get("out_fps", 24))
-    D = N / float(fps)
-    frames = os.path.join(render_dir, "wm_%04d.jpg")
-    if not os.path.exists(frames % 1):
-        frames = os.path.join(render_dir, "wm_%04d.png")
-    inp = ["-framerate", "%.6f" % fps, "-start_number", "1", "-i", frames, "-i", video]
-    drops = pulldown_drops(video, N, fps, ofps)
-    if drops:            # repeated film frames: drop exactly those from both streams -> smooth, frame-matched 24 fps
-        retime = "settb=1/%d,select='not(%s)',setpts=N/(%d*TB),fps=%d," % (
-            ofps * 1000, "+".join("eq(n,%d)" % i for i in drops), ofps, ofps)     # fine time base: exact 1/24 s steps
-        print("  pulldown: dropping %d repeated frames (%s ...)" % (len(drops), ", ".join(map(str, drops[:6]))))
-    else:
-        retime = "fps=%d," % ofps
-    WM = ("[0:v]%sscale=%d:%d:flags=lanczos,pad=%d:%d:0:%d:black,scale=out_color_matrix=bt709:out_range=tv,"
-          "format=yuv420p,setsar=1" % (retime, OW, PH, OW, OH, PY))
-    wm = os.path.join(sub, "white_model", name + ".mp4")
-    cmp_ = os.path.join(sub, "comparison", name + ".mp4")
-    encode(ff, c, OW, OH, inp, WM + "[v]", video, D, wm)
-    encode(ff, c, OW, 2 * OH, inp, WM + "[b];[1:v]%sscale=%d:%d:flags=lanczos,scale=out_color_matrix=bt709:out_range=tv,"
-           "format=yuv420p,setsar=1[a];[a][b]vstack=inputs=2[v]" % (retime, OW, OH), video, D, cmp_)   # 3840 x ~5600: libx264 (> NVENC_MAX)
-    # the .blend: model_3d/<name>blend.blend as in the sample
-    md = os.path.join(sub, "model_3d")
-    plain = os.path.join(md, name + ".blend")
-    final = os.path.join(md, name + "blend.blend")
-    if os.path.exists(plain):
-        os.replace(plain, final)
-    for fn in os.listdir(md):
-        if fn != os.path.basename(final):
-            os.remove(os.path.join(md, fn))
-    pw, pt = probe(ff, wm), probe(ff, tgt)
-    g = gcd(OW, 2 * OH)
-    vals = {"source_video_id": name + ".mp4", "source_video_name": name, "source_video_desc": desc,
-            "source_video_duration": round(pw.get("duration", D), 3), "source_video_resolution": [OW, OH],
-            "source_video_fps": ofps, "source_video_format": "mp4", "source_video_video_path": "white_model/%s.mp4" % name,
-            "source_video_origin": "", "pattern_video_id": name + ".mp4", "pattern_video_name": name, "pattern_video_desc": desc,
-            "pattern_video_duration": round(pt.get("duration", D), 3), "pattern_video_resolution": [W, Hfull],
-            "pattern_video_fps": int(round(fps)), "pattern_video_format": "mp4", "pattern_video_video_path": "target/%s.mp4" % name,
-            "pattern_video_origin": "", "comparison_video_path": "comparison/%s.mp4" % name,
-            "production_type": c.get("production_type", "manual_rebuild"), "scenario": c.get("scenario", "film"),
-            "video_type": c.get("video_type", "人物"),
-            "ext_json": {"code_type": "H.264", "aspect_ratio": "%d:%d" % (OW // g, 2 * OH // g),
-                         "model_3d_path": "model_3d/%s" % os.path.basename(final)}}
-    meta = {k: vals[k] for k in META_KEYS}
-    with open(os.path.join(sub, "meta", "meta.jsonl"), "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(meta, ensure_ascii=False) + "\n")
-    zp = os.path.join(submit_root, name + ".zip")
-    zip_gbk(sub, name, zp)
-    return sub, zp
 
 
 # ---------------------------------------------------------------------------------------------- LZHD V1.0 (2026-11-15)

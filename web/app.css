@@ -217,6 +217,8 @@ details.step .sub { border-top:1px solid var(--seam); margin-top:16px; padding-t
 details.step .sub h3 { font-size:14.5px; margin:0 0 8px; }
 .hint { margin:0 0 12px; color:var(--slate); font-size:13.5px; max-width:90ch; }
 video, img.prev { width:100%; border-radius:var(--r); background:#1e252b; display:block; }
+/* the comparison player keeps a 16:9 screen; the taller comparison video (1920x2160) sits inside it with black side bars */
+video.vplayer { aspect-ratio:16 / 9; height:auto; max-width:calc(70vh * 16 / 9); margin-inline:auto; object-fit:contain; background:#000; }
 .cap { color:var(--slate); font-size:12.5px; margin:7px 0 0; }
 .people { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(380px,100%),1fr)); gap:14px; }
 .person { display:flex; gap:14px; background:var(--paper); border:1px solid var(--seam); border-radius:10px; padding:12px; transition:opacity .15s, border-color .12s; align-items:flex-start; }
@@ -281,8 +283,10 @@ pre.log { background:var(--sunk); color:var(--ink); border:1px solid var(--seam)
 .objtop input { flex:1; min-width:0; }
 .objrm { width:32px; min-height:32px; padding:0; flex:none; color:var(--slate); box-shadow:none; }
 .objrm:hover { background:var(--bad-tint); border-color:#f2cbc7; color:var(--bad); }
-.objprops { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:8px; padding-left:20px; }
+.objprops { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:8px; padding-left:20px; }
 .objprops label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--slate); font-weight:500; min-width:0; }
+.objprops .kindlab { display:flex; align-items:center; gap:5px; }
+.objprops .kdot { width:9px; height:9px; border-radius:50%; box-shadow:inset 0 0 0 1px rgba(16,24,32,.25); }
 .objprops select { width:100%; min-width:0; font-size:13px; min-height:32px; padding:4px 6px; }
 .objhead { margin:10px 0 4px; }
 .objrow.found { background:var(--sunk); border-style:dashed; }
@@ -387,6 +391,46 @@ table.subs tr.probs li { margin:2px 0; }
   table.subs tr:hover td { background:transparent; }
 }
 @media (max-width:760px) { .deliverhint { margin-top:10px; } }
+
+/* Clips page: Cards / Progress switch, the progress table and its summary line */
+.viewsw { margin-left:auto; border:0; padding:3px; gap:2px; background:var(--sunk); border-radius:8px; }
+.tabs .viewsw button { border:0; border-radius:6px; min-height:28px; padding:0 14px; background:transparent; color:var(--slate);
+                       box-shadow:none; font-weight:500; outline:none; }
+.tabs .viewsw button:hover { background:rgba(255,255,255,.6); color:var(--ink); }
+.tabs .viewsw button.on { background:var(--paper); color:var(--ink); font-weight:600; box-shadow:0 1px 2px rgba(16,24,32,.12); }
+.tabs .viewsw button:focus-visible { box-shadow:0 0 0 2px var(--accent); }
+.viewsw + .search { margin-left:8px; }
+.progsum { display:flex; flex-wrap:wrap; gap:6px 22px; font-size:13.5px; color:var(--slate); margin:4px 0 8px; }
+.progsum b { color:var(--ink); }
+.tablewrap { overflow-x:auto; }
+table.progtable td { vertical-align:top; }
+table.progtable th.r, table.progtable td.r { text-align:right; }
+table.progtable .nowrap { white-space:nowrap; }
+table.progtable td.pname a { display:flex; gap:10px; align-items:center; color:inherit; text-decoration:none; min-width:0; }
+table.progtable td.pname img { width:72px; height:40px; object-fit:cover; border-radius:var(--r-sm); background:#1e252b; flex:none; }
+table.progtable td.pname span { display:flex; flex-direction:column; min-width:0; }
+table.progtable td.pname b { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:28ch; }
+table.progtable td { min-width:120px; } table.progtable td.pname { min-width:220px; }
+.pst { font-size:13.5px; white-space:nowrap; } .pst.ok { color:var(--ok); } .pst.bad { color:var(--bad); }
+.pst.run { color:var(--info); font-weight:600; } .pst.wait { color:var(--slate); }
+table.progtable .pbar { margin:6px 0 2px; max-width:200px; }
+@media (max-width:760px) {   /* phone: each clip is a card */
+  .viewsw { margin-left:0; }
+  table.progtable thead { display:none; }
+  table.progtable, table.progtable tbody, table.progtable tr, table.progtable td { display:block; width:100%; min-width:0; }
+  table.progtable tr { border:1px solid var(--seam); border-radius:var(--r); background:var(--paper); margin-bottom:10px; padding:10px 12px; }
+  table.progtable td { border:0; padding:3px 0; text-align:left !important; }
+  table.progtable td[data-k]::before { content:attr(data-k); display:inline-block; width:110px; color:var(--slate); font-size:12.5px; vertical-align:top; }
+  table.progtable td[data-k] > .pst { display:inline-block; }
+}
+
+/* Objects in the set: each shot's picture stays in view while its object list scrolls (one shot = one scrolling block) */
+.objgrid { max-height:calc(100vh - 170px); overflow-y:auto; padding-right:4px; }   /* (room for the page's bottom bar) */
+.objgrid > .objwrap { position:sticky; top:0; z-index:1; }
+@media (max-width:1000px) {   /* one column: the picture on top stays, the list scrolls under it */
+  .objgrid { max-height:calc(100vh - 150px); }
+  .objgrid > .objwrap { background:var(--paper); padding-bottom:8px; }
+}
 /* the joints step says whether there are unsaved joint fixes */
 .mstate { margin-left:auto !important; font-size:12.5px !important; font-weight:500 !important; padding:2px 10px; border-radius:99px; }
 .mstate:empty { display:none; }

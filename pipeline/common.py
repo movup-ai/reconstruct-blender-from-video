@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """shared settings and helpers for the automatic white-model pipeline"""
-import json, os, sys, shutil, tempfile, glob, math
+import json, os, shutil, tempfile, glob
 import numpy as np
 import cv2
 
@@ -19,7 +19,7 @@ DEFAULT_CFG = {
     "out_fps": 24,
     "video_bitrate": "30M",
     "depth_model_url": "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx",
-    "colours": ["red", "blue", "green", "yellow", "purple", "purple"],   # v2.1: 5th character on = purple
+    "colours": ["red", "blue", "green", "yellow", "cyan", "magenta"],   # colour card: 5th on = a stable colour of its own (purple = special object)
     "max_people": 6,
     "pose3d": True,                          # 3D pose lifter (MotionBERT, pose3d.py) as a prior in the fit; false = 2D marks only
     "pose3d_weight": 1.0,                    # strength of that prior (bone directions, sigma pose3d_sigma)
@@ -29,6 +29,16 @@ DEFAULT_CFG = {
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
     "detect_stride": "auto",                 # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
     "sam_points": 32,                        # automatic set (env_auto): SAM point grid per side (16 = fewer small pieces, ~3x faster)
+    "pose_backend": "rtmpose",               # rtmpose or optional rtmo
+    "rtmo_model": os.path.join(AGENT, "models", "rtmo", "model.onnx"),
+    "camera_backend": "flow",               # flow or optional da3 multi-view geometry
+    "da3_model": os.path.join(AGENT, "models", "da3"),
+    "da3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
+    "da3_max_views": 12,
+    "da3_meters_per_unit": None,             # None = infer scale from visible floor contacts
+    "set_adaptive_frames": True,
+    "set_max_frames": 5,
+    "foot_contact": True,
 }
 
 def cfg():
@@ -160,7 +170,7 @@ def gpu_session(model, engine="tensorrt", warm=(), profile=None, exclude=None):
     return s, "cuda"
 
 def jload(p):
-    with open(p, encoding="utf-8") as fh:
+    with open(p, encoding="utf-8-sig") as fh:                 # (a file saved by a Windows editor may start with a BOM)
         return json.load(fh)
 
 def jsave(p, d):
@@ -168,12 +178,30 @@ def jsave(p, d):
     with open(p, "w", encoding="utf-8") as fh:
         json.dump(d, fh, ensure_ascii=False, separators=(",", ":"))
 
+def open_video(path):
+    """(cv2.VideoCapture, temp folder or None): OpenCV cannot open a path with Chinese characters on Windows, so such a
+    video is copied to a temporary ASCII path first.  Close with close_video."""
+    cap = cv2.VideoCapture(path)
+    if cap.isOpened() and cap.get(cv2.CAP_PROP_FRAME_COUNT) > 0:
+        return cap, None
+    cap.release()
+    tmp = tempfile.mkdtemp(prefix="wm_")
+    t = os.path.join(tmp, "clip" + os.path.splitext(path)[1].lower())
+    shutil.copyfile(path, t)
+    cap = cv2.VideoCapture(t)
+    if not cap.isOpened():
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise RuntimeError("cannot open video: %s" % path)
+    return cap, tmp
+
+def close_video(cap, tmp):
+    cap.release()
+    if tmp:
+        shutil.rmtree(tmp, ignore_errors=True)
+
 def read_frames(path):
     """all frames (BGR) + fps; works with Chinese paths on Windows"""
-    cap = cv2.VideoCapture(path); tmp = None
-    if not cap.isOpened() or cap.get(cv2.CAP_PROP_FRAME_COUNT) <= 0:
-        tmp = tempfile.mkdtemp(prefix="wm_"); t = os.path.join(tmp, "clip" + os.path.splitext(path)[1].lower())
-        shutil.copyfile(path, t); cap = cv2.VideoCapture(t)
+    cap, tmp = open_video(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     out = []
     while True:
@@ -181,17 +209,13 @@ def read_frames(path):
         if not ok:
             break
         out.append(f)
-    cap.release()
-    if tmp:
-        shutil.rmtree(tmp, ignore_errors=True)
+    close_video(cap, tmp)
     return out, fps
 
 def read_frames_at(path, idxs):
-    """only the frames asked for {index: BGR} (much less memory than read_frames); works with Chinese paths"""
-    cap = cv2.VideoCapture(path); tmp = None
-    if not cap.isOpened() or cap.get(cv2.CAP_PROP_FRAME_COUNT) <= 0:
-        tmp = tempfile.mkdtemp(prefix="wm_"); t = os.path.join(tmp, "clip" + os.path.splitext(path)[1].lower())
-        shutil.copyfile(path, t); cap = cv2.VideoCapture(t)
+    """only the frames asked for {index: BGR} (much less memory than read_frames), read in order (exact frames);
+    works with Chinese paths"""
+    cap, tmp = open_video(path)
     want = sorted(set(int(i) for i in idxs)); out = {}; i = 0
     while want and i <= want[-1]:
         ok, f = cap.read()
@@ -200,13 +224,18 @@ def read_frames_at(path, idxs):
         if i in want:
             out[i] = f
         i += 1
-    cap.release()
-    if tmp:
-        shutil.rmtree(tmp, ignore_errors=True)
+    close_video(cap, tmp)
     return out
 
+def box_iou(a, b):
+    """overlap of two picture boxes [x0, y0, x1, y1] (intersection over union)"""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy
+    return ix * iy / u if u > 0 else 0.0
+
 def imwrite_u(path, img, q=90):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    """write a picture (also to a path with Chinese characters: encoded in memory)"""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     ok, buf = cv2.imencode(os.path.splitext(path)[1] or ".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])
     with open(path, "wb") as fh:
         fh.write(buf.tobytes())
