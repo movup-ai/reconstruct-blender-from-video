@@ -92,7 +92,7 @@ def person_crops(c, cl, size=220):
     for p in pose["people"]:
         path = os.path.join(td, "P%d.jpg" % p["id"])
         out[p["id"]] = path
-        if not os.path.exists(path):
+        if not os.path.exists(path) or os.path.getmtime(path) < os.path.getmtime(f['pose']):
             fs = sorted(int(x) for x in p["boxes"])
             mid = fs[len(fs) // 4: 3 * len(fs) // 4 + 1] or fs
             best = max(mid, key=lambda x: p["boxes"][str(x)][3] - p["boxes"][str(x)][1])

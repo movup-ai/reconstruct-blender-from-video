@@ -28,7 +28,7 @@ def main():
     model = DepthAnything3.from_pretrained(args.model).to("cuda").eval()
     prediction = model.inference(image=images, intrinsics=intrinsics, process_res=args.resolution,
                                  ref_view_strategy="middle")
-    np.savez_compressed(args.output, extrinsics=prediction.extrinsics, depth=prediction.depth)
+    np.savez_compressed(args.output, extrinsics=prediction.extrinsics, depth=prediction.depth, intrinsics=prediction.intrinsics)
 
 
 if __name__ == "__main__":

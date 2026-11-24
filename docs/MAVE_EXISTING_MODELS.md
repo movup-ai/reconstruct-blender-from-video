@@ -94,17 +94,17 @@ and idempotent when verification is repeated.
 
 ## Differences from the paper
 
-SAM 3 persistent masks and SAM 3D Body dense geometry remain deferred. MotionBERT and the existing fitting
-code supply mannequin poses; MoGe supplies metric depth for this extension. DA3 remains an optional camera
-backend with its existing floor/manual translation-scale alignment. The paper's exact dense-body calibration
-and per-frame neck-depth placement are not reproduced by a sparse mannequin proxy. Human placement continues
-to use the current pose fitter plus the projection-preserving support scale.
+SAM 3 persistent masks are now available through the optional [SAM 3 tracking backend](SAM3_TRACKING.md).
+The optional [SAM 3D Body backend](SAM3D_BODY.md) now provides dense body observations, visible-mesh depth
+calibration and per-frame neck-depth placement, driving the editable mannequin fitter. With MotionBERT selected,
+the torso-proxy calibration remains the available approximation. DA3 remains an optional camera backend;
+SAM 3D Body can calibrate its translation scale as well as the shared depth, while manual settings take priority.
 
 The local correction loop is deterministic and conservative. The optional existing Claude builder supplies an
 LLM edit loop; an unconstrained autonomous Blender modeling agent is not introduced. Global completeness flags
 are geometric cues for inspection, not a visual reasoning model. Suspended objects and airborne people can
 legitimately trigger review flags. Long occlusions and identity switches still need tracking evaluation and
-eventually the approved SAM 3 weights. This is an adaptation of the available geometric logic, not a reproduction
+the SAM 3 backend on the target clips. This is an adaptation of the available geometric logic, not a reproduction
 of the paper's full pipeline or benchmark scores.
 
 ## Validation

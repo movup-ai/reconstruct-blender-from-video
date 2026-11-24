@@ -25,6 +25,14 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 
 ## Processing upgrades
 
+SAM 3D Body is available as a selectable metric 3D body backend using tracked masks and the local body
+checkpoints. It adds visible-mesh depth calibration and camera-space pose/placement constraints to the
+editable mannequin fitter. See [SAM 3D Body operation and validation](docs/SAM3D_BODY.md).
+
+SAM 3 video tracking is available in Settings with the local `models/sam3/sam3.pt` checkpoint. It supplies
+persistent person masks and IDs to the existing pose models. Prepare/Re-check generates the new tracks and
+backs up previous person edits. See [SAM 3 setup, operation and limitations](docs/SAM3_TRACKING.md).
+
 The existing models now support MAVE-style shared metric evidence, gravity and Manhattan alignment,
 proxy-based depth scale calibration, numerical scene checks and bounded geometry repair. Prepare and
 Finish run these stages automatically; Settings has switches for shared geometry, scene checks and repair.

@@ -321,14 +321,14 @@ def p3_dirs_b(W, s, Rcw):
 def p3_target(lift, f, k, world):
     """lifted bone directions at frame f in the camera axes + how sure each is: (nbones, 3), (nbones,) or None.
     The lifter sees the person as if centred in the picture: its pose is turned onto the ray through the body."""
-    fr, X, cf = lift
+    fr, X, cf = lift[:3]
     i = int(f - fr[0])
     if i < 0 or i >= len(fr):
         return None
     d = X[i][_P3B] - X[i][_P3A]
     d = d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
     body = [j for j in (5, 6, 11, 12) if k[j, 2] > 0.3] or [j for j in range(17) if k[j, 2] > 0.3]
-    if body:
+    if body and not (len(lift)>3 and lift[3]=='camera'):
         r = np.r_[world.norm(f, *k[body, :2].mean(0)), 1.0]; r /= np.linalg.norm(r)
         ax = np.cross([0, 0, 1.0], r); sn = np.linalg.norm(ax); cs = r[2]
         if sn > 1e-6:                                         # rotation taking the optical axis onto the ray
@@ -556,6 +556,11 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         key_c = np.array([NB + i_ for i_, _ in kt], int); key_v = np.array([v_ for _, v_ in kt], float)
         D = _key(hint.get("distance"), f)
         Cf = world.C_at(f)
+        body_hip = hint.get('_body_hip')
+        hip_target = None
+        if body_hip:
+            target = np.asarray(body_hip,float)
+            hip_target = np.array([np.interp(f,target[:,0],target[:,axis]) for axis in (1,2,3)])
         if head_px:
             hf = [h_[0] for h_ in head_px]
             tu = np.interp(f, hf, [h_[1] for h_ in head_px]); tv = np.interp(f, hf, [h_[2] for h_ in head_px])
@@ -611,6 +616,8 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             r += [(Q[:, pose_c] - pose_v) / 3.0, (Q[:, key_c] - key_v) / key_sig]
             if D is not None:
                 r.append(col((np.hypot(Q[:, 0] - Cf[0], Q[:, 1] - Cf[1]) - D) / 0.03))
+            if hip_target is not None:
+                r.append(((W['hip_L'][1]+W['hip_R'][1])/2-hip_target)/.15)
             if head_px:
                 hc = W["head"][1] + W["head"][0][:, :, 2] * (0.145 * rig.s)
                 huv, _ = project_b(world, hc, f)
@@ -817,7 +824,17 @@ def fit_all(world, y0, people, N, c):
     n_extra = 0
     todo = order[: c["max_people"] if not rv else len(order)]
     lifts = {}                                               # 3D pose prior (config "pose3d", hints.json "pose3d": false = off)
-    if c.get("pose3d", True) and (c.get("_hints") or {}).get("pose3d", True) is not False:
+    body = c.get('_sam3d_body') if c.get('human_backend')=='sam3d_body' else None
+    if body is not None:
+        import sam3d_body
+        for pid in todo:
+            prefix = 'p%s'%pid
+            if prefix+'_placed' not in body: continue
+            fr,xyz = body[prefix+'_f'],body[prefix+'_placed']
+            dense = np.arange(int(fr[0]),int(fr[-1])+1)
+            interpolated = np.stack([np.interp(dense,fr,xyz[:,j,axis]) for j in range(17) for axis in range(3)],axis=1).reshape(-1,17,3)
+            lifts[pid] = (dense,sam3d_body.h36m(interpolated),np.full((len(dense),17),.8),'camera')
+    elif c.get("pose3d", True) and (c.get("_hints") or {}).get("pose3d", True) is not False:
         try:
             import pose3d
             if pose3d.available():
@@ -834,15 +851,31 @@ def fit_all(world, y0, people, N, c):
         if len(fs) < 4:
             continue
         r = rv.get(str(pid), {})
-        height = float(r.get("height") or c["person_height"])
+        model_height = sam3d_body.height_of(body['p%s_placed'%pid]) if body is not None and 'p%s_placed'%pid in body else None
+        height = float(r.get("height") or model_height or c["person_height"])
         log("    person %s: %d frames%s" % (pid, len(fs), ("  role " + r["role"]) if r.get("role") else ""))
         style = (c.get("_hints") or {}).get("character_style") or c.get("character_style", "sample")
         hint = {"foot_contact": c.get("foot_contact", True),
                 **(((c.get("_hints") or {}).get("people") or {}).get(str(pid)) or {})}
+        if body is not None and pid in lifts:
+            prefix = 'p%s'%pid; xyz = body[prefix+'_placed']
+            factor = height/max(.4,model_height or height)
+            hip = xyz[:,[11,12]].mean(1)*factor
+            if not any(k in hint for k in ('distance','mount','floor_z')):
+                targets = []
+                for f,p in zip(body[prefix+'_f'],hip):
+                    f = int(f); world_point = world.C_at(f)+world.R_cw(f).T @ p
+                    targets.append([f,*world_point.tolist()])
+                hint['_body_hip'] = targets
+                hint['distance'] = [[t[0],float(np.linalg.norm(np.asarray(t[1:3])-world.C_at(int(t[0]))[:2]))] for t in targets]
+            if not any(k in hint for k in ('legs','leg_pose','mount')): hint['legs'] = 'free'
         rig, Q, err = fit_track(world, y0, fs, K, height, step=c.get("fit_step", 2), style=style, hint=hint,
                                 lift=lifts.get(pid), p3=p3)
         sm = (hint or {}).get("smooth", 1.0 if (hint or {}).get("follow_dots") else c.get("smooth_frames", 1.5))
         keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)))
+        if c.get('_persistent_tracks'):
+            observed = set(fs)
+            keys['visible'] = [f in observed for f in range(N)]
         if c.get("motion_prior") or (c.get("_hints") or {}).get("motion_prior"):   # opt-in: real-world movement, soft
             try:
                 import motion_prior
@@ -863,8 +896,10 @@ def fit_all(world, y0, people, N, c):
             label = (labels[n] if n < 2 else "其他人物%d" % (n - 1)) + "_" + colour
         kind = "P%d" % (n + 1)
         keys.update(label=label, colour=colour, height=height, track_id=pid, style=style)
+        keys['human_backend'] = 'sam3d_body' if body is not None and pid in lifts else 'motionbert' if pid in lifts else '2d'
         chars[kind] = keys
         e = np.array(list(err.values()))
         report.append({"person": kind, "track": pid, "colour": colour, "frames": len(fs),
                        "median_error_px": round(float(np.median(e)), 1), "worst_error_px": round(float(e.max()), 1)})
+        report[-1]['human_backend'] = keys['human_backend']
     return chars, report

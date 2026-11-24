@@ -17,13 +17,13 @@ Usage:  python automark.py VIDEO_OR_FOLDER [more ...] [--out DIR] [--step 8] [--
 GPU only (NVIDIA card): TensorRT fp16 engines (built once, ~15 min, cached in models\\trt_cache), CUDA as fallback; RTMPose crops batched.
 --detect-stride / --engine default to config.json "detect_stride" / "pose_engine".
 """
-import argparse, json, os, sys, time, base64, math
+import argparse, json, os, sys, time, base64, math, tempfile
 import numpy as np
 import cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "pipeline"))
-from common import box_iou as iou, read_frames, imwrite_u, cfg, pick_device  # noqa: E402  (pipeline\common.py)
+from common import box_iou as iou, read_frames, imwrite_u, cfg, pick_device, jload, jsave  # noqa: E402
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 KP_NAMES = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
             "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
@@ -712,41 +712,82 @@ def process(path, out_root, args, marker):
     rel = os.path.relpath(os.path.dirname(os.path.abspath(path)), args.base) if args.base else ""
     rel = "" if rel.startswith("..") or rel == "." else rel
     out = os.path.join(out_root, rel, name)
-    if os.path.exists(os.path.join(out, "pose.json")) and not args.force:
-        log("skip (already done):", path)
-        return
+    settings = cfg()
+    from sam3_tracking import needs_tracking
+    previous = os.path.join(out,"pose.json")
+    if os.path.exists(previous) and not args.force:
+        old = jload(previous)
+        if not needs_tracking(old,settings) and (old.get('tracker_backend')!='sam3' or os.path.isfile(os.path.join(out,'sam3_masks.npz'))):
+            log("skip (already done):", path)
+            return
+    changed = os.path.isfile(previous) and needs_tracking(jload(previous),settings)
+    if settings.get('tracker_backend','geometry') == 'sam3' or changed:
+        from sam3_tracking import publish
+        os.makedirs(out,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=out,prefix='tracking_pending_') as staged:
+            _generate_marks(path,staged,args,marker,settings)
+            backup = publish(staged,out)
+            if backup: log('  previous tracking and person edits backed up: '+backup)
+            log('  updated tracking marks published: '+out)
+    else:
+        _generate_marks(path,out,args,marker,settings)
+
+
+def make_marker(args, settings):
+    if settings.get('pose_backend','rtmpose') == 'rtmo':
+        from rtmo_marker import RTMOMarker
+        args.mode = 'RTMO'; args.detect_stride = '1'
+        return RTMOMarker(settings.get('rtmo_model',''),args.engine,not args.no_tiles)
+    return Marker(args.mode,args.device,not args.no_tiles,args.engine)
+
+
+def _generate_marks(path, out, args, marker, settings):
+    name = os.path.splitext(os.path.basename(path))[0]
     os.makedirs(os.path.join(out, "review"), exist_ok=True)
     frames, fps = read_frames(path)
     n = len(frames)
     if n == 0:
-        log("no frames:", path); return
+        raise RuntimeError('No video frames decoded: '+path)
     H, W = frames[0].shape[:2]
     y0, y1 = picture_area(frames[:: max(1, n // 10)])
     log("%s: %d frames %dx%d, picture rows %d-%d" % (name, n, W, H, y0, y1))
     t0 = time.time()
-    per_frame, interp, posed = detect_frames(frames, y0, y1, marker, args.detect_stride)
-    log("  detected %d/%d frames, %d pose only, %d interpolated (stride %s)  %.1fs" % (
-        n - len(interp) - len(posed), n, len(posed), len(interp), args.detect_stride, time.time() - t0))
-    if os.environ.get("AUTOMARK_DUMP"):                 # tests: raw per-frame people before tracking
-        import pickle
-        pickle.dump(per_frame, open(os.path.join(out, "per_frame.pkl"), "wb"))
     from shots import split_shots
-    cuts = [start for start, end in split_shots(frames, y0, y1 - y0)][1:]
-    settings = cfg()
+    shots = split_shots(frames,y0,y1-y0)
+    cuts = [start for start,end in shots][1:]
     max_gap = max(15, round(fps * float(settings.get("track_occlusion_seconds", 2.0))))
     identities = {}
-    tr = track(per_frame, max_gap=max_gap, frames=frames, cuts=cuts, identity=identities)
-    if not getattr(args, "no_gap_fill", False):
-        nf = fill_gaps(tr, per_frame, frames, y0, y1, marker)
-        if nf:
-            log("  %d frames of briefly hidden people measured in their predicted box" % nf)
+    sam3 = settings.get('tracker_backend','geometry') == 'sam3'
+    if sam3:
+        from sam3_tracking import run_masks,measure_poses
+        log('  SAM 3 persistent video tracking ...')
+        bundle = run_masks(frames,y0,y1,shots,out,settings,fps)
+        # The SAM 3 process exits before loading the ONNX pose model on the GPU.
+        marker = marker or make_marker(args,settings)
+        tr = measure_poses(bundle,frames,y0,y1,marker)
+        interp,posed = [],[]
+        jsave(os.path.join(out,'tracking_report.json'),{'backend':'sam3','version':1,'mask_records':len(bundle['frames']),
+              'identities':len(tr),'peak_vram_mb':float(bundle.get('peak_vram_mb',0.)),
+              'shots':[[int(a),int(b)] for a,b in shots]})
+    else:
+        marker = marker or make_marker(args,settings)
+        per_frame, interp, posed = detect_frames(frames, y0, y1, marker, args.detect_stride)
+        log("  detected %d/%d frames, %d pose only, %d interpolated (stride %s)  %.1fs" % (
+            n - len(interp) - len(posed), n, len(posed), len(interp), args.detect_stride, time.time() - t0))
+        if os.environ.get("AUTOMARK_DUMP"):
+            import pickle
+            pickle.dump(per_frame, open(os.path.join(out, "per_frame.pkl"), "wb"))
+        tr = track(per_frame, max_gap=max_gap, frames=frames, cuts=cuts, identity=identities)
+        if not getattr(args, "no_gap_fill", False):
+            nf = fill_gaps(tr, per_frame, frames, y0, y1, marker)
+            if nf: log("  %d frames of briefly hidden people measured in their predicted box" % nf)
     # drop short / weak tracks, then number people by size (P1 = biggest on screen)
     good = {}
     for t, d in tr.items():
-        if len(d) < args.min_track:
+        if len(d) < (min(args.min_track,4) if sam3 else args.min_track):
             continue
         msc = np.mean([s.mean() for k, s, b in d.values()])
-        if msc < 0.25:
+        if msc < 0.25 and not sam3:
             continue
         good[t] = d
     order = sorted(good, key=lambda t: -np.mean([b[3] - b[1] for k, s, b in good[t].values()]))
@@ -756,6 +797,7 @@ def process(path, out_root, args, marker):
         people.append({"id": new_id, "appearance": identities.get(t), "frames": {str(f): [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
                                                          for (x, y), s in zip(k, sc)] for f, (k, sc, b) in sorted(d.items())},
                        "boxes": {str(f): [round(float(v), 1) for v in b] for f, (k, sc, b) in sorted(d.items())}})
+        if sam3: people[-1]['sam3_id'] = int(t)
     review = sorted(set(list(range(0, n, args.step)) + [n - 1]))
     data = {"video": os.path.abspath(path), "clip": name, "width": W, "height": H, "fps": fps, "frames": n,
             "picture_area": [0, y0, W, y1 - y0], "keypoint_names": KP_NAMES, "review_frames": review,
@@ -763,6 +805,11 @@ def process(path, out_root, args, marker):
             "interpolated_frames": interp, "pose_only_frames": posed, "people": people}
     data["tracking_version"] = 2
     data["tracking_max_gap"] = max_gap
+    data['tracker_backend'] = 'sam3' if sam3 else 'geometry'
+    if sam3:
+        from sam3_tracking import signature
+        data['masks_file'] = 'sam3_masks.npz'
+        data['tracking_signature'] = signature(settings)
     with open(os.path.join(out, "pose.json"), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
     # review images + check page
@@ -846,13 +893,8 @@ def main():
         log("no videos found"); return
     log("%d video(s) to process" % len(vids))
     settings = cfg()
-    if settings.get("pose_backend", "rtmpose") == "rtmo":
-        from rtmo_marker import RTMOMarker
-        marker = RTMOMarker(settings.get("rtmo_model", ""), args.engine, not args.no_tiles)
-        args.mode = "RTMO"
-        args.detect_stride = "1"  # one-stage model measures every frame; no top-down pose-only pass
-    else:
-        marker = Marker(args.mode, args.device, not args.no_tiles, args.engine)
+    marker = None if settings.get('tracker_backend','geometry') == 'sam3' else make_marker(args,settings)
+    failures = 0
     for i, v in enumerate(vids, 1):
         log("[%d/%d] %s" % (i, len(vids), v))
         try:
@@ -860,6 +902,8 @@ def main():
         except Exception as e:
             import traceback; traceback.print_exc()
             log("FAILED:", v, e)
+            failures += 1
+    if failures: raise SystemExit(1)
 
 
 if __name__ == "__main__":

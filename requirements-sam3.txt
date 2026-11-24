@@ -1,0 +1,13 @@
+# Install into the isolated Python 3.12 runtime, after CUDA torch 2.8 / torchvision 0.23.
+# Upstream source commit tested: 31cb7e624e4fe95301b1be1d4e809111593d2e45
+-e ./third_party/sam3
+setuptools==78.1.0
+numpy==1.26.4
+opencv-python==4.11.0.86
+scikit-image==0.25.2
+tifffile==2025.6.11
+triton-windows==3.4.0.post21; sys_platform == "win32"
+psutil
+pycocotools
+einops
+scipy

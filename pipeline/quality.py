@@ -47,7 +47,7 @@ def junk_reason(st, c=None):
 
 def drop_junk(people, c, fps, log=None):
     """people {id: (frames, K)} without the junk tracks; what was left out is added to c["_junk"]"""
-    if c.get("junk_filter", True) is False:
+    if c.get("junk_filter", True) is False or c.get('_persistent_tracks'):
         return people
     rv = (c.get("_review") or {}).get("people", {})
     keep = {}

@@ -24,6 +24,9 @@ def suggested(c, cl, confirmed=False, auto=False):
     pose = read_json(f["pose"], {}) or {}
     ai = read_json(f["ai"], {}) or {}
     cam = read_json(os.path.join(f["work"], "camera.json"), {}) or {}
+    scene = read_json(os.path.join(f['work'],'scene_data.json'),{}) or {}
+    body_heights = {str(ch.get('track_id')):ch.get('height') for ch in scene.get('chars',{}).values()
+                    if ch.get('human_backend')=='sam3d_body'}
     people = {}
     ai_people = {str(k): v for k, v in (ai.get("people") or {}).items()}
     rank = 0
@@ -32,13 +35,13 @@ def suggested(c, cl, confirmed=False, auto=False):
         n = len(p.get("frames", {}))
         if a.get("role") in ROLE_COLOUR:
             role = a["role"]
-        elif a.get("is_person") is False or n < 10:
+        elif a.get("is_person") is False or n < (4 if pose.get('tracker_backend')=='sam3' else 10):
             role = "ignore"
         else:
             role = ORDER[rank] if rank < len(ORDER) else "extra"
             rank += 1
         people[pid] = {"role": role, "colour": ROLE_COLOUR.get(role) or "purple",
-                       "height": float(a.get("height") or c["person_height"]), "name": a.get("name", "")}
+                       "height": float(a.get("height") or body_heights.get(pid) or c["person_height"]), "name": a.get("name", "")}
     return {"clip": cl.name, "video": cl.video, "confirmed": bool(confirmed), "auto": bool(auto),
             "people": people,
             "camera": {"type": ai.get("camera") if ai.get("camera") in ("static", "pan", "moving", "handheld") else guess_camera(cam),

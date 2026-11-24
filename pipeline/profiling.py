@@ -33,6 +33,7 @@ def profile_clip(function):
         work = os.path.join(config["work_root"], name)
         profile = {"clip": name, "stage": args.stage, "stages": {}, "status": "failed"}
         profile["models"] = {"pose": config.get("pose_backend", "rtmpose"), "camera": config.get("camera_backend", "flow")}
+        profile['models'].update(tracker=config.get('tracker_backend','geometry'),human=config.get('human_backend','motionbert'))
         token = _active.set(profile)
         started = time.perf_counter()
         try:

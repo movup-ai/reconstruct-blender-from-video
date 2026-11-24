@@ -48,7 +48,9 @@ AUTOPILOT_MODES = ("off", "prepare", "full")
 EDITABLE.update({"pose_backend": str, "rtmo_model": str, "camera_backend": str, "da3_model": str,
                  "da3_python": str, "da3_meters_per_unit": float,
                  "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int,
-                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool})
+                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool,
+                 "tracker_backend": str, "sam3_checkpoint": str, "sam3_python": str,
+                 "human_backend": str, "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int})
 
 _lock = threading.Lock()
 
@@ -88,6 +90,12 @@ def save(updates):
             raise ValueError("pose_backend must be rtmpose or rtmo")
         if k == "camera_backend" and v not in ("flow", "da3"):
             raise ValueError("camera_backend must be flow or da3")
+        if k == 'tracker_backend' and v not in ('geometry','sam3'):
+            raise ValueError('tracker_backend must be geometry or sam3')
+        if k == 'human_backend' and v not in ('motionbert','sam3d_body'):
+            raise ValueError('human_backend must be motionbert or sam3d_body')
+        if k == 'sam3d_stride' and not 1<=v<=16:
+            raise ValueError('sam3d_stride must be 1-16')
         if k == "set_max_frames" and not 2 <= v <= 12:
             raise ValueError("set_max_frames must be 2-12")
         if k == "da3_meters_per_unit" and (not math.isfinite(v) or v <= 0):

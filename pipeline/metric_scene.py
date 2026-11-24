@@ -75,6 +75,9 @@ def observe(frames, pose, cam, y0, camj, c):
     """Run isolated GPU observations, cached by the actual images and intrinsics."""
     count = min(len(frames), max(1, int(c.get("metric_max_views", 3))))
     fs = np.unique(np.linspace(0, len(frames)-1, count, dtype=int))
+    if c.get('human_backend')=='sam3d_body' and c.get('_da3_depth'):
+        available = sorted(c['_da3_depth'])
+        fs = np.asarray([available[i] for i in np.unique(np.linspace(0,len(available)-1,min(count,len(available)),dtype=int))])
     width = min(cam.W, int(c.get("metric_resolution", 384)))
     height = max(16, round(cam.H * width / cam.W))
     images = np.asarray([cv2.cvtColor(cv2.resize(frames[f][y0:y0+cam.H], (width, height)), cv2.COLOR_BGR2RGB) for f in fs])
@@ -100,12 +103,20 @@ def observe(frames, pose, cam, y0, camj, c):
                 source = {k: result[k].copy() for k in result.files if k != "images"}
             np.savez_compressed(path, key=digest, **source)
     source["frames"] = fs
+    mask_bundle = None
+    if pose.get('tracker_backend') == 'sam3' and c.get('_marks_dir'):
+        from sam3_tracking import read_masks,union_at
+        path = os.path.join(c['_marks_dir'],'sam3_masks.npz')
+        if os.path.isfile(path): mask_bundle = read_masks(path)
     Ks, people, groups = [], [], []
     for f, label in zip(fs, source["labels"]):
         K = cam.K().copy(); K[0, 0] *= zoom[f]; K[1, 1] *= zoom[f]
         K[0] *= width / cam.W; K[1] *= height / cam.H
         Ks.append(K)
         mask = person_mask(pose, f, (height, width), y0, (cam.W, cam.H))
+        if mask_bundle is not None:
+            ids = {int(p['sam3_id']) for p in pose.get('people',[]) if 'sam3_id' in p}
+            mask = union_at(mask_bundle,int(f)+c.get('_shot_start',0),width,height,ids)
         group = np.full(label.shape, 3, np.int8)
         for i, name in enumerate(source["names"]):
             if name in FLOOR: group[label == i] = 0
@@ -116,6 +127,14 @@ def observe(frames, pose, cam, y0, camj, c):
                 source["valid"][len(groups)][label == i] = False
         people.append(mask); groups.append(group)
     source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source="MoGe-2")
+    if c.get('human_backend')=='sam3d_body' and c.get('_da3_depth'):
+        for i,f in enumerate(fs):
+            d = c['_da3_depth'][int(f)]; Kd = c['_da3_intrinsics'][int(f)]
+            warped = cv2.warpPerspective(d,source['K'][i] @ np.linalg.inv(Kd),(width,height),
+                                        flags=cv2.INTER_NEAREST,borderValue=0.)
+            source['depth'][i] = warped
+            source['valid'][i] &= np.isfinite(warped)&(warped>.05)
+        source['source'] = 'DA3'
     return source
 
 
@@ -145,12 +164,13 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
     normals, categories, floors, walls, upright = [], [], [], [], []
     for f, depth, K, valid, person, group in zip(observation["frames"], observation["depth"], observation["K"],
                                                observation["valid"], observation["person"], observation["groups"]):
-        xyz = points(depth, K)
+        safe_depth = np.where(valid & np.isfinite(depth),depth,0.)
+        xyz = points(safe_depth, K)
         n = np.cross(np.gradient(xyz, axis=1), np.gradient(xyz, axis=0))
         norm = np.linalg.norm(n, axis=-1)
         n /= np.maximum(norm[..., None], 1e-9)
         # Discontinuities at people and depth edges do not supply orientation evidence.
-        edge = np.maximum(np.abs(np.gradient(depth, axis=0)), np.abs(np.gradient(depth, axis=1)))
+        edge = np.maximum(np.abs(np.gradient(safe_depth, axis=0)), np.abs(np.gradient(safe_depth, axis=1)))
         selected = valid & ~person & np.isfinite(depth) & (depth > .1) & (depth < 80) & (norm > 1e-8) & (edge < .06 * depth)
         selected = cv2.erode(selected.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
         R = np.asarray(camj["R"][f])
@@ -170,6 +190,12 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
                 length = np.linalg.norm(vector)
                 if length > .1 and vector @ prior/length > .9:
                     upright.append(vector/length)
+    for key,values in c.get('_sam3d_body',{}).items():
+        if not key.endswith('_j'): continue
+        for f,joints in zip(c['_sam3d_body'][key[:-2]+'_f'],values):
+            vector = (joints[[5,6]].mean(0)-joints[[11,12]].mean(0)) @ np.asarray(camj['R'][int(f)])
+            length = np.linalg.norm(vector)
+            if length>.1 and vector @ prior/length>.85: upright.append(vector/length)
     up = solve_up(np.concatenate(normals), np.concatenate(categories), prior, upright)
     # MoGe scale is calibrated from the recovered camera height and semantic floor.
     ground = np.concatenate(floors); ground_scale = None
@@ -241,6 +267,22 @@ def body_scale(observation, world, chars):
         observation["scale"], observation["scale_source"] = scale, "fitted torso proxy surfaces"
     return {"samples": len(ratios), "meters_per_unit": observation.get("scale", 1.),
             "source": observation.get("scale_source", "MoGe metric prior")}
+
+
+def camera_height(observation, camj, up):
+    offsets = []
+    for f,d,K,valid,person,groups in zip(observation['frames'],observation['depth'],observation['K'],
+                                        observation['valid'],observation['person'],observation['groups']):
+        mask = valid & ~person & (groups==0) & np.isfinite(d) & (d>.05) & (d<100)
+        if mask.sum()<30: continue
+        xyz = points(np.where(mask,d,0),K)[mask]*observation.get('scale',1.)
+        center = np.asarray(camj.get('travel_cam0',np.zeros((len(camj['R']),3)))[int(f)])
+        values = -((xyz @ np.asarray(camj['R'][int(f)])+center) @ up)
+        values = values[np.isfinite(values)&(values>.2)&(values<12)]
+        if len(values)>=30: offsets.extend(values[::8])
+    if len(offsets)<30: return None
+    median = float(np.median(offsets))
+    return median if np.median(np.abs(np.asarray(offsets)-median))<.15*median else None
 
 
 def capture(observation, world, work, tag="", start=0, dx=0.):

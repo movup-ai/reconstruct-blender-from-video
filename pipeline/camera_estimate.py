@@ -621,6 +621,7 @@ def picture_cues(frames, pose, y0, cam, R, depth, nf=5):
 
 def estimate_shot(frames, pose, people, cam, y0, Hp, c, depth="auto"):
     """everything for one shot: (camj like camera_solve.solve after steadying, up (cam0), height, ground info)"""
+    for key in ('_da3_depth','_da3_intrinsics','_da3_travel'): c.pop(key,None)
     if isinstance(depth, str):
         depth = get_depth(c) if c.get("camera_depth", True) else None
     da3_depth = None

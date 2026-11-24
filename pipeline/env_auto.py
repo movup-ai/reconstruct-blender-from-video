@@ -316,11 +316,16 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
             fr.fov_free = float(2 * math.degrees(math.atan(0.5 / K[0, 0])))
     boxes, feet = people_boxes(pose, f, ci["y0"], k, Wk, Hk)
     fr.boxes = boxes
-    pm = models.sam_boxes(rgb, boxes) if boxes else np.zeros((Hk, Wk), bool)
+    persistent_masks = pose.get('_sam3_bundle')
+    if persistent_masks is not None:
+        from sam3_tracking import union_at
+        pm = union_at(persistent_masks,f,Wk,Hk)
+    else:
+        pm = models.sam_boxes(rgb, boxes) if boxes else np.zeros((Hk, Wk), bool)
     box_m = np.zeros((Hk, Wk), bool)
     for b in boxes:
         box_m[int(b[1]):int(b[3]) + 1, int(b[0]):int(b[2]) + 1] = True
-    if pm.sum() < 0.25 * box_m.sum():                            # SAM missed: the boxes themselves
+    if persistent_masks is None and pm.sum() < 0.25 * box_m.sum():
         pm = box_m
     fr.person = cv2.dilate(pm.astype(np.uint8), np.ones((int(9 * k * 1.5) | 1,) * 2, np.uint8)) > 0
     fr.feet = []
@@ -1520,6 +1525,9 @@ def run_clip(name, models, a, c):
     from run_pipeline import marks_dir
     pp = os.path.join(marks_dir(ci["video"], c), "pose.json")
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
+    if pose.get('tracker_backend') == 'sam3' and os.path.isfile(os.path.join(os.path.dirname(pp),'sam3_masks.npz')):
+        from sam3_tracking import read_masks
+        pose['_sam3_bundle'] = read_masks(os.path.join(os.path.dirname(pp),'sam3_masks.npz'))
     hj = os.path.join(output_dir(), name, "held.json")          # objects people carry (held_objects.py): masked out
     pose["_held"] = jload(hj) if os.path.exists(hj) else None   # with the people, never built as fixed boxes
     try:                                                        # (and the ones annotated as held on the clip page)

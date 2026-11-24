@@ -41,6 +41,7 @@ def same_skeleton(ka, kb, box):
 
 def duplicates(pose, active):
     """[(drop id, keep id, share of shared frames where they cover the same body)]"""
+    if pose.get('tracker_backend') == 'sam3': return []
     T = {str(p["id"]): p for p in pose["people"] if str(p["id"]) in active}
     out = []
     ids = sorted(T, key=lambda i: -len(T[i]["boxes"]))

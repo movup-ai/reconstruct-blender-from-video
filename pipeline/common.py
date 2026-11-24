@@ -40,6 +40,20 @@ DEFAULT_CFG = {
     "set_max_frames": 5,
     "foot_contact": True,
     "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
+    "tracker_backend": "geometry",          # geometry or SAM 3 persistent video masks
+    "sam3_checkpoint": os.path.join(AGENT, "models", "sam3", "sam3.pt"),
+    "sam3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
+    "sam3_mask_side": 640,
+    "sam3_max_objects": 16,
+    "sam3_probability": 0.35,
+    "sam3_timeout_min": 40,
+    "human_backend": "motionbert",          # motionbert or metric SAM 3D Body
+    "sam3d_checkpoint": os.path.join(AGENT, "models", "sam3d_body", "model.ckpt"),
+    "sam3d_mhr": os.path.join(AGENT, "models", "sam3d_body", "assets", "mhr_model.pt"),
+    "sam3d_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
+    "sam3d_stride": 2,
+    "sam3d_surface_side": 160,
+    "sam3d_timeout_min": 40,
     "metric_scene": True,                   # shared MoGe geometry and gravity evidence
     "metric_max_views": 3,
     "metric_resolution": 384,

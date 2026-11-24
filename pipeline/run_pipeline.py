@@ -32,6 +32,7 @@ PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 
            "cabin": [98, 98, 98], "roof": [133, 133, 133], "fence": [146, 146, 146], "mount": [197, 197, 199],
            "red": [205, 62, 60], "blue": [58, 104, 201], "green": [70, 170, 90], "yellow": [225, 200, 60],
            "purple": [150, 90, 190], "pink": [220, 110, 170], "orange": [221, 135, 50], "marker": [255, 255, 255],   # v2.1: eye + chest bands pure white "cyan": [80, 205, 235],
+           "cyan": [80, 205, 235], "magenta": [205, 70, 180],
            "brown": [130, 85, 50], "white": [245, 245, 245], "grey": [150, 150, 150]}
 BONES = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (11, 12), (5, 11), (6, 12), (11, 13), (13, 15), (12, 14), (14, 16), (0, 5), (0, 6)]
 
@@ -78,12 +79,26 @@ def load_review(video, c):
 def find_marks(video, c, device):
     out = marks_base(c)
     d = marks_dir(video, c)
-    if not os.path.exists(os.path.join(d, "pose.json")):
-        log("  no marks yet - running automark")
+    from sam3_tracking import needs_tracking
+    old = jload(os.path.join(d,'pose.json')) if os.path.isfile(os.path.join(d,'pose.json')) else None
+    changed = old is not None and needs_tracking(old,c)
+    missing_masks = old is not None and old.get('tracker_backend')=='sam3' and not os.path.isfile(os.path.join(d,'sam3_masks.npz'))
+    if old is None or changed or missing_masks:
+        log("  measuring person tracks (%s) ..." % c.get('tracker_backend','geometry'))
         cmd = [sys.executable, os.path.join(AGENT, "automark.py"), video, "--out", out, "--device", device]
+        if changed or missing_masks: cmd.append('--force')
         if c.get("source_root") and os.path.abspath(video).lower().startswith(os.path.abspath(c["source_root"]).lower()):
             cmd += ["--base", c["source_root"]]
         subprocess.run(cmd, check=True)
+        hp = c.get('_hints_path')
+        if old is not None and hp and os.path.isfile(hp) and os.path.abspath(os.path.dirname(hp)) != os.path.abspath(d):
+            values = jload(hp)
+            if any(k in values for k in ('people','tracks','scene_justifications')):
+                report = jload(os.path.join(d,'tracking_report.json'))
+                backup = report['previous_tracking_backup']
+                shutil.copy2(hp,os.path.join(backup,'related_hints.json'))
+                for key in ('people','tracks','scene_justifications'): values.pop(key,None)
+                jsave(hp,values)
     pose_p = os.path.join(d, "pose.json")
     chk = sorted(glob.glob(os.path.join(d, "checked*.json")), key=os.path.getmtime)
     return pose_p, (chk[-1] if chk else None)
@@ -136,6 +151,7 @@ def stitch_tracks(pose, shots, max_gap=30):
     again as 'new' people, sometimes with two overlapping detections.  Tracks are joined when one picks up where the
     other stopped (same place and size, within max_gap frames) or when both follow the same body at the same time.
     Never across a cut.  Returns {absorbed id: kept id}"""
+    if pose.get('tracker_backend') == 'sam3': return {}
     shot_of = {}
     for si, (a, b) in enumerate(shots):
         for f in range(a, b):
@@ -256,6 +272,7 @@ def fill_track_gaps(pose, shots, max_gap=15):
     """a person the detector lost for a few frames (turned away, half out of the picture) is still there: the frames
     between the two ends of the same track (after joining) get dots blended between those ends, with half the lower
     end's confidence so the fit trusts them less than a detection.  Never across a cut.  Returns {id: [frames filled]}"""
+    if pose.get('tracker_backend') == 'sam3': return {}
     shot_of = {}
     for si, (a, b) in enumerate(shots):
         for f in range(a, b):
@@ -478,6 +495,7 @@ def run_clip(video, c, args):
     if not os.path.exists(hp):                                     # also accepted next to the set: output\<clip>\hints.json
         hp = os.path.join(output_dir(), name, "hints.json")
     hints = jload(hp) if os.path.exists(hp) else {}
+    c['_hints_path'] = hp
     c["_hints"] = hints
     for k_ in ("lens_mm", "person_height", "smooth_frames", "fit_step"):
         if k_ in hints:
@@ -499,7 +517,13 @@ def run_clip(video, c, args):
         path = os.path.join(work, generated)
         if os.path.isfile(path): os.remove(path)
     pose_p, chk_p = find_marks(video, c, args.device)
+    review = load_review(video,c); c['_review'] = review or {}
+    hints = jload(hp) if os.path.isfile(hp) else {}; c['_hints'] = hints
+    if args.require_confirm and args.stage in ('blend','all') and not (review and review.get('confirmed')):
+        log('  tracking changed: review the new person IDs before Finish')
+        return {'clip':name,'status':'waiting'}
     pose = jload(pose_p); checked = jload(chk_p) if chk_p else None
+    c['_persistent_tracks'] = pose.get('tracker_backend')=='sam3'
     log("  marks: %s%s" % (pose_p, "  + checked: " + chk_p if chk_p else "  (not checked by a person)"))
     frames, fps = read_frames(video)
     N = len(frames); Hfull, W = frames[0].shape[:2]
@@ -555,6 +579,9 @@ def run_clip(video, c, args):
     for si, (s0, s1) in enumerate(shots):
         tag = "_s%d" % (si + 1) if len(shots) > 1 else ""
         c["_shot_tag"] = tag
+        c.pop('_sam3d_body',None)
+        c['_shot_start'] = s0
+        c['_marks_dir'] = os.path.dirname(pose_p)
         sf = frames[s0:s1]; Ns = s1 - s0
         spose = slice_pose(pose, s0, s1); schk = slice_checked(checked, s0, s1)
         log("  [shot %d: frames %d-%d]" % (si + 1, s0, s1 - 1))
@@ -608,17 +635,38 @@ def run_clip(video, c, args):
                 import metric_scene
                 log("  metric scene: MoGe-2 geometry and semantic surfaces ...")
                 observation = metric_scene.observe(sf, spose, cam, y0, camj, c)
-                aligned_up, metric_info = metric_scene.align(observation, camj, u, hc, c, people, cam, y0)
-                # Explicit camera orientation/height/path remains the coordinate authority.
-                if not any(k in hcam for k in ("pitch_down_deg", "roll_deg", "path")):
-                    u = aligned_up
-                else:
-                    camj["world_yaw"] = 0.
-                ginfo["metric_alignment"] = metric_info
             except Exception as e:
                 observation = None
                 camj["warnings"].append("metric evidence unavailable: %s" % str(e)[-240:])
                 log("    metric evidence unavailable: %s" % str(e)[-240:])
+        body_summary = None
+        if c.get('human_backend','motionbert')=='sam3d_body':
+            import sam3d_body
+            log('  SAM 3D Body: recovering metric people ...')
+            samples = {}
+            if observation is not None:
+                samples = {int(f):{k:observation[k][i] for k in ('depth','K','valid')} for i,f in enumerate(observation['frames'])}
+            elif c.get('_da3_depth'):
+                samples = {f:{'depth':d,'K':c['_da3_intrinsics'][f],'valid':np.isfinite(d)&(d>.05)} for f,d in c['_da3_depth'].items()}
+            c['_sam3d_body'],body_summary = sam3d_body.recover(sf,spose,cam,y0,camj,samples,c)
+            ginfo['sam3d_body'] = body_summary
+            if body_summary['calibrated'] and camj.get('backend')=='da3' and not c.get('_static_camera'):
+                camj['travel_cam0'] = (c['_da3_travel']*body_summary['meters_per_unit']).tolist()
+                camj['meters_per_unit'] = body_summary['meters_per_unit']
+                camj['warnings'] = [w for w in camj['warnings'] if not w.startswith('DA3 translation scale unavailable')]
+        if observation is not None:
+            aligned_up,metric_info = metric_scene.align(observation,camj,u,hc,c,people,cam,y0)
+            if not any(k in hcam for k in ('pitch_down_deg','roll_deg','path')): u = aligned_up
+            else: camj['world_yaw'] = 0.
+            ginfo['metric_alignment'] = metric_info
+            if body_summary and body_summary['calibrated']:
+                observation['scale'] = body_summary['meters_per_unit']
+                observation['scale_source'] = 'SAM 3D Body visible mesh surfaces'
+                if 'height' not in hcam:
+                    measured_height = metric_scene.camera_height(observation,camj,u)
+                    if measured_height is not None:
+                        hc = measured_height; ginfo['camera_height'] = hc
+                        ginfo['height_source'] = 'body-scaled semantic ground'
         world = World(cam, camj["R"], u, hc, zoom=camj.get("zoom"), yaw=camj.get("world_yaw", 0.))
         if camj.get("travel_cam0"):
             world.T = np.asarray(camj["travel_cam0"]) @ world.M
@@ -632,7 +680,7 @@ def run_clip(video, c, args):
         c["_fps"] = float(fps)
         chars, prep = fit_all(world, y0, people, Ns, c)
         # half-body shot (no feet in the picture): the floor was a guess - put it under the people and fit them again
-        dz = None if ("height" in hcam or c.get("floor_from_people", True) is False) else quality.floor_shift(chars, people)
+        dz = None if ("height" in hcam or c.get("floor_from_people", True) is False or body_summary) else quality.floor_shift(chars, people)
         if dz:
             hc2 = float(np.clip(hc + dz, 0.3, 12.0))
             log("    nobody's feet are in the picture: floor moved %+.2f m to stand the people on it (camera height %.2f -> %.2f m)" % (-dz, hc, hc2))
@@ -646,7 +694,10 @@ def run_clip(video, c, args):
             chars, prep = fit_all(world, y0, people, Ns, c)
         log("    people %.1fs" % (time.time() - tp0))
         if observation is not None:
-            ginfo["depth_scale"] = metric_scene.body_scale(observation, world, chars)
+            if body_summary and body_summary['calibrated']:
+                ginfo['depth_scale'] = body_summary
+            else:
+                ginfo["depth_scale"] = metric_scene.body_scale(observation, world, chars)
             metric_scene.capture(observation, world, work, tag, s0, 200.*si)
         boxes = {}                     # where people are, per frame: the set never builds from them (see hold_boxes)
         for p in spose["people"]:
@@ -752,6 +803,7 @@ def run_clip(video, c, args):
             "lens": c["lens_mm"], "sensor": 36.0, "cam": cam_all, "zoom": zoom_all,
             "palette": palette, "sky": sky or [228, 229, 232], "exposure": 1.2, "gain": {"_video": c.get("video_gain", 2.2), "_ground": c.get("ground_gain", 3.2)},
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
+    data['human_backend'] = c.get('human_backend','motionbert')
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     chars = chars_all
     if not chars:

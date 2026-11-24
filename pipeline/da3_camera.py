@@ -11,6 +11,7 @@ _models = {}
 
 
 def solve(frames, cam, y0, height, c):
+    depth_K = None
     path = c.get("da3_model") or os.path.join(AGENT, "models", "da3")
     if not os.path.isdir(path):
         raise RuntimeError("Depth Anything 3 checkpoint missing: %s" % path)
@@ -28,6 +29,7 @@ def solve(frames, cam, y0, height, c):
                            check=True, timeout=600)
             with np.load(result, allow_pickle=False) as prediction:
                 ext, depths = prediction["extrinsics"].copy(), prediction["depth"].copy()
+                if 'intrinsics' in prediction.files: depth_K = prediction['intrinsics'].copy()
     else:
         from depth_anything_3.api import DepthAnything3
         if path not in _models:
@@ -35,6 +37,7 @@ def solve(frames, cam, y0, height, c):
         prediction = _models[path].inference(image=images, intrinsics=intrinsics,
                                              process_res=int(c.get("da3_resolution", 504)), ref_view_strategy="middle")
         ext, depths = prediction.extrinsics, prediction.depth
+        depth_K = getattr(prediction,'intrinsics',None)
     ext = np.asarray(ext, float)
     if len(ext) != len(indices) or not np.isfinite(ext).all():
         raise RuntimeError("DA3 returned invalid camera extrinsics")
@@ -51,7 +54,15 @@ def solve(frames, cam, y0, height, c):
     result = {"R": rotations.tolist(), "zoom": [1.0] * len(frames), "max_rotation_deg": float(angle.max()),
               "parallax_px": 0.0, "warnings": [], "cuts": [], "inlier_share": 0.0, "backend": "da3",
               "sample_frames": indices.tolist(), "travel_cam0": travel.tolist()}
-    return result, {int(f): np.asarray(d, float) for f, d in zip(indices, depths)}
+    samples = {int(f):np.asarray(d,float) for f,d in zip(indices,depths)}
+    Ks = {}
+    for i,f in enumerate(indices):
+        if depth_K is not None: Ks[int(f)] = np.asarray(depth_K[i],float)
+        else:
+            K = cam.K().copy(); K[0] *= depths[i].shape[1]/cam.W; K[1] *= depths[i].shape[0]/cam.H
+            Ks[int(f)] = K
+    c['_da3_intrinsics'],c['_da3_depth'],c['_da3_travel'] = Ks,samples,np.asarray(travel).copy()
+    return result,samples
 
 
 def align_scale(camj, depth, people, cam, y0, up, height, c):
