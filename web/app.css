@@ -137,6 +137,8 @@ kbd { background:var(--paper); border:1px solid var(--seam-strong); border-botto
 .pulse { background:var(--accent); box-shadow:0 0 0 0 var(--accent-ring); animation:pl 1.6s infinite; }
 @keyframes pl { 0% { box-shadow:0 0 0 0 var(--accent-ring); } 70% { box-shadow:0 0 0 7px rgba(15,110,116,0); } 100% { box-shadow:0 0 0 0 rgba(15,110,116,0); } }
 .quitbtn { margin-left:12px; min-height:32px; padding:0 12px; font-size:13.5px; }   /* Quit, in the bar */
+.topnav .who { margin-left:16px; font-size:13.5px; font-weight:600; color:var(--ink); max-width:14ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 
 /* ---------------------------------------------------------------- Clips page: the three steps of the flow
    the step holding the next thing to do carries the accent: a petrol top rule and a filled number */
@@ -173,6 +175,7 @@ a.clip .t { padding:9px 11px 2px; display:flex; justify-content:space-between; a
 a.clip .n { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 a.clip .pk { padding:0 11px 10px; display:flex; gap:8px; justify-content:space-between; align-items:baseline; white-space:nowrap; }
 a.clip .pk .pkn { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+a.clip .zipt { padding:0 11px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 a.clip .pk .took { flex:none; color:var(--slate); font-variant-numeric:tabular-nums; }
 a.clip .pk .took.fin { color:var(--ok); }
 a.clip { position:relative; }
@@ -306,7 +309,7 @@ table.list tr:hover td { background:#f8fafa; }
 @media (max-width:560px) {
   .navin { padding:0 8px; gap:0; } .topnav .brand { margin-right:4px; font-size:0; gap:0; } .topnav .brand img { width:20px; height:20px; }
   .topnav .nl { padding:0 6px; font-size:13.5px; } .topnav .nl.on::after { left:6px; right:6px; } .topnav .qind { display:none; }
-  .quitbtn { margin-left:auto; padding:0 9px; font-size:13px; }
+  .quitbtn { margin-left:6px; padding:0 9px; font-size:13px; } #logout { margin-left:auto; } .topnav .who { display:none; }
   .search { min-width:0; width:100%; margin-left:0; }
 }
 details.step summary span.num { color:#fff; font-size:12.5px; font-weight:600; margin:0 9px 0 0; }   /* the step number keeps its own look inside a summary */

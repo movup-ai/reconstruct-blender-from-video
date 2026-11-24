@@ -36,14 +36,21 @@ class JobStore:
                 error TEXT, log TEXT)""")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_clip ON jobs(clip, id)")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, id)")
+            try:                                                 # the member a job belongs to (older queues: none)
+                self.db.execute("ALTER TABLE jobs ADD COLUMN user TEXT")
+            except sqlite3.OperationalError:
+                pass
 
     def recover(self):
-        """jobs that were running when the app stopped go back to the queue"""
+        """jobs that were running when the app stopped go back to the queue.  Waiting jobs from before members
+        existed belong to nobody: they are cancelled."""
         with self.lock:
+            self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE user IS NULL AND state IN ('queued','running')",
+                            (time.time(),))
             n = self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE state='running'").rowcount
         return n
 
-    def enqueue(self, clip, stage, force=False):
+    def enqueue(self, clip, stage, force=False, user=None):
         if stage not in STAGES:
             raise ValueError("bad stage %r" % stage)
         with self.lock:
@@ -52,17 +59,21 @@ class JobStore:
                 if not force or busy["stage"] == stage:
                     return None
                 self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE id=? AND state='queued'", (time.time(), busy["id"]))
-            cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES (?,?,?,?,?)",
-                                  (clip, stage, "queued", PRIORITY[stage], time.time()))
+            cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, user) VALUES (?,?,?,?,?,?)",
+                                  (clip, stage, "queued", PRIORITY[stage], time.time(), user))
             return cur.lastrowid
 
-    def take(self):
+    def take(self, users=None):
+        """the next job to run; users: only jobs of these members (the ones who pressed Start), None: any job"""
+        if users is not None and not users:
+            return None
         with self.lock:
             ai_busy = self.db.execute("SELECT 1 FROM jobs WHERE state='running' AND stage='ai'").fetchone()
             # one job per clip at a time: a job queued behind its clip's running one (a forced Finish during Prepare) waits
-            q = ("SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") +
+            mine = " AND user IN (%s)" % ",".join("?" * len(users)) if users is not None else ""
+            q = ("SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") + mine +
                  " AND clip NOT IN (SELECT clip FROM jobs WHERE state='running') ORDER BY priority, id LIMIT 1")
-            row = self.db.execute(q).fetchone()                  # one AI job at a time
+            row = self.db.execute(q, tuple(sorted(users)) if users is not None else ()).fetchone()   # one AI job at a time
             if not row:
                 return None
             self.db.execute("UPDATE jobs SET state='running', started=?, attempts=attempts+1 WHERE id=?", (time.time(), row["id"]))
@@ -77,10 +88,15 @@ class JobStore:
         with self.lock:
             self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE id=?", (jid,))
 
-    def cancel_queued(self, clip=None):
+    def cancel_queued(self, clip=None, user=None):
+        """cancel waiting jobs: one clip's, one member's, or (neither) all"""
         with self.lock:
-            q = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'" + (" AND clip=?" if clip else "")
-            return self.db.execute(q, (time.time(), clip) if clip else (time.time(),)).rowcount
+            q, args = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'", [time.time()]
+            if clip:
+                q += " AND clip=?"; args.append(clip)
+            if user:
+                q += " AND user=?"; args.append(user)
+            return self.db.execute(q, args).rowcount
 
     def clear_clip(self, clip):
         """Start over: the clip's waiting jobs are cancelled and its failed ones set aside, so the fresh clip shows
@@ -126,9 +142,12 @@ class JobStore:
             r = self.db.execute("SELECT * FROM jobs WHERE clip=? AND state!='cancelled' ORDER BY id DESC LIMIT 1", (clip,)).fetchone()
         return dict(r) if r else None
 
-    def counts(self):
+    def counts(self, user=None):
+        """{state: number of jobs}, of one member or (None) everyone's"""
         with self.lock:
-            return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
+            if user is None:
+                return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
+            return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs WHERE user=? GROUP BY state", (user,))}
 
     def running(self):
         with self.lock:
@@ -145,7 +164,8 @@ def kill_tree(proc):
 
 
 class Runner:
-    """worker pool; the number of busy workers follows the 'parallel' setting live"""
+    """worker pool; the number of busy workers follows the 'parallel' setting live.  One queue for every member (one
+    NVIDIA card); each member starts and pauses their own jobs."""
     MAX_WORKERS = 8
 
     def __init__(self, app):
@@ -155,7 +175,15 @@ class Runner:
         self.busy = 0
         self.procs = {}
         self.stop = threading.Event()
-        self.paused = True        # nothing runs until the person presses Start (queued jobs wait, even from last time)
+        self.active = set()       # members who pressed Start: nothing of a member runs before that (even from last time)
+
+    @property
+    def paused(self):
+        """no member's jobs run"""
+        return not self.active
+
+    def is_paused(self, user):
+        return user not in self.active
 
     def start(self):
         n = self.store.recover()
@@ -169,13 +197,17 @@ class Runner:
         with self.cond:
             self.cond.notify_all()
 
-    def resume(self):
-        self.paused = False
+    def resume(self, user):
+        """this member's waiting jobs may run"""
+        self.active.add(user)
         self.wake()
 
-    def pause(self):
-        """no new job starts; running ones finish, queued ones wait"""
-        self.paused = True
+    def pause(self, user=None):
+        """no new job of this member (None: of anyone) starts; running ones finish, queued ones wait"""
+        if user is None:
+            self.active.clear()
+        else:
+            self.active.discard(user)
 
     def shutdown(self):
         self.stop.set()
@@ -187,11 +219,11 @@ class Runner:
     def _worker(self):
         while not self.stop.is_set():
             with self.cond:
-                while not self.stop.is_set() and (self.paused or self.busy >= self.app.c["parallel"]):
+                while not self.stop.is_set() and (not self.active or self.busy >= self.app.c["parallel"]):
                     self.cond.wait(5)
                 if self.stop.is_set():
                     return
-                job = self.store.take()
+                job = self.store.take(set(self.active))
                 if job is None:
                     self.cond.wait(3)
                     continue
@@ -217,9 +249,13 @@ class Runner:
         return cmd
 
     def _run(self, job):
-        c = self.app.c
+        ws = self.app.ws(job["user"]) if job.get("user") else None
+        if ws is None:
+            self.store.finish(job["id"], False, "this job belongs to no member")
+            return
+        c = ws.c
         try:
-            cl = self.app.lib.get(job["clip"])
+            cl = ws.lib.get(job["clip"])
         except KeyError:
             self.store.finish(job["id"], False, "clip no longer in the source folder")
             return
@@ -230,7 +266,8 @@ class Runner:
         os.makedirs(f["work"], exist_ok=True)
         logp = os.path.join(f["work"], "job_%s.log" % job["stage"])
         timeout = 60 * c.get({"fit": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
+        # the job works in this member's folders (common.member_cfg reads these)
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_USER=ws.user, BA_SOURCE=c["source_root"])
         cmd = self._cmd(job, cl)
         fp = fingerprint(c, cl) if job["stage"] == "all" else None     # what this Finish is made from
         log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])
@@ -269,23 +306,23 @@ class Runner:
             record_finish(c, cl, fp)
         log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
         if ok:
-            self.after(cl, job["stage"])
+            self.after(ws, cl, job["stage"])
 
     # ---------------------------------------------------------------- what happens next
-    def after(self, cl, stage):
+    def after(self, ws, cl, stage):
         """chain the next step for autopilot / AI"""
-        c = self.app.c
+        c = ws.c
         f = folders(c, cl)
         if stage == "fit" and self.app.ai_ready() and not os.path.exists(f["ai"]):
-            self.store.enqueue(cl.id, "ai")                       # AI looks once per clip
+            self.store.enqueue(cl.id, "ai", user=ws.user)         # AI looks once per clip
         elif stage == "ai" and os.path.exists(os.path.join(f["marks"], "env_ai.json")):
-            self.store.enqueue(cl.id, "fit")                      # rebuild the set with the AI's corrections
+            self.store.enqueue(cl.id, "fit", user=ws.user)        # rebuild the set with the AI's corrections
         elif stage in ("fit", "ai") and c["autopilot"] == "full":
-            self.auto_confirm(cl)
+            self.auto_confirm(ws, cl)
         self.wake()
 
-    def auto_confirm(self, cl):
-        c = self.app.c
+    def auto_confirm(self, ws, cl):
+        c = ws.c
         f = folders(c, cl)
         if read_json(f["review"]):                            # a person already looked at it: keep their choices
             rv = read_json(f["review"])
@@ -293,30 +330,34 @@ class Runner:
                 return
         else:
             review.write(f["review"], review.suggested(c, cl, confirmed=True, auto=True))
-        self.store.enqueue(cl.id, "all")
+        self.store.enqueue(cl.id, "all", user=ws.user)
 
     def _autopilot(self):
-        """keeps the queue fed while autopilot is on"""
+        """keeps the queue fed while autopilot is on, for every member who pressed Start"""
         while not self.stop.wait(20):
-            c = self.app.c
-            if c["autopilot"] == "off" or self.paused:
+            if self.app.c["autopilot"] == "off":
                 continue
             try:
                 latest = self.store.latest()
-                for cl in self.app.lib.clips:
-                    j = latest.get(cl.id)
-                    if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
-                        continue                               # busy, or failed for good: leave for a person
-                    st = status(c, cl, j)
-                    if st["held"]:
-                        continue                               # taken out of the line on the Clips page
-                    if not st["fit"]:
-                        self.store.enqueue(cl.id, "fit")
-                    elif c["autopilot"] == "full" and not st["done"]:
-                        if self.app.ai_ready() and not st["ai"] and not st["reviewed"]:
-                            self.store.enqueue(cl.id, "ai")
-                        elif not st["reviewed"] or st["confirmed"]:
-                            self.auto_confirm(cl)
+                for user in sorted(self.active):
+                    ws = self.app.ws(user)
+                    if ws is None:
+                        continue
+                    c = ws.c
+                    for cl in ws.lib.clips:
+                        j = latest.get(cl.id)
+                        if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
+                            continue                           # busy, or failed for good: leave for a person
+                        st = status(c, cl, j)
+                        if st["held"]:
+                            continue                           # taken out of the line on the Clips page
+                        if not st["fit"]:
+                            self.store.enqueue(cl.id, "fit", user=user)
+                        elif c["autopilot"] == "full" and not st["done"]:
+                            if self.app.ai_ready() and not st["ai"] and not st["reviewed"]:
+                                self.store.enqueue(cl.id, "ai", user=user)
+                            elif not st["reviewed"] or st["confirmed"]:
+                                self.auto_confirm(ws, cl)
                 self.wake()
             except Exception:
                 log.exception("autopilot pass failed")

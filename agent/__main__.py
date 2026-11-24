@@ -38,10 +38,10 @@ def running_instance(port):
         return False
 
 
-def port_free(port):
+def port_free(port, host="127.0.0.1"):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        s.bind(("127.0.0.1", port))
+        s.bind((host, port))
         return True
     except OSError:
         return False
@@ -63,7 +63,8 @@ def main():
         if not args.no_browser:
             webbrowser.open("http://127.0.0.1:%d" % want)
         return 3
-    port = next((p for p in range(want, want + 20) if port_free(p)), None)
+    host = str(c.get("host") or "127.0.0.1")
+    port = next((p for p in range(want, want + 20) if port_free(p, host)), None)
     if port is None:
         log.error("no free port between %d and %d", want, want + 19)
         return 1
@@ -72,10 +73,18 @@ def main():
     from .server import App, serve
     app = App(c)
     url = "http://127.0.0.1:%d" % port
-    print("\n  %s %s\n  Open %s   (keep this window open; close it to stop)\n" % (APP_NAME, __version__, url), flush=True)
+    lan = ""
+    if host not in ("127.0.0.1", "localhost"):                # the addresses the other PCs of the network can open
+        try:                                                   # (every adapter: a VPN or virtual switch has its own)
+            ips = sorted({a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+                          if not a[4][0].startswith(("127.", "169.254."))})
+            lan = "".join("\n  Other PCs: http://%s:%d" % (ip, port) for ip in ips)
+        except OSError:
+            pass
+    print("\n  %s %s\n  Open %s   (keep this window open; close it to stop)%s\n" % (APP_NAME, __version__, url, lan), flush=True)
     if c.get("open_browser", True) and not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    serve(app, port)
+    serve(app, port, host)
     return 0
 
 

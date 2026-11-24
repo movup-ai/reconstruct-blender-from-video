@@ -13,10 +13,12 @@ LOGS = os.path.join(ROOT, "logs")
 if PIPELINE not in sys.path:
     sys.path.insert(0, PIPELINE)
 
-from common import DEFAULT_CFG, CFG_PATH  # noqa: E402  (pipeline module)
+from common import DEFAULT_CFG, CFG_PATH, member_cfg  # noqa: E402  (pipeline module)
 
 APP_DEFAULTS = {
     "port": 8765,
+    "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app (members log in by name)
+    "session_days": 30,               # a login lasts this long on one browser
     "parallel": 3,                    # clips processed at the same time
     "autopilot": "off",               # off | prepare | full   (full = prepare, AI fill, auto-confirm, render)
     "timeout_fit_min": 40,
@@ -41,7 +43,8 @@ _lock = threading.Lock()
 
 
 def load():
-    """pipeline defaults + app defaults + config.json"""
+    """pipeline defaults + app defaults + config.json; inside a job the app runs for a member (BA_USER), that
+    member's own folders (common.member_cfg)"""
     c = dict(DEFAULT_CFG)
     c.update(APP_DEFAULTS)
     if os.path.exists(CFG_PATH):
@@ -50,6 +53,8 @@ def load():
                 c.update(json.load(fh))
         except (OSError, ValueError):
             pass
+    if os.environ.get("BA_USER"):
+        c = member_cfg(c, os.environ["BA_USER"], os.environ.get("BA_SOURCE", ""))
     return c
 
 
@@ -87,6 +92,11 @@ def save(updates):
             json.dump(cur, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, CFG_PATH)
     return load()
+
+
+def user_data(c):
+    """where a member's own lists live (removed / taken-out clips): data\\users\\<user>; data\\ without a member"""
+    return os.path.join(DATA, "users", c["_user"]) if c.get("_user") else DATA
 
 
 def ensure_dirs(c):

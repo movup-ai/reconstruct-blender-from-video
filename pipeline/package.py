@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import zipfile
 from math import gcd
 
@@ -223,8 +224,7 @@ ROOT = os.path.dirname(HERE)
 NAMES_P = os.path.join(ROOT, "data", "package_names.json")
 
 
-def package_names():
-    """data/package_names.json {clip name: "english_title-N"} ({} when missing)"""
+def _all_names():
     try:
         with open(NAMES_P, encoding="utf-8") as fh:
             return json.load(fh)
@@ -232,9 +232,25 @@ def package_names():
         return {}
 
 
+def _member(c):
+    """the member these names belong to ("" outside the app's logins): their entries are "<member>/<clip name>"
+    in the one shared file, so two members' clips with the same name keep their own delivery names"""
+    return (c or {}).get("_user") or os.environ.get("BA_USER") or ""
+
+
+def package_names(c=None):
+    """{clip name: "english_title-N"} of this member (c from common.member_cfg, or a job's BA_USER), or the
+    entries without a member when there is none ({} when the file is missing)"""
+    m = _member(c)
+    if not m:
+        return {k: v for k, v in _all_names().items() if "/" not in k}
+    p = m + "/"
+    return {k[len(p):]: v for k, v in _all_names().items() if k.startswith(p)}
+
+
 def package_name(clip, c=None):
     """v2.1 permanent package name for a clip: data/package_names.json {clip name: "english_title-N"}"""
-    return package_names().get(clip)
+    return package_names(c).get(clip)
 
 
 def title_slug(title):
@@ -243,12 +259,16 @@ def title_slug(title):
     return s[:60].strip("_")
 
 
-def propose_names(clips, title, names=None):
+def propose_names(clips, title, names=None, c=None):
     """clips: clip names in file-name order.  Clips that already have a package name keep it; the others get
-    <slug>-N, numbered after the highest N already used for that title.  -> {clip: (package name, is_new)}"""
-    names = package_names() if names is None else names
+    <slug>-N, numbered after the highest N already used for that title - by any member, so two members naming
+    clips of the same film never get the same name.  -> {clip: (package name, is_new)}"""
+    if names is None:
+        names = package_names(c)
+        used = set(names.values()) | set(_all_names().values())
+    else:
+        used = set(names.values())
     slug = title_slug(title)
-    used = set(names.values())
     nums = [int(v.rsplit("-", 1)[1]) for v in used if v.rsplit("-", 1)[0] == slug and v.rsplit("-", 1)[-1].isdigit()]
     n = max(nums or [0])
     out = {}
@@ -266,20 +286,43 @@ def propose_names(clips, title, names=None):
     return out
 
 
-def assign_names(clips, title):
-    """write the new names of propose_names() into data/package_names.json; never renames a clip"""
-    names = package_names()
-    plan = propose_names(clips, title, names)
-    new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
-    for pkg in new.values():
-        if not PKG_RE.match(pkg):
-            raise ValueError("%r is not a valid v2.1 package name" % pkg)
-    if new:
-        names.update(new)
-        tmp = NAMES_P + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(names, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, NAMES_P)
+_NAMES_LOCK = threading.Lock()
+
+
+def assign_names(clips, title, c=None):
+    """write the new names of propose_names() into data/package_names.json (this member's entries); never renames
+    a clip"""
+    with _NAMES_LOCK:                               # two members naming at once must not both take the same number
+        plan = propose_names(clips, title, c=c)
+        new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
+        for pkg in new.values():
+            if not PKG_RE.match(pkg):
+                raise ValueError("%r is not a valid v2.1 package name" % pkg)
+        if new:
+            m = _member(c)
+            allnames = _all_names()
+            allnames.update({(m + "/" if m else "") + cl: pkg for cl, pkg in new.items()})
+            tmp = NAMES_P + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(allnames, fh, ensure_ascii=False, indent=1)
+            os.replace(tmp, NAMES_P)
+    return new
+
+
+def register_names(names, c=None):
+    """{clip: package name} given from outside (a task zip's own name) -> this member's entries in
+    data/package_names.json; a clip that already has a name keeps it.  -> the names written"""
+    with _NAMES_LOCK:
+        have = package_names(c)
+        new = {cl: p for cl, p in names.items() if p and PKG_RE.match(p) and not have.get(cl)}
+        if new:
+            m = _member(c)
+            allnames = _all_names()
+            allnames.update({(m + "/" if m else "") + cl: p for cl, p in new.items()})
+            tmp = NAMES_P + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(allnames, fh, ensure_ascii=False, indent=1)
+            os.replace(tmp, NAMES_P)
     return new
 
 

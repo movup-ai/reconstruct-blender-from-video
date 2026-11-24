@@ -25,12 +25,10 @@ DEFAULT_CFG = {
     "pose3d_weight": 1.0,                    # strength of that prior (bone directions, sigma pose3d_sigma)
     "pose3d_sigma": 0.2,
     "pose_mode": "performance",              # automark models: "performance" (YOLOX-x + RTMPose-x) or "balanced" (-m models:
-                                             # several times faster on a processor, joints less exact)
+                                             # faster, joints less exact)
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
     "detect_stride": "auto",                 # automark: 1 = every frame; 2 / "auto" = every 2nd frame, rest interpolated when safe
-    "detect_stride_cpu": "track",            # on the processor: "track" = person detector on every 4th frame, RTMPose follows
-                                             # the people in between (~4x faster); "auto" = as detect_stride
-    "sam_points": 16,                        # automatic set (env_auto): SAM point grid per side (32 = more small pieces, ~3x slower)
+    "sam_points": 32,                        # automatic set (env_auto): SAM point grid per side (16 = fewer small pieces, ~3x faster)
 }
 
 def cfg():
@@ -45,12 +43,31 @@ def cfg():
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
         c["marks_root"] = os.path.join(sb, "output"); c["_sandbox"] = sb
+    if os.environ.get("BA_USER"):                      # a job the app runs for one member (see member_cfg)
+        c = member_cfg(c, os.environ["BA_USER"], os.environ.get("BA_SOURCE", ""))
     return c
 
-def output_dir():
-    """the folder holding output\\<clip> (sets, hints): the sandbox's when BA_SANDBOX is set"""
+MEMBERS = "_users"                                     # members' own folders inside output, Work_auto and SUBMIT
+
+def member_cfg(c, user, source):
+    """the settings one member works with: their own source folder, and their own result folders
+    (output\\_users\\<user>, <work_root>\\_users\\<user>, <submit_root>\\_users\\<user>), so members never see or
+    overwrite each other's clips.  The app passes the member to its jobs as BA_USER / BA_SOURCE."""
+    if c.get("_user"):
+        raise ValueError("these settings already belong to member %s" % c["_user"])
+    c = dict(c, _user=user, source_root=source or "")
+    c["work_root"] = os.path.join(c["work_root"], MEMBERS, user)
+    c["submit_root"] = os.path.join(c["submit_root"], MEMBERS, user)
+    c["marks_root"] = os.path.join(c.get("marks_root") or os.path.join(AGENT, "output"), MEMBERS, user)
+    return c
+
+def output_dir(c=None):
+    """the folder holding output\\<clip> (sets, hints): the sandbox's when BA_SANDBOX is set, and the member's own
+    (output\\_users\\<user>) for a member's settings (c from member_cfg) or a job run for a member (BA_USER)"""
     sb = os.environ.get("BA_SANDBOX")
-    return os.path.join(sb, "output") if sb else os.path.join(AGENT, "output")
+    base = os.path.join(sb, "output") if sb else os.path.join(AGENT, "output")
+    user = (c or {}).get("_user") or os.environ.get("BA_USER")
+    return os.path.join(base, MEMBERS, user) if user else base
 
 def log(*a):
     print(*a, flush=True)
@@ -86,17 +103,24 @@ def has_nvidia():
         _DEVICE["nv"] = ok
     return _DEVICE["nv"]
 
+NO_GPU = ("the NVIDIA card is not available (no card, no driver, or onnxruntime-gpu / the NVIDIA build of PyTorch is "
+          "not installed). Blender Agent runs its models on the NVIDIA card only - run Setup.bat.")
+
 def pick_device(want="cuda"):
-    """the device the models really run on: "cuda" only with an NVIDIA card, otherwise "cpu" (slower, same results).
-    BA_DEVICE=cpu forces the processor."""
-    if os.environ.get("BA_DEVICE", "").lower() == "cpu" or str(want).lower() == "cpu":
-        return "cpu"
-    if has_nvidia():
-        return "cuda"
-    if "told" not in _DEVICE:
-        _DEVICE["told"] = True
-        log("  no NVIDIA card on this PC - the models run on the processor (slower)")
-    return "cpu"
+    """the device the models run on: always "cuda".  GPU only - there is no processor path, so a PC without a
+    working NVIDIA card stops here with a clear message instead of running slowly."""
+    if str(want).lower() != "cuda":
+        raise SystemExit("ERROR: device %r is not supported - the models run on the NVIDIA card only." % want)
+    if not has_nvidia():
+        raise SystemExit("ERROR: " + NO_GPU)
+    return "cuda"
+
+def torch_device():
+    """ "cuda" for the PyTorch models (MotionBERT, MoGe-2, SAM 2.1, CLIP); stops when PyTorch cannot use the card"""
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError(NO_GPU)
+    return "cuda"
 
 TRT_CACHE = os.path.join(AGENT, "models", "trt_cache")
 

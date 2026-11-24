@@ -8,14 +8,18 @@ function el(tag, attrs = {}, text) {
   if (text != null) e.textContent = text;
   return e;
 }
+// not logged in (or the login ran out): to the login page, back here afterwards
+function toLogin() { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); }
 async function api(url) {
   const r = await fetch(url);
+  if (r.status === 401) { toLogin(); throw new Error('log in first'); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || r.statusText);
   return d;
 }
 async function post(url, body) {
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? '' : JSON.stringify(body) });
+  if (r.status === 401) { toLogin(); throw new Error('log in first'); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { toast(d.error || r.statusText, true); throw new Error(d.error || r.statusText); }
   return d;
@@ -53,15 +57,20 @@ function nav(active) {
   const bar = el('nav', { class: 'topnav' });            // full-width bar; its contents line up with the page column
   bar.innerHTML = `<div class="navin"><a class="brand" href="/"><img src="/favicon.svg" alt=""> Blender Agent</a>` +
     links.map(([h, l, k]) => `<a class="nl${k === active ? ' on' : ''}" href="${h}"${k === active ? ' aria-current="page"' : ''}>${l}</a>`).join('') +
-    `<span class="qind" id="qind" title="Jobs"></span>` +
-    `<button class="quitbtn" id="quit" title="Stop Blender Agent. Unfinished jobs wait in the queue for the next Start.">Quit</button></div>`;
+    `<span class="qind" id="qind" title="Your jobs"></span>` +
+    `<span class="who" id="who"></span><button class="quitbtn" id="logout" title="Log out of Blender Agent on this browser. Your jobs keep running.">Log out</button>` +
+    `<button class="quitbtn" id="quit" style="display:none" title="Stop Blender Agent for every member. Unfinished jobs wait in the queue for the next Start.">Quit</button></div>`;
   document.body.prepend(bar);
-  $('quit').onclick = async () => { if (!(await ask('Unfinished jobs wait in the queue for the next Start.', 'Quit', { title: 'Quit Blender Agent?' }))) return;
+  $('logout').onclick = async () => { await post('/api/logout'); location.href = '/login'; };
+  $('quit').onclick = async () => { if (!(await ask('It stops for every member. Unfinished jobs wait in the queue for the next Start.', 'Quit', { title: 'Quit Blender Agent?' }))) return;
     await post('/api/quit');
     document.body.innerHTML = '<div class="wrap"><h1>Blender Agent stopped</h1><p class="sub">Start it again with “Start_Blender_Agent.bat”.</p></div>'; };
   const tick = async () => { try { const d = await api('/api/clips'); const q = d.queue; window.__clips = d;
-      $('qind').innerHTML = q.running ? `<span class="pulse"></span>${q.running} working${q.queued ? ` · ${q.queued} waiting` : ''}` :
-        q.queued ? `<span class="idle"></span>${q.paused ? 'Paused · ' : ''}${q.queued} waiting` : '<span class="idle"></span>Idle';
+      const o = q.others || {}, busy = (o.running || 0) + (o.queued || 0);
+      $('qind').innerHTML = (q.running ? `<span class="pulse"></span>${q.running} working${q.queued ? ` · ${q.queued} waiting` : ''}` :
+        q.queued ? `<span class="idle"></span>${q.paused ? 'Paused · ' : ''}${q.queued} waiting` : '<span class="idle"></span>Idle') +
+        (busy ? `<span class="muted" title="Jobs of other members on the same NVIDIA card: yours wait for a free place">· others: ${o.running || 0} working${o.queued ? `, ${o.queued} waiting` : ''}</span>` : '');
+      $('who').textContent = d.me ? d.me.name : ''; $('quit').style.display = d.me && d.me.local ? '' : 'none';
       const base = document.title.replace(/^\(\d+\)\s*/, ''); document.title = (q.running || q.queued ? `(${q.running + q.queued}) ` : '') + base;
     } catch (e) { $('qind').innerHTML = '<span class="bad">offline</span>'; } };
   tick(); setInterval(tick, 7000);
