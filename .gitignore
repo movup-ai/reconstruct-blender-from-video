@@ -95,6 +95,8 @@ data/sessions.json
 data/users.json
 data/users/
 data/unzipped.json
+# Permanent package assignments are local app data; back up separately.
+data/package_names.json
 
 # ---------------------------------------------------------------
 # Half-written files (atomic saves, video unzip, downloads)
