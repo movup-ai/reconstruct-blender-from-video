@@ -42,10 +42,16 @@ Kept on purpose:
 |---|---|
 | The tools in "Command-line tools" and "Client packaging" below that no code calls | They are run by hand; the docs or other tools name them. Every one imports or runs. Owner confirmed keeping them (2026-11-19). |
 | `samples\*.blend`, `data\package_tasks.json` | Client originals and task records |
-| `models\sam2\` (857 MB) | Needed by `env_auto.py` on a PC with an NVIDIA card; owner confirmed keeping it (2026-11-19) |
+| `models\mask2former_ade\` (826 MB) | Needed by `semseg.py` (facebook/mask2former-swin-large-ade-semantic, downloaded by Setup.bat) |
+| `models\grounding_dino\` (890 MB) | Needed by `held_objects.py` (IDEA-Research/grounding-dino-base, downloaded by Setup.bat) |
+| `models\sam2\` (857 MB) | Needed by `env_auto.py`; owner confirmed keeping it (2026-11-19) |
 | `Work_auto\report_*.csv` | One small file per run: run history |
 
-## Speed (this PC: i5-13400, no NVIDIA card)
+## Speed (measured 2026-11-19 on the earlier PC: i5-13400, no NVIDIA card)
+
+Since 2026-11-23 the project is GPU only (owner's decision): the processor paths and `requirements-cpu.txt` are
+removed, and every model runs on the NVIDIA card (RTX 4070 here). The numbers below are from the processor and are
+kept as history; they have not been measured again on the card.
 
 One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames.
 
@@ -101,6 +107,9 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `pipeline/audit.py` | Frame-by-frame audit: how far the fitted mannequin's joints are from the joints the local model saw. | `pipeline/quality.py` | imports |
 | `pipeline/bg_align.py` | Background alignment, every frame: how far the film's background and the render's background have moved | - | imports |
 | `pipeline/camera_check.py` | Camera motion check, every frame: the film's pan / tilt (background image shift, people masked out with their | - | imports |
+| `pipeline/semseg.py` | Mask2Former ADE20K segmentation (GPU, fp16) and the class -> how-to-build table (ROLE) for the set. | `pipeline/env_auto.py` | imports |
+| `pipeline/relief.py` | A set piece built from its measured surface (plants, curtains, statues): grid over the outline -> closed solid. | `pipeline/env_auto.py` | imports |
+| `pipeline/held_objects.py` | Objects people carry (bag, phone, backpack): Grounding DINO + CLIP find them (held.json), placed as props on the fitted hand / back. | `pipeline/run_pipeline.py`, `pipeline/env_auto.py` | imports |
 | `pipeline/env_auto.py` | Automatic set proposal from real 3D measurements (run this before writing env_claude.json by hand). | `docs/ENV_AUTHORING.md`, `docs/LZHD_CLIP_WORKFLOW.md`, `pipeline/build_env.py`, `pipeline/queue_run.py` | imports |
 | `pipeline/env_frames.py` | Reference pictures for writing a clip's set by hand: for every shot, its first, middle and last frame with a pixel | `docs/ENV_AUTHORING.md`, `docs/LZHD_CLIP_WORKFLOW.md` | imports |
 | `pipeline/foot_gaps.py` | Feet vs floor for every person of a fitted clip, and a suggested height for the human_master figure. | `docs/LZHD_CLIP_WORKFLOW.md`, `pipeline/quality.py` | imports |
@@ -149,7 +158,7 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | File | Role | Referred to by | Check |
 |---|---|---|---|
 | `.claude/launch.json` | Starts the app in the Claude desktop preview pane | - | - |
-| `Setup.bat` | One-time install: Python packages (GPU or CPU build), models, MotionBERT and MoGe | `README.md`, `agent/server.py`, `automark.py`, `pipeline/scene_depth.py` +2 | - |
+| `Setup.bat` | One-time install: NVIDIA-only install: PyTorch and TensorRT wheels, Python packages, models, TensorRT engines | `README.md`, `agent/server.py`, `automark.py`, `pipeline/scene_depth.py` +2 | - |
 | `Start_Blender_Agent.bat` | Starts the app and restarts it after a crash | `README.md`, `Setup.bat`, `agent/__init__.py`, `web/index.html` | - |
 | `agent/__init__.py` | App package: name and version | `agent/ai.py`, `agent/clips.py`, `agent/jobs.py`, `agent/server.py` +10 | imports |
 | `agent/__main__.py` | App entry point (python -m agent): logging, server start, browser | `agent/ai.py`, `agent/brief.py`, `agent/selftest.py`, `agent/validate.py` +41 | imports |
@@ -164,7 +173,6 @@ One clip from raw video to `.blend` and videos: 214–320 s for 137–149 frames
 | `agent/server.py` | HTTP server (127.0.0.1 only): the web pages, the JSON API and the media files. | `README.md`, `tests/test_agent.py` | imports |
 | `agent/validate.py` | Check submission packages against the client sample (11月2日试稿) and the delivery spec. | `agent/config.py`, `agent/review.py`, `agent/server.py`, `pipeline/queue_run.py` +1 | imports |
 | `check_template.html` | Page template of the dot editor that automark.py writes per clip | `automark.py`, `pipeline/make_check_page.py` | - |
-| `requirements-cpu.txt` | Python packages for a PC without an NVIDIA card | `README.md`, `Setup.bat` | - |
 | `requirements.txt` | Python packages for a PC with an NVIDIA card | `Setup.bat` | - |
 | `web/app.css` | App styles | `tests/test_agent.py`, `web/clip.html`, `web/help.html`, `web/index.html` +2 | - |
 | `web/clip.html` | Clip review page | `agent/server.py` | - |

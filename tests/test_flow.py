@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import numpy as np
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +49,58 @@ class TestPackageNames(unittest.TestCase):
                 self.assertEqual(pkg.assign_names(["a", "b"], "film"), {})      # never renames
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+
+class TestMemberNames(unittest.TestCase):
+    def test_members_keep_their_own_names_and_never_share_a_number(self):
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, "names.json")
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump({"x": "film-1"}, fh)                                  # from before members: stays
+            anna, ben = {"_user": "anna"}, {"_user": "ben"}
+            with mock.patch.object(pkg, "NAMES_P", p):
+                self.assertEqual(pkg.assign_names(["a", "b"], "film", anna), {"a": "film-2", "b": "film-3"})
+                self.assertEqual(pkg.assign_names(["a"], "film", ben), {"a": "film-4"}, "Ben's clip a is not Anna's")
+                self.assertEqual(pkg.package_names(anna), {"a": "film-2", "b": "film-3"})
+                self.assertEqual(pkg.package_name("a", ben), "film-4")
+                self.assertEqual(pkg.package_names(), {"x": "film-1"})
+                with mock.patch.dict(os.environ, {"BA_USER": "ben"}):          # inside a job run for Ben
+                    self.assertEqual(pkg.package_name("a"), "film-4")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_member_folders(self):
+        import common
+        c = common.member_cfg({"work_root": r"D:\w", "submit_root": r"D:\s", "source_root": r"D:\SOURCE"}, "anna", r"E:\anna")
+        self.assertEqual((c["source_root"], c["work_root"], c["submit_root"]), (r"E:\anna", r"D:\w\_users\anna", r"D:\s\_users\anna"))
+        self.assertEqual(c["marks_root"], os.path.join(rp.AGENT, "output", "_users", "anna"))
+        self.assertEqual(common.output_dir(c), os.path.join(rp.AGENT, "output", "_users", "anna"))
+        with self.assertRaises(ValueError):
+            common.member_cfg(c, "ben", "")
+
+
+class TestBatchedDetector(unittest.TestCase):
+    """the batched person detector's own NMS gives what the original model's built-in one + rtmlib gave"""
+    def test_nms_per_class_top_and_threshold(self):
+        import det_batch_model as dbm
+        import numpy as np
+        boxes = np.array([[0, 0, 100, 200], [2, 2, 102, 202], [300, 0, 400, 200], [0, 0, 100, 200], [500, 0, 600, 90]], np.float32)
+        scores = np.zeros((5, 80), np.float32)
+        scores[0, 0], scores[1, 0], scores[2, 0] = 0.9, 0.8, 0.6   # 1 overlaps 0 (IoU 0.94): suppressed; 2 is apart: kept
+        scores[3, 5] = 0.7                                       # the same place, another class: NMS is per class, kept
+        scores[4, 0] = 0.25                                      # below rtmlib's 0.3: left out
+        out = dbm.person_dets(boxes, scores)
+        self.assertEqual(out.tolist(), [[0, 0, 100, 200], [0, 0, 100, 200], [300, 0, 400, 200]], "best first")
+        self.assertEqual(dbm.person_dets(boxes, np.zeros((5, 80), np.float32)).shape, (0, 4))
+
+    def test_iou_at_the_threshold_is_kept(self):
+        import det_batch_model as dbm
+        import numpy as np
+        b = np.array([[0, 0, 100, 100], [0, 35, 100, 135]], np.float32)       # IoU 65/135 = 0.48: kept
+        self.assertEqual(len(dbm.nms(b, np.array([0.9, 0.8]), 0.65)), 2)
+        b = np.array([[0, 0, 100, 100], [0, 10, 100, 110]], np.float32)       # IoU 90/110 = 0.82: suppressed
+        self.assertEqual(dbm.nms(b, np.array([0.9, 0.8]), 0.65).tolist(), [0])
 
 
 class TestMarksFolder(unittest.TestCase):
@@ -97,6 +150,199 @@ class TestRemoveFromList(unittest.TestCase):
         finally:
             config.DATA = data
             shutil.rmtree(d, ignore_errors=True)
+
+
+class TestTaskZips(unittest.TestCase):
+    """the client's task zips (v2.1 layout, the source at target/original.mp4): the video is written next to the zip
+    under the zip's name, listed as a clip, and the zip name is its delivery name"""
+    def setUp(self):
+        import zipfile
+        self.d = tempfile.mkdtemp(); self.data = config.DATA
+        config.DATA = os.path.join(self.d, "data"); os.makedirs(config.DATA)
+        self.src = os.path.join(self.d, "src"); os.makedirs(self.src)
+        v = os.path.join(self.d, "v.mp4"); make_video(v, n=5)
+        with open(v, "rb") as fh:
+            self.vid = fh.read()
+        self.zp = os.path.join(self.src, "p867bed92_t022-1.zip")
+        task = {"taskId": "p-1-T022", "taskCode": "T022", "taskName": "11月21日 (3)(21).mp4", "projectTitle": "侠探杰克",
+                "sourceVideo": {"name": "11月21日 (3)(21).mp4", "durationSec": 5.08}}
+        with zipfile.ZipFile(self.zp, "w") as z:
+            for n in ("comparison/", "target/", "white_model/", "model_3d/", "meta/"):
+                z.writestr(n, b"")
+            z.writestr("target/original.mp4", self.vid)
+            z.writestr("model_3d/p867bed92_t022-1.blend", b"BLENDER")
+            z.writestr("meta/task.json", json.dumps(task, ensure_ascii=False).encode("utf-8"))
+        done = os.path.join(self.src, "done-1.zip")                      # a finished submission is not a task
+        with zipfile.ZipFile(done, "w") as z:
+            z.writestr("target/original.mp4", self.vid); z.writestr("white_model/blendervid.mp4", self.vid)
+        self.names = os.path.join(self.d, "names.json")
+        self.c = dict(config.load(), source_root=self.src, work_root=os.path.join(self.d, "w"), submit_root=os.path.join(self.d, "s"))
+
+    def tearDown(self):
+        config.DATA = self.data
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_video_comes_out_under_the_zip_name_with_its_delivery_name(self):
+        with mock.patch.object(pkg, "NAMES_P", self.names):
+            lib = clipsmod.Library(self.c)
+            self.assertEqual([cl.rel for cl in lib.clips], ["p867bed92_t022-1.mp4"])
+            out = os.path.join(self.src, "p867bed92_t022-1.mp4")
+            with open(out, "rb") as fh:
+                self.assertEqual(fh.read(), self.vid, "byte for byte")
+            cl = lib.clips[0]
+            self.assertEqual(cl.to_dict()["zip"], "p867bed92_t022-1.zip")
+            self.assertEqual(cl.task["code"], "T022"); self.assertEqual(cl.task["project"], "侠探杰克")
+            self.assertEqual(pkg.package_name(cl.name, self.c), "p867bed92_t022-1")
+            m = os.path.getmtime(out)
+            lib.rescan()                                                    # not written again
+            self.assertEqual(os.path.getmtime(out), m)
+            self.assertEqual(len(lib.clips), 1)
+            self.assertEqual(lib.zip_problems, [])
+            self.assertFalse([f for f in os.listdir(self.src) if f.endswith(".part")])
+
+    def test_a_video_of_that_name_that_is_not_from_the_zip_is_left_alone(self):
+        out = os.path.join(self.src, "p867bed92_t022-1.mp4")
+        with open(out, "wb") as fh:
+            fh.write(b"mine")
+        with mock.patch.object(pkg, "NAMES_P", self.names):
+            lib = clipsmod.Library(self.c)
+        with open(out, "rb") as fh:
+            self.assertEqual(fh.read(), b"mine")
+        self.assertEqual(len(lib.zip_problems), 1)
+
+    def test_preview_lists_without_writing(self):
+        with mock.patch.object(pkg, "NAMES_P", self.names):
+            lib = clipsmod.Library(self.c, preview=True)
+            self.assertEqual([cl.rel for cl in lib.clips], ["p867bed92_t022-1.mp4"])
+            self.assertFalse(os.path.exists(os.path.join(self.src, "p867bed92_t022-1.mp4")))
+            self.assertEqual(pkg.package_names(self.c), {})
+            scan = server.folder_scan(self.c, self.src)
+            self.assertEqual([(r["file"], r["package"]) for r in scan["videos"]], [("p867bed92_t022-1.mp4", "p867bed92_t022-1")])
+            self.assertEqual(scan["unnamed"], 0)
+
+
+class TestHeldObjects(unittest.TestCase):
+    """objects people carry: which hand, how often seen, and placed on the fitted hand where the picture shows them"""
+    @staticmethod
+    def kp(wl=(560, 600), wr=(440, 600)):
+        k = np.zeros((17, 3)); k[:, 2] = 0.9
+        k[:, 0] = 500; k[:, 1] = np.linspace(300, 900, 17)
+        k[5, :2], k[6, :2], k[11, :2], k[12, :2] = (540, 420), (460, 420), (530, 640), (470, 640)
+        k[9, :2], k[10, :2] = wl, wr
+        return k
+
+    def test_attach_hand_and_back(self):
+        import held_objects as HO
+        people = [(1, self.kp())]
+        self.assertEqual(HO.attach([550, 610, 620, 760], people, "held"), (1, "wrist_L"), "a bag hanging below the left hand")
+        self.assertIsNone(HO.attach([100, 100, 160, 160], people, "held"), "far from both hands")
+        self.assertIsNone(HO.attach([435, 290, 565, 910], people, "held"), "a box that is the person themself")
+        other = self.kp(); other[:, 0] += 100                           # a second person beside: their box is no object
+        self.assertIsNone(HO.attach([535, 290, 665, 910], [(1, self.kp()), (2, other)], "held"))
+        self.assertEqual(HO.attach([465, 430, 535, 630], people, "worn"), (1, "chest"))
+
+    def test_groups_need_enough_frames(self):
+        import held_objects as HO
+        d = lambda f, label="bag": {"f": f, "box": [0, 0, 10, 10], "score": 0.6, "track": 1, "joint": "wrist_L", "kind": "held", "label": label}
+        objs = HO.groups([d(0), d(2), d(4, "box"), d(6)], {1: 10})
+        self.assertEqual(len(objs), 1)
+        self.assertEqual((objs[0]["label"], objs[0]["shape"], sorted(objs[0]["boxes"])), ("bag", "bag", ["0", "2", "4", "6"]))
+        self.assertEqual(HO.groups([d(0), d(2)], {1: 10}), [], "seen twice: a passing false detection")
+        self.assertEqual(HO.groups([d(0), d(2), d(4)], {1: 40}), [], "in under a quarter of the frames")
+
+    def test_fill_holds_and_interpolates(self):
+        import held_objects as HO
+        F = HO.fill({2: [1.0], 6: [3.0]}, 9)
+        self.assertEqual(F[:, 0].tolist(), [1, 1, 1, 1.5, 2, 2.5, 3, 3, 3])
+
+    def test_placed_on_the_hand_where_the_picture_shows_it(self):
+        import held_objects as HO
+        import build_env as BE
+        from rig import Rig, JOINTS
+        N = 5
+        ch = {"height": 1.75, "style": "sample", "track_id": 1, "visible": [True] * N, "root": [[0.0, 5.0, 0.0, 0.0]] * N,
+              "pelvis_z": [0.94] * N, "rot": {j: [[0, 0, 0]] * N for j in JOINTS}}
+        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
+                "chars": {"P1": ch}, "props": [{"name": "chair", "keys": []}]}
+        cam = BE.Cam(data)
+        W = Rig(1.75, "sample").fk((0, 5, 0), 0.0, {}, 0.94)
+        u, v = cam.project(W["wrist_L"][1], 0)[0][0]
+        box = [u - 40, v + 10, u + 40, v + 150]                    # a bag hanging under the hand
+        held = {"step": 1, "objects": [{"track": 1, "joint": "wrist_L", "kind": "held", "label": "bag", "shape": "bag",
+                                        "boxes": {str(f): box for f in range(N)}}]}
+        made = HO.place(data, held)
+        self.assertEqual([(m[1], m[2]) for m in made], [("bag", N)])
+        p = data["props"][-1]
+        self.assertTrue(p["held"]); self.assertEqual(data["props"][0]["name"], "chair", "other props stay")
+        c = cam.project(np.array(p["keys"][2][:3]), 2)[0][0]
+        self.assertLess(abs(c[0] - u), 2.0); self.assertLess(abs(c[1] - (v + 80)), 2.0)
+        t = 5.0                                                   # the hand is 5 m away: 140 px tall = 140 * 5 / f metres
+        self.assertAlmostEqual(np.ptp(np.array(p["v"])[:, 2]), 140 * t / cam.f, delta=0.03)
+        HO.place(data, held)
+        self.assertEqual(sum(1 for q in data["props"] if q.get("held")), 1, "placing again replaces, never doubles")
+
+    def test_hidden_when_the_person_is_not_seen(self):
+        import held_objects as HO
+        from rig import JOINTS
+        N = 4
+        ch = {"height": 1.75, "style": "sample", "track_id": 1, "visible": [True, True, False, False], "root": [[0.0, 5.0, 0.0, 0.0]] * N,
+              "pelvis_z": [0.94] * N, "rot": {j: [[0, 0, 0]] * N for j in JOINTS}}
+        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
+                "chars": {"P1": ch}}
+        held = {"step": 1, "objects": [{"track": 1, "joint": "chest", "kind": "worn", "label": "backpack", "shape": "bag", "boxes": {"0": [900, 400, 1000, 600]}}]}
+        HO.place(data, held)
+        self.assertEqual([k[6] for k in data["props"][0]["keys"]], [1.0, 1.0, 0.0, 0.0])
+
+
+class TestMeasuredSet(unittest.TestCase):
+    """the set: pieces named by the segmentation model, soft things built from their measured surface"""
+    def test_relief_is_a_closed_solid_on_the_measured_surface(self):
+        import relief
+        H, W = 60, 80
+        ys, xs = np.mgrid[0:H, 0:W]
+        X = np.dstack([(xs - 40) * 0.02, np.full((H, W), 4.0) + 0.002 * xs, (H - ys) * 0.02])   # a sheet 4 m in front
+        ok = (xs - 40) ** 2 + (ys - 30) ** 2 < 20 ** 2                                         # a round piece of it
+        V, F = relief.relief_mesh(X, ok, (0.0, 0.0, 0.6), 0.3)
+        V = np.array(V); n = len(V) // 2
+        self.assertTrue(np.all(np.abs(V[:n, 1] - 4.04) < 0.1), "the front lies on the measured points")
+        self.assertTrue(np.all(V[n:, 1] > V[:n, 1] + 0.25), "the back is pushed away from the camera")
+        self.assertLess(np.ptp(V[:n, 0]), 0.85); self.assertGreater(np.ptp(V[:n, 0]), 0.7)   # the outline's width (0.8 m)
+        edges = {}
+        for f in F:
+            for a, b in zip(f, f[1:] + f[:1]):
+                k = (min(a, b), max(a, b)); edges[k] = edges.get(k, 0) + 1
+        self.assertTrue(all(c == 2 for c in edges.values()), "closed: every edge has two faces")
+        self.assertIsNone(relief.relief_mesh(X, np.zeros((H, W), bool), (0, 0, 0.6), 0.3))
+
+    def test_segmentation_class_decides_with_the_geometry(self):
+        import env_auto as EA
+        R = {"cls": "object", "z": (0.0, 0.5, 1.2), "rng": 3.0, "area": 0.01, "planar": False, "plane": (np.array([0, 1.0, 0]), None, 0)}
+        self.assertEqual(EA.sem_decide(R, "plant", 0.9, True), ("object", None, True), "a plant: its measured shape")
+        self.assertEqual(EA.sem_decide(R, "curtain", 0.7, True)[2], True)
+        self.assertEqual(EA.sem_decide(R, "swivel chair", 0.9, True), ("object", "office_chair", False))
+        self.assertEqual(EA.sem_decide(R, "person", 0.9, True)[0], "sky", "a missed person is no set piece")
+        self.assertEqual(EA.sem_decide(R, "wall", 0.95, True)[0], "sky", "a scrap of wall the wall piece has")
+        self.assertEqual(EA.sem_decide(R, "plant", 0.3, True), ("object", None, False), "unsure: the geometry stays")
+        big = dict(R, cls="wall", area=0.2, planar=True, plane=(np.array([0, 1.0, 0]), None, 0))
+        self.assertEqual(EA.sem_decide(big, "cabinet", 0.96, True), ("wall", None, False), "a large wall stays a wall")
+        tree = dict(R, cls="vegetation")
+        self.assertEqual(EA.sem_decide(tree, "tree", 0.9, False), ("vegetation", None, False), "outdoors: the tree model")
+        self.assertTrue(EA.sem_decide(tree, "tree", 0.9, True)[2], "indoors: its measured shape")
+
+    def test_every_role_is_known(self):
+        import semseg, props
+        geo = {"floor", "ground", "ceiling", "sky", "person", "wall", "building", "far", "rock", "tree", "relief"}
+        bad = sorted(k for k, v in semseg.ROLE.items() if v not in geo and props.norm_type(v) == "other" and v != "box")
+        self.assertEqual(bad, [], "props types that do not exist")
+
+    def test_build_env_builds_a_mesh_piece(self):
+        import build_env as BE
+        env = {"ground": {"size": 0}, "objects": [{"name": "plant", "type": "mesh", "v": [[0, 3, 0], [1, 3, 0], [0, 3, 1]],
+                                                   "f": [[0, 1, 2]], "colour": "tree"}]}
+        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]]}
+        m = BE.build(env, BE.Cam(data), 0, dx=200.0, tag="_s2")
+        self.assertEqual(len(m), 1)
+        self.assertEqual(m[0]["v"][1], [201.0, 3.0, 0.0], "moved with its shot"); self.assertEqual(m[0]["colour"], "tree")
 
 
 class TestFinishFingerprint(unittest.TestCase):
@@ -155,7 +401,8 @@ class TestJobResult(unittest.TestCase):
         self.store = jobs.JobStore(os.path.join(self.d, "j.db"))
         lib = clipsmod.Library(c)
         self.cl = lib.clips[0]
-        app = mock.Mock(c=c, lib=lib, store=self.store)
+        app = mock.Mock(c=c, store=self.store)
+        app.ws = lambda user: mock.Mock(user=user, c=c, lib=lib)          # the member's workspace
         self.r = jobs.Runner(app)
         self.r.after = lambda *a: None
 
@@ -165,15 +412,26 @@ class TestJobResult(unittest.TestCase):
 
     def run_job(self, code, stage="fit"):
         self.r._cmd = lambda job, cl: [sys.executable, "-c", "print('working'); raise SystemExit(%d)" % code]
-        jid = self.store.enqueue(self.cl.id, stage)
+        jid = self.store.enqueue(self.cl.id, stage, user="anna")
         self.r._run(self.store.take())
         return jid
 
+    def test_job_runs_in_the_members_folders(self):
+        """the job's program gets the member and their folder (BA_USER / BA_SOURCE)"""
+        self.r._cmd = lambda job, cl: [sys.executable, "-c", "import os; print('member=' + os.environ['BA_USER'] + '|' + os.environ['BA_SOURCE'])"]
+        self.store.enqueue(self.cl.id, "fit", user="anna")
+        self.r._run(self.store.take())
+        with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_fit.log"), encoding="utf-8") as fh:
+            self.assertIn("member=anna|" + self.r.app.c["source_root"], fh.read())
+        self.store.enqueue(self.cl.id, "fit")                                 # no member: refused, not run as someone
+        self.r._run(self.store.take())
+        self.assertIn("no member", self.store.latest_for(self.cl.id)["error"])
+
     def test_one_job_per_clip(self):
         """a forced job queued while its clip's job runs waits for it (both would write scene_data.json)"""
-        self.store.enqueue(self.cl.id, "fit")
+        self.store.enqueue(self.cl.id, "fit", user="anna")
         first = self.store.take()
-        self.assertIsNotNone(self.store.enqueue(self.cl.id, "all", force=True))
+        self.assertIsNotNone(self.store.enqueue(self.cl.id, "all", force=True, user="anna"))
         self.assertIsNone(self.store.take(), "the clip is busy")
         self.store.finish(first["id"], True)
         self.assertEqual(self.store.take()["stage"], "all")

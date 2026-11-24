@@ -87,3 +87,17 @@ Desktop.ini
 data/removed.json
 
 data/held.json
+
+# ---------------------------------------------------------------
+# Members (login sessions hold tokens) and per-member / per-PC state
+# ---------------------------------------------------------------
+data/sessions.json
+data/users.json
+data/users/
+data/unzipped.json
+
+# ---------------------------------------------------------------
+# Half-written files (atomic saves, video unzip, downloads)
+# ---------------------------------------------------------------
+*.tmp
+*.part

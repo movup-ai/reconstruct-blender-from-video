@@ -149,13 +149,25 @@ class TestJobStore(unittest.TestCase):
         self.assertEqual(t["last"], {"stage": "fit", "state": "running", "ran": 600}, "the card shows this job's own time")
 
     def test_dedupe_priority_recover(self):
-        self.assertIsNotNone(self.s.enqueue("a", "fit"))
-        self.assertIsNone(self.s.enqueue("a", "fit"), "one job per clip at a time")
-        self.assertIsNotNone(self.s.enqueue("b", "all"))
+        self.assertIsNotNone(self.s.enqueue("a", "fit", user="u"))
+        self.assertIsNone(self.s.enqueue("a", "fit", user="u"), "one job per clip at a time")
+        self.assertIsNotNone(self.s.enqueue("b", "all", user="u"))
         j = self.s.take()
-        self.assertEqual((j["clip"], j["stage"]), ("b", "all"), "renders go first")
+        self.assertEqual((j["clip"], j["stage"], j["user"]), ("b", "all", "u"), "renders go first")
         self.assertEqual(self.s.recover(), 1)
         self.assertEqual(self.s.take()["clip"], "b")
+
+    def test_members_jobs(self):
+        """only the members who pressed Start get jobs; jobs from before members existed are dropped on start"""
+        self.s.enqueue("old", "fit")                                    # no member
+        self.s.enqueue("a", "fit", user="anna"); self.s.enqueue("b", "all", user="ben")
+        self.assertIsNone(self.s.take(set()), "nobody pressed Start")
+        self.assertEqual(self.s.take({"anna"})["clip"], "a", "Ben's render waits for Ben")
+        self.s.recover()
+        self.assertEqual(self.s.db.execute("SELECT state FROM jobs WHERE clip='old'").fetchone()[0], "cancelled")
+        self.assertEqual(self.s.counts("ben"), {"queued": 1})
+        self.assertEqual(self.s.cancel_queued(user="anna"), 1, "Anna's own waiting jobs only (the running one came back)")
+        self.assertEqual(self.s.counts("ben"), {"queued": 1})
 
     def test_force_replaces_queued(self):
         self.s.enqueue("a", "fit")
@@ -322,8 +334,13 @@ def free_port():
     s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
 class TestApi(unittest.TestCase):
-    """real server on a temporary library with one synthetic clip"""
+    """real server on a temporary library with one synthetic clip, used by a logged-in member"""
 
     @classmethod
     def setUpClass(cls):
@@ -334,13 +351,19 @@ class TestApi(unittest.TestCase):
         cls._data = config.DATA
         config.DATA = os.path.join(cls.d, "data")
         from agent.server import App, Server, make_handler
-        c = dict(config.load(), source_root=os.path.join(cls.d, "src"), work_root=os.path.join(cls.d, "w"),
+        c = dict(config.load(), work_root=os.path.join(cls.d, "w"),
                  submit_root=os.path.join(cls.d, "s"), marks_root=os.path.join(cls.d, "m"), autopilot="off", ai_enabled=False)
         cls.app = App(c)
         cls.port = free_port()
         cls.app.server = Server(("127.0.0.1", cls.port), make_handler(cls.app))
         threading.Thread(target=cls.app.server.serve_forever, daemon=True).start()
-        cls.cid = cls.app.lib.clips[0].id
+        cls.cookie = None
+        st, d = cls.post(cls, "/api/login", {"name": "Tester"})
+        assert st == 200, d
+        st, d = cls.post(cls, "/api/use_folder", {"path": os.path.join(cls.d, "src")})
+        assert st == 200, d
+        cls.ws = cls.app.ws("tester")
+        cls.cid = cls.ws.lib.clips[0].id
 
     @classmethod
     def tearDownClass(cls):
@@ -349,26 +372,94 @@ class TestApi(unittest.TestCase):
         config.DATA = cls._data
         shutil.rmtree(cls.d, ignore_errors=True)
 
-    def get(self, path, headers=None):
+    @staticmethod
+    def _open(req, cookie=True):
+        if cookie and TestApi.cookie:
+            req.add_header("Cookie", TestApi.cookie)
+        r = urllib.request.build_opener(NoRedirect).open(req, timeout=30)
+        sc = r.headers.get("Set-Cookie")
+        if sc and sc.startswith("ba_session=") and "Max-Age=0" not in sc:
+            TestApi.cookie = sc.split(";")[0]                # logged in: the next requests are this member's
+        return r
+
+    def get(self, path, headers=None, cookie=True):
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), headers=headers or {})
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with self._open(req, cookie) as r:
                 return r.status, r.read(), r.headers
         except urllib.error.HTTPError as e:
             return e.code, e.read(), e.headers
 
-    def post(self, path, body=None):
+    def post(self, path, body=None, cookie=True):
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), data=json.dumps(body or {}).encode(), method="POST",
                                      headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with TestApi._open(req, cookie) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def test_login_needed(self):
+        code, _, h = self.get("/", cookie=False)
+        self.assertEqual((code, h["Location"]), (302, "/login?next=%2F"), "a page without a login goes to the login page")
+        self.assertEqual(self.get("/api/clips", cookie=False)[0], 401)
+        self.assertEqual(self.get("/media/clipthumb/%s.jpg" % self.cid, cookie=False)[0], 401)
+        self.assertEqual(self.post("/api/start", cookie=False)[0], 401)
+        self.assertEqual(self.get("/login", cookie=False)[0], 200)
+        self.assertEqual(self.get("/api/health", cookie=False)[0], 200, "the launcher checks the app without a login")
+        self.assertEqual(self.post("/api/login", {"name": "../x"}, cookie=False)[0], 400)
+        self.assertEqual(self.post("/api/login", {"name": "con"}, cookie=False)[0], 400)
+        self.assertIn("Tester", json.loads(self.get("/api/members", cookie=False)[1])["members"])
+
+    def test_members_see_only_their_own(self):
+        """another member with another folder: separate clips, ids, results and queue; the first member's clip is
+        not found for them"""
+        other_src = os.path.join(self.d, "src2")
+        os.makedirs(other_src, exist_ok=True)
+        make_video(os.path.join(other_src, "11月12日(1).mp4"), n=12)        # same file name as the tester's clip
+        mine = self.cookie
+        try:
+            TestApi.cookie = None
+            self.assertEqual(self.post("/api/login", {"name": "Ben"})[0], 200)
+            d = json.loads(self.get("/api/clips")[1])
+            self.assertEqual((d["clips"], d["source"]["chosen"]), ([], False), "a new member starts with no folder")
+            self.assertEqual(self.get("/api/clip/" + self.cid)[0], 404, "the tester's clip is not Ben's")
+            self.assertEqual(self.get("/media/video/%s.mp4" % self.cid)[0], 404)
+            self.assertEqual(self.post("/api/clip/%s/reset" % self.cid)[0], 404)
+            self.assertEqual(self.post("/api/use_folder", {"path": other_src})[0], 200)
+            ben = self.app.ws("ben")
+            self.assertEqual(len(ben.lib.clips), 1)
+            self.assertNotEqual(ben.lib.clips[0].id, self.cid, "same file name, other member: another clip")
+            from agent import clips as clipsmod
+            fb, ft = clipsmod.folders(ben.c, ben.lib.clips[0]), clipsmod.folders(self.ws.c, self.ws.lib.clips[0])
+            for k in ("marks", "work", "submit"):
+                self.assertNotEqual(fb[k], ft[k], k)
+                self.assertIn(os.path.join("_users", "ben"), fb[k])
+            self.assertEqual(self.post("/api/start")[1]["queued"], 1)
+            self.assertFalse(self.app.runner.is_paused("ben"))
+            self.assertTrue(self.app.runner.is_paused("tester"), "Ben's Start does not start the tester's queue")
+            q = json.loads(self.get("/api/clips")[1])["queue"]
+            self.assertEqual(q["queued"], 1)
+            TestApi.cookie = mine
+            q = json.loads(self.get("/api/clips")[1])["queue"]
+            self.assertEqual((q["queued"], q["others"]["queued"], q["paused"]), (0, 1, True), "Ben's job is counted, not listed")
+            self.assertEqual(self.post("/api/cancel_queued")[1]["cancelled"], 0, "the tester cannot clear Ben's jobs")
+        finally:
+            TestApi.cookie = mine
+            self.app.runner.pause()
+            self.app.store.cancel_queued()
+
+    def test_folder_open_and_quit_only_on_this_pc(self):
+        h = self.app.server.RequestHandlerClass
+        with unittest.mock.patch.object(h, "local", lambda self: False):
+            self.assertEqual(self.post("/api/open", {"path": self.ws.c["work_root"]})[0], 403)
+            self.assertEqual(self.post("/api/pick_folder")[0], 403)
+            self.assertEqual(self.post("/api/quit")[0], 403)
+            self.assertFalse(json.loads(self.get("/api/clips")[1])["me"]["local"])
+
     def test_start_over_routes(self):
         from agent import clips as clipsmod
-        cl = self.app.lib.clips[0]; f = clipsmod.folders(self.app.c, cl)
+        cl = self.ws.lib.clips[0]; f = clipsmod.folders(self.ws.c, cl)
         os.makedirs(f["work"], exist_ok=True)
         with open(os.path.join(f["work"], "old.txt"), "w") as fh:
             fh.write("x")
@@ -427,9 +518,9 @@ class TestApi(unittest.TestCase):
         from unittest import mock
         from agent import clips as clipsmod
         import cv2, numpy as np
-        cl = self.app.lib.clips[0]; f = clipsmod.folders(self.app.c, cl)
+        cl = self.ws.lib.clips[0]; f = clipsmod.folders(self.ws.c, cl)
         sb = os.path.join(self.d, "sb")
-        os.makedirs(f["work"], exist_ok=True); os.makedirs(os.path.join(sb, "output", cl.name))
+        os.makedirs(f["work"], exist_ok=True); os.makedirs(os.path.join(sb, "output", "_users", "tester", cl.name))
         try:
             with open(os.path.join(f["work"], "regions_000.json"), "w") as fh:
                 json.dump({"tag": "_000", "size": [64, 48], "regions": [], "added": []}, fh)
@@ -438,7 +529,7 @@ class TestApi(unittest.TestCase):
             env = {"objects": [{"name": "object_0", "type": "chair", "_src": {"cls": "object", "frame": 0, "px": [5, 6, 20, 30], "label": ["office_chair", 0.8]}},
                                {"name": "object_1", "type": "box", "_src": {"cls": "object", "frame": 9, "px": [30, 6, 50, 30]}},
                                {"name": "drawn_0", "type": "box", "_src": {"cls": "drawn", "frame": 0, "px": [1, 1, 9, 9]}}]}
-            with open(os.path.join(sb, "output", cl.name, "env_auto.json"), "w") as fh:
+            with open(os.path.join(sb, "output", "_users", "tester", cl.name, "env_auto.json"), "w") as fh:   # the member's own output
                 json.dump(env, fh)
             with mock.patch.dict(os.environ, {"BA_SANDBOX": sb}):
                 sh = json.loads(self.get("/api/clip/%s/objects" % self.cid)[1])["shots"][0]
@@ -456,7 +547,7 @@ class TestApi(unittest.TestCase):
 
     def test_take_out_of_line_and_add_back(self):
         try:
-            self.app.store.enqueue(self.cid, "fit")
+            self.app.store.enqueue(self.cid, "fit", user="tester")
             code, d = self.post("/api/clip/%s/hold" % self.cid)
             self.assertEqual((code, d["cancelled"]), (200, 1), "its waiting job leaves the line")
             st = json.loads(self.get("/api/clips")[1])["clips"][0]["status"]
@@ -491,8 +582,8 @@ class TestApi(unittest.TestCase):
 
     def test_zip_downloads_under_its_package_name(self):
         import package as pkg
-        os.makedirs(self.app.c["submit_root"], exist_ok=True)
-        zp = os.path.join(self.app.c["submit_root"], "clipX.zip")
+        os.makedirs(self.ws.c["submit_root"], exist_ok=True)
+        zp = os.path.join(self.ws.c["submit_root"], "clipX.zip")
         with open(zp, "wb") as fh:
             fh.write(b"PK\x05\x06" + b"\0" * 18)
         try:
@@ -520,7 +611,7 @@ class TestApi(unittest.TestCase):
         req = urllib.request.Request("http://127.0.0.1:%d/api/upload?film=%s&name=%s" % (
             self.port, urllib.request.quote(film), urllib.request.quote(name)), data=data, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with self._open(req) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
@@ -539,6 +630,12 @@ class TestApi(unittest.TestCase):
         self.assertEqual(self.upload("新片Test", "notes.txt", b"x")[0], 400)
         self.assertEqual(self.upload("..\\evil", "a.mp4", data)[0], 400)
         self.assertEqual(self.upload("", "a.mp4", data)[0], 400)
+        mine = TestApi.cookie
+        try:
+            TestApi.cookie = None
+            self.assertEqual(self.upload("新片Test", "clip B.mp4", data)[0], 401, "no upload without a login")
+        finally:
+            TestApi.cookie = mine
 
     def test_objects_endpoints(self):
         code, body, _ = self.get("/api/clip/%s/objects" % self.cid)
