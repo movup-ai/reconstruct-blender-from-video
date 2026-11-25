@@ -728,12 +728,11 @@ def run_clip(video, c, args):
         # Re-anchor after any measured human placement correction.
         rep['held_objects'] = held_place(name, work, video, c)
     final_data=jload(dp)
-    alignment=quality.alignment_audit(final_data,pose,y0)
+    alignment=quality.cached_alignment(final_data,pose,y0,work)
     jsave(os.path.join(work,'human_alignment.json'),alignment)
     rep['human_alignment']=alignment
     if not alignment['passed']:
         warns.append('Human alignment failed: Re-check placement before Finish')
-        processed_inputs['fit']=None
         jsave(os.path.join(work,'report.json'),dict(rep,status='needs_review'))
     if args.stage in ("blend", "all"):
         quality.require_alignment(alignment)
@@ -888,7 +887,7 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
             held_detect(name, video, work, c)
         rep['held_objects'] = held_place(name, work, video, c)
     data = jload(dp)
-    if args.stage == 'fit' and (env_changed or props_changed) and c.get('scene_verify', True):
+    if args.stage == 'fit' and c.get('scene_verify', True):
         import scene_verify
         scene_verify.process(data, work, dict(c, _freeze_people=True), c.get('_hints'), repair=False)
     jsave(dp, data)
@@ -896,7 +895,7 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
         rendered = render_only(name, video, work, dict(c, _freeze_people=True), args, t0)
         rep.update(rendered)
     rep['scene_verification'] = jload(dp).get('scene_verification', {})
-    rep.update(clip=name, video=video, status='ok', seconds=round(time.time()-t0, 1),
+    rep.update(clip=name, video=video, status='ok' if rep.get('human_alignment',{}).get('passed',True) else 'needs_review', seconds=round(time.time()-t0, 1),
                reused_people=True, rebuilt_environment=env_changed, rebuilt_props=props_changed)
     jsave(os.path.join(work, 'report.json'), rep)
     jsave(os.path.join(work, 'build_state.json'), current)
@@ -925,13 +924,18 @@ def background_only(name, video, work, c, args, t0):
         stage('background_annotations')(subprocess.run)(commands, cwd=AGENT, check=True)
         gpu_lease.release()
         env_path = os.path.join(output_dir(), name, 'env_auto.json')
-        stage('background_build')(subprocess.run)([sys.executable, os.path.join(HERE,'build_env.py'), name, '--env', env_path], cwd=AGENT, check=True)
+        stage('background_build')(subprocess.run)([sys.executable, os.path.join(HERE,'build_env.py'), name, '--env', env_path], cwd=AGENT, check=True,
+            env=dict(os.environ,BA_DEFER_VERIFICATION='1'))
         data = jload(dp)
         if any(data.get(k) != v for k,v in frozen.items()):
             raise RuntimeError('Background build changed saved people or camera; original scene restored.')
         # Keep hand props attached to exactly the same saved animation; no automatic prop inference.
         held_place(name,work,video,c)
         data=jload(dp)
+        if c.get('scene_verify',True):
+            import scene_verify
+            scene_verify.process(data,work,dict(c,_freeze_people=True),c.get('_hints'),repair=c.get('scene_repair',True))
+            jsave(dp,data)
         if any(data.get(k) != v for k,v in frozen.items()):
             raise RuntimeError('Background build changed saved people or camera; original scene restored.')
         current=inputs_before
@@ -1066,7 +1070,8 @@ def make_set(name, video, work, c, stage, hand_set):
                 else:
                     log("  set: Claude set failed (exit %s) - the local set is used" % r.returncode)
     gpu_lease.release()  # build_env verifies geometry on the CPU; models have exited.
-    r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT)
+    r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT,
+                       env=dict(os.environ,BA_DEFER_VERIFICATION='1'))
     if r.returncode != 0:
         log("  set: build_env failed (exit %s) - depth set kept" % r.returncode)
         return "depth set (build_env failed)"
@@ -1087,6 +1092,8 @@ def blender_render(c, work, dp, N, extra=("render",)):
     try:                                                   # every video follows the colour card (docs/COLOUR_CARD.md)
         import colour_card
         d_ = jload(dp)
+        from validation import mode as validation_mode
+        d_['validation_mode']=validation_mode(c)
         d_['background_policy'] = (c.get('_review') or {}).get('environment',{}).get('set_colours',c.get('set_colours','source'))
         if (c.get('_hints') or {}).get('light'):
             d_['light'] = c['_hints']['light']
@@ -1187,7 +1194,7 @@ def render_only(name, video, work, c, args, t0):
     pp=os.path.join(marks_dir(video,c),'pose.json')
     if os.path.exists(pp):
         source_pose=jload(pp)
-        alignment=quality.alignment_audit(data,source_pose,(source_pose.get('picture_area') or [0,0])[1])
+        alignment=quality.cached_alignment(data,source_pose,(source_pose.get('picture_area') or [0,0])[1],work)
         jsave(os.path.join(work,'human_alignment.json'),alignment)
         quality.require_alignment(alignment)
     if hints.get("plant_feet") or hints.get("pulldown_retime"):                # the fit stays in scene_data.json; the
@@ -1234,7 +1241,9 @@ def main():
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")
     ap.add_argument("--require-confirm", action="store_true", help="only build/render clips whose key points were confirmed in the review app")
     ap.add_argument("--auto-set", action="store_true", help="build the automatic depth set even when the clip has a hand-built set (env_claude.json)")
+    ap.add_argument('--validation-mode',choices=('normal','audit'),help='Override validation policy for this run; inference caches are preserved')
     args = ap.parse_args()
+    if args.validation_mode:os.environ['BA_VALIDATION_MODE']=args.validation_mode
     if args.stage != "render":                             # (rendering in Blender uses no model)
         args.device = pick_device(args.device)             # stops here without a working NVIDIA card
     c = cfg(); c["device"] = args.device

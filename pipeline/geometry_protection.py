@@ -51,7 +51,7 @@ def person_conflict(predicted, depth, person, valid=None, rendered=None):
 
 
 @stage('occlusion_protection')
-def protect(data, bundles, max_shift=3.):
+def protect(data, bundles, max_shift=3., max_groups=None, refine=True, resolution=160, only_objects=None):
     """Correct depth first, then trim only unsupported conflicting surface fragments.
 
     Genuine source occlusion is retained: the source person mask includes visible human pixels only.
@@ -64,7 +64,7 @@ def protect(data, bundles, max_shift=3.):
         for f, depth, K, R, C, person, valid in zip(bundle['frames'], bundle['depth'], bundle['K'], bundle['R'],
                                                    bundle['C'], bundle['person'], bundle['valid']):
             if person.sum() < 10: continue
-            h, w = depth.shape; scale = min(1., 160/max(h, w)); shape = (max(1, round(h*scale)), max(1, round(w*scale)))
+            h, w = depth.shape; scale = min(1., resolution/max(h, w)); shape = (max(1, round(h*scale)), max(1, round(w*scale)))
             k = np.asarray(K).copy(); k[0] *= shape[1]/w; k[1] *= shape[0]/h
             rendered = rendered_people_depth(data,int(f),k,np.asarray(R),np.asarray(C),shape)
             observations.append((int(f), cv2.resize(depth, shape[::-1], interpolation=cv2.INTER_NEAREST), k,
@@ -75,8 +75,10 @@ def protect(data, bundles, max_shift=3.):
     for mesh in data['meshes']:
         if mesh['name'].startswith('ground'): continue
         groups.setdefault(mesh.get('_primitive', mesh['name']), []).append(mesh)
-    actions, replacements = [], {}
+    actions, replacements, attempted = [], {}, 0
     for name, group in groups.items():
+        if max_groups is not None and attempted>=max_groups:break
+        if only_objects is not None and not any(m['name'] in only_objects for m in group):continue
         def measure(parts):
             total, gaps, wrong_views = 0, [], []
             for f, depth, K, R, C, person, valid, rendered in observations:
@@ -92,6 +94,7 @@ def protect(data, bundles, max_shift=3.):
             return total, gaps, wrong_views
         score, gaps, frames = measure(group)
         if not score: continue
+        attempted+=1
         # Preserve the footprint and physical dimensions when correcting depth.
         distance, forward = max(gaps, key=lambda g: g[0])
         shift = np.asarray(forward) * min(max_shift, max(.2, distance))
@@ -121,7 +124,7 @@ def protect(data, bundles, max_shift=3.):
             corrected,action=min(candidates,key=alignment)
             for before,new in zip(group,corrected):replacements[id(before)]=new
             actions.append(dict(action,object=name,frames=frames))
-        else:
+        elif refine:
             corrected=[clip_unsupported_faces(mesh,observations) for mesh in group]
             if measure(corrected)[0]<score and any(m['f'] for m in corrected):
                 for before,new in zip(group,corrected):replacements[id(before)]=new
@@ -130,6 +133,8 @@ def protect(data, bundles, max_shift=3.):
                 actions.append({'object':name,'action':'trimmed unsupported occluding fragments; object retained','frames':frames})
             else:
                 actions.append({'object':name,'action':'retained for review: depth conflict could not be resolved','frames':frames})
+        else:
+            actions.append({'object':name,'action':'retained for review: normal repair budget; detailed refinement available in audit mode','frames':frames})
     data['meshes'] = [replacements.get(id(m), m) for m in data['meshes']]
     data['geometry_protection'] = data.get('geometry_protection', []) + actions
     return actions

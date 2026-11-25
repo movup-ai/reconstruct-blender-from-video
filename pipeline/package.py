@@ -15,6 +15,17 @@ import threading
 import zipfile
 
 from common import ffmpeg_exe
+from validation import review_enabled
+
+
+def clear_optional_review(rec, config):
+    """Do not ship a stale audit page after a normal rebuild."""
+    from pathlib import Path
+    if review_enabled(config):return
+    root=Path(rec).resolve();target=root/'review'
+    if target.is_symlink():target.unlink();return
+    if not target.resolve().is_relative_to(root):raise ValueError('Review path escapes reconstruction folder')
+    if target.is_dir():shutil.rmtree(target)
 
 SUBDIRS = ("comparison", "meta", "model_3d", "target", "white_model")
 META_KEYS = ["source_video_id", "source_video_name", "source_video_desc", "source_video_duration", "source_video_resolution",
@@ -421,7 +432,8 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
     if os.path.isfile(geometry_report):
         shutil.copyfile(geometry_report,os.path.join(rec,'l3_geometry.json'))
         meta['checks']['rigid_geometry']='see model_3d/reconstruction/l3_geometry.json'
-    if c.get('frame_review',False):
+    clear_optional_review(rec,c)
+    if review_enabled(c):
         from frame_review import build as build_frame_review
         meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
@@ -617,7 +629,8 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
             "checks": {"technical_structure": "passed (decoding, frame count, dimensions and fps checked)" if ok else "failed",
                        "reconstruction": "unverified", "visual_review": "unverified", "client_acceptance": "unverified"},
             "notes": notes or []}
-    if c.get('frame_review',False):
+    clear_optional_review(rec,c)
+    if review_enabled(c):
         from frame_review import build as build_frame_review
         meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:

@@ -65,7 +65,24 @@ def append_actor(bpy, kind, joints, destination, material, height):
     return mesh
 
 
-def validate_actors(bpy, data):
+def validation_frames(data, mode='normal'):
+    frames=int(data['frames'])
+    if mode=='audit':return list(range(1,frames+1))
+    selected={1,frames,(frames+1)//2}
+    for shot in data.get('shots',[]):
+        a,b=shot['frames'];selected.update((a+1,b+1))
+    return sorted(f for f in selected if 1<=f<=frames)
+
+
+def cached_validation(bpy,data,work):
+    import validation as V
+    policy=V.mode(data)
+    key=V.digest({'scene':V.geometry(data,people_only=True),'assets':V.rig_assets(data),'mode':policy,
+        'blender':bpy.app.version_string,'implementation':V.implementation(('l3_blender.py','blender_build.py'))})
+    return V.cached_report(Path(work)/'l3_geometry.json',key,lambda:validate_actors(bpy,data,policy))
+
+
+def validate_actors(bpy, data, mode='audit'):
     """Fail before rendering if rigid dimensions/marks/actor bindings drift."""
     import numpy as np
     profile = json.loads((ASSETS/'model-profile.json').read_text(encoding='utf-8'))
@@ -98,7 +115,8 @@ def validate_actors(bpy, data):
                 if any(not c.target or not c.target.name.startswith(name+'_') for c in source.constraints):
                     raise ValueError(name+': animation constraint points to another actor')
             fixed={}; max_error=0.
-            for frame in range(1,int(data['frames'])+1):
+            checked_frames=validation_frames(data,mode)
+            for frame in checked_frames:
                 scene.frame_set(frame);bpy.context.view_layer.update()
                 nodes=[mesh,bind];parent=mesh.parent
                 while parent:
@@ -118,8 +136,9 @@ def validate_actors(bpy, data):
                 max_error=max(max_error,error)
                 if error>2e-4:
                     raise ValueError(name+': rigid body/mark dimensions changed at frame '+str(frame))
-            reports.append({'actor':name,'frames':[1,int(data['frames'])], 'white_faces':17,
+            reports.append({'actor':name,'frames':[1,int(data['frames'])],'checked_frames':checked_frames, 'white_faces':17,
                             'max_edge_error_model_units':max_error,'fixed_uniform_scale':True})
     finally:
         scene.frame_set(saved)
-    return {'passed':True,'actors':reports,'scope':'Full-frame rigid geometry, white marks and actor-specific binding; visual source fidelity not established.'}
+    return {'passed':True,'actors':reports,'mode':mode,'exhaustive':mode=='audit',
+        'scope':('Full-frame' if mode=='audit' else 'Sampled-frame')+' rigid geometry, white marks and actor-specific binding; visual source fidelity not established.'}

@@ -49,7 +49,7 @@ AUTOPILOT_MODES = ("off", "prepare", "full")
 EDITABLE.update({"camera_backend": str, "da3_model": str,
                  "da3_python": str, "da3_meters_per_unit": float,
                  "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int,
-                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool,
+                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool, "validation_mode": str,
                  "sam3_checkpoint": str, "sam3_python": str,
                  "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int})
 
@@ -90,6 +90,8 @@ def save(updates):
             raise ValueError("%s must be 1-8" % k)
         if k == "camera_backend" and v not in ("flow", "da3"):
             raise ValueError("camera_backend must be flow or da3")
+        if k == 'validation_mode' and v not in ('normal','audit'):
+            raise ValueError('validation_mode must be normal or audit')
         if k == 'sam3d_stride' and not 1<=v<=16:
             raise ValueError('sam3d_stride must be 1-16')
         if k == "set_max_frames" and not 2 <= v <= 12:

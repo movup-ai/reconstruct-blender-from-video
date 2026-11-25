@@ -507,10 +507,8 @@ def build_blender():
         print("camera zoom: lens %.1f -> %.1f mm" % (DATA["lens"] * min(zoom), DATA["lens"] * max(zoom)))
     scn.frame_set(1)
     if any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
-        from l3_blender import validate_actors
-        validation = validate_actors(bpy, DATA)
-        with open(os.path.join(WORK_DIR,'l3_geometry.json'),'w',encoding='utf-8') as report:
-            json.dump(validation,report,indent=2)
+        from l3_blender import cached_validation
+        validation = cached_validation(bpy, DATA, WORK_DIR)
     scn.use_preview_range = False
     for screen in bpy.data.screens:
         for area in screen.areas:

@@ -144,7 +144,7 @@ def _body(ch, f):
 
 
 @stage('scene_checks')
-def verify(data, work, justifications=None, bundles=None, resolution=160, raster_cache=None):
+def verify(data, work, justifications=None, bundles=None, resolution=160, raster_cache=None, detailed=True):
     issues, evidence, frames = [], [], set()
     if bundles is None: bundles, skipped = load_evidence(data, work)
     else: skipped = []
@@ -176,26 +176,27 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
     # Global completeness cues supplement per-camera depth checks. These are review
     # flags, since lights, signs and suspended scenery may legitimately be isolated.
     bounds = [(np.min(m["v"], axis=0), np.max(m["v"], axis=0)) for m in meshes]
-    adjacent = [set() for _ in meshes]
-    for i, (low, high) in enumerate(bounds):
-        for j in range(i):
-            other_low, other_high = bounds[j]
-            gap = np.maximum(np.maximum(low-other_high, other_low-high), 0)
-            if np.linalg.norm(gap) < .12:
-                adjacent[i].add(j); adjacent[j].add(i)
-    anchored = {i for i,(low,high) in enumerate(bounds) if low[2] <= .1 and high[2] >= -.1}
-    reached = set(anchored); pending = list(anchored)
-    while pending:
-        for j in adjacent[pending.pop()]-reached:
-            reached.add(j); pending.append(j)
-    if anchored:
-        for i,mesh in enumerate(meshes):
-            low,high = bounds[i]
-            if i not in reached and low[2] > .15 and np.min(high-low) > .05:
-                center = (low+high)/2
-                f = min(range(len(data["cam"])), key=lambda f: np.linalg.norm(np.asarray(data["cam"][f][:3])-center))
-                issue("isolated_geometry", mesh["name"], f,
-                      "No contact path to measured ground; inspect floating or intentionally suspended geometry")
+    if detailed:
+        adjacent = [set() for _ in meshes]
+        for i, (low, high) in enumerate(bounds):
+            for j in range(i):
+                other_low, other_high = bounds[j]
+                gap = np.maximum(np.maximum(low-other_high, other_low-high), 0)
+                if np.linalg.norm(gap) < .12:
+                    adjacent[i].add(j); adjacent[j].add(i)
+        anchored = {i for i,(low,high) in enumerate(bounds) if low[2] <= .1 and high[2] >= -.1}
+        reached = set(anchored); pending = list(anchored)
+        while pending:
+            for j in adjacent[pending.pop()]-reached:
+                reached.add(j); pending.append(j)
+        if anchored:
+            for i,mesh in enumerate(meshes):
+                low,high = bounds[i]
+                if i not in reached and low[2] > .15 and np.min(high-low) > .05:
+                    center = (low+high)/2
+                    f = min(range(len(data["cam"])), key=lambda f: np.linalg.norm(np.asarray(data["cam"][f][:3])-center))
+                    issue("isolated_geometry", mesh["name"], f,
+                          "No contact path to measured ground; inspect floating or intentionally suspended geometry")
     for bundle in bundles:
         for f, obs, K, R, C, person, valid in zip(bundle["frames"], bundle["depth"], bundle["K"], bundle["R"], bundle["C"], bundle["person"], bundle["valid"]):
             f = int(f); frames.add(f)
@@ -241,6 +242,7 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
         visible = np.flatnonzero(ch.get("visible", [True]*len(ch["root"])))
         selected = frames | set(visible[np.linspace(0, len(visible)-1, min(3, len(visible)), dtype=int)].tolist())
         if not .4 <= ch["height"] <= 2.5: issue("human_height", name, 0, "Height %.2f m requires review" % ch["height"])
+        if not detailed:continue
         for f in sorted(selected):
             if f >= len(ch["root"]) or (ch.get("visible") and not ch["visible"][f]): continue
             body, feet = _body(ch, f)
@@ -380,21 +382,59 @@ def depth_correction(group, bundles):
 @verification_profile
 @stage("scene_verification")
 def process(data, work, c, hints=None, repair=False):
+    """Reuse unchanged results; normal checks are sampled and repairs have a fixed budget."""
+    import validation as V
+    from profiling import counter
+    hints=hints or {};policy=V.mode(c)
+    def key():
+        return V.digest({'scene':V.geometry(data),'mode':policy,
+            'evidence':{os.path.basename(p):V.file_digest(p) for p in sorted(glob.glob(os.path.join(work,'metric_evidence*.npz')))},
+            'hints':{k:hints.get(k) for k in ('people','scene_justifications')},
+            'settings':{k:c.get(k,default) for k,default in (('protect_people',True),('scene_repair_limit',4))},
+            'assets':V.rig_assets(data),
+            'implementation':V.implementation(('scene_verify.py','geometry_protection.py','rig.py','object_fit.py'))})
+    cache_path=os.path.join(work,'scene_validation_cache_%s.json'%policy);cached=V.load_cache(cache_path,key())
+    can_reuse=cached and isinstance(cached.get('result'),dict)
+    if repair and (not can_reuse or not cached.get('repair_attempted')):can_reuse=False
+    if not c.get('_freeze_people') and hints.get('people') and can_reuse and cached.get('people_frozen'):can_reuse=False
+    if can_reuse:
+        counter('validation_cache_hits');result=dict(cached['result'],cache_hit=True)
+        if cached.get('alignment') is not None:jsave(os.path.join(work,'object_alignment.json'),cached['alignment'])
+        print('  scene verification: reused unchanged %s checks'%policy,flush=True)
+    else:
+        V.ensure_scene(data)
+        result=_process(data,work,c,hints,repair)
+        result.update(mode=policy,cache_hit=False,exhaustive=policy=='audit')
+        path=os.path.join(work,'object_alignment.json')
+        V.save_cache(cache_path,key(),result,repair_attempted=bool(repair),people_frozen=bool(c.get('_freeze_people')),
+                     alignment=jload(path) if os.path.isfile(path) else None)
+    jsave(os.path.join(work,'scene_verification.json'),result)
+    data['scene_verification']={'file':'scene_verification.json','unresolved':len(result['unresolved']),
+        'depth_checked':result['depth_checked'],'repairs':len(result['repairs']),'mode':policy,'cache_hit':result['cache_hit']}
+    return result
+
+
+def _process(data, work, c, hints=None, repair=False):
     """Verify edits, keep only evidence-improving proposals, persist all unresolved issues."""
+    import validation as V
+    detailed=V.mode(c)=='audit'
     hints = hints or {}; bundles, skipped = load_evidence(data, work)
+    if not detailed:bundles=V.sampled_bundles(bundles)
     justification = hints.get("scene_justifications", {})
     scale_changes = [] if c.get('_freeze_people') else place_people(data, hints)
     cache = {}
     print('  scene verification: checking geometry, depth, and contacts',flush=True)
-    result = verify(data, work, justification, bundles=bundles, raster_cache=cache)
+    def check(scene):return verify(scene,work,justification,bundles=bundles,raster_cache=cache,
+                                   resolution=160 if detailed else 96,detailed=detailed)
+    result = check(data)
     repairs = []
-    if bundles:
+    if detailed and bundles:
         from metric_scene import plane_proposals
         proposals = [p for b in bundles for p in plane_proposals(b)]
         jsave(os.path.join(work, "scene_proposals.json"), {"meshes": proposals})
     else:
         proposals = []
-    if repair and bundles:
+    if detailed and repair and bundles:
         groups = {}
         conflicting = {i['object'] for i in result['issues'] if i['kind']=='occlusion'}
         for mesh in data['meshes']:
@@ -413,7 +453,7 @@ def process(data, work, c, hints=None, repair=False):
             if any(placement_error(b)>max(.04,placement_error(a)+.01)
                    for a,b in zip(before_alignment,after_alignment)):continue
             trial = dict(data,meshes=[replaced.get(id(m),m) for m in data['meshes']])
-            checked = verify(trial,work,justification,bundles=bundles,raster_cache=cache)
+            checked = check(trial)
             old_bad = {(i['kind'],i['object'],i['frame']) for i in result['issues'] if i['kind']!='coverage'}
             new_bad = {(i['kind'],i['object'],i['frame']) for i in checked['issues'] if i['kind']!='coverage'}
             old_coverage = np.mean([e['coverage_fraction'] for e in result['evidence']])
@@ -426,13 +466,13 @@ def process(data, work, c, hints=None, repair=False):
         for proposal in proposals[:max(0, int(c.get("scene_repair_limit", 4)))]:
             if proposal["name"] in existing: continue
             trial = dict(data, meshes=data["meshes"]+[proposal])
-            checked = verify(trial, work, justification, bundles=bundles, raster_cache=cache)
+            checked = check(trial)
             old_bad = {(r["kind"], r["object"], r["frame"]) for r in result["issues"] if r["kind"] != "coverage"}
             new_bad = {(r["kind"], r["object"], r["frame"]) for r in checked["issues"] if r["kind"] != "coverage"}
             if _score(checked) > _score(result)+.005 and not (new_bad-old_bad):
                 data["meshes"].append(proposal); result = checked
                 repairs.append({"object": proposal["name"], "action": "added measured planar surface"})
-    if repair and not c.get('_freeze_people'):
+    if detailed and repair and not c.get('_freeze_people'):
         for name, ch in list(data.get("chars", {}).items()):
             hint = (hints.get("people") or {}).get(str(ch.get("track_id")), {})
             # Explicit choices and mounted people are never superseded by inferred support.
@@ -443,7 +483,7 @@ def process(data, work, c, hints=None, repair=False):
             trial = dict(data, chars=dict(data["chars"]))
             candidate = copy.deepcopy(ch); trial["chars"][name] = candidate
             scale_track(candidate, data["cam"], factor)
-            checked = verify(trial, work, justification, bundles=bundles, raster_cache=cache)
+            checked = check(trial)
             old_bad = {(i["kind"],i["object"],i["frame"]) for i in result["issues"] if i["kind"] != "foot_support"}
             new_bad = {(i["kind"],i["object"],i["frame"]) for i in checked["issues"] if i["kind"] != "foot_support"}
             if _score(checked) > _score(result)+.01 and not (new_bad-old_bad):
@@ -451,14 +491,19 @@ def process(data, work, c, hints=None, repair=False):
                 scale_attached_props(data, candidate, factor)
                 result = checked
                 repairs.append({"object": name, "action": "constant support scale", "factor": factor})
-    if c.get('protect_people', True):
+    if c.get('protect_people', True) and repair:
         print('  scene verification: repairing source-visible person occlusion',flush=True)
         from geometry_protection import protect
-        protection = protect(data, bundles)
+        before_protection=V.digest(V.geometry(data))
+        conflicts={i['object'] for i in result['issues'] if i['kind']=='person_occlusion'}
+        protection = protect(data, bundles) if detailed else protect(data,bundles,max_groups=2,refine=False,resolution=96,only_objects=conflicts)
         if protection:
             repairs += protection
-            result = verify(data, work, justification, bundles=bundles)
-    result.update(repairs=repairs, human_scale_changes=scale_changes, skipped_stale_evidence=skipped)
+            if V.digest(V.geometry(data))!=before_protection:result = check(data)
+    result.update(repairs=repairs, human_scale_changes=scale_changes, skipped_stale_evidence=skipped,
+                  checked_depth_frames=[r['frame'] for r in result['evidence']],
+                  checks={'geometry':True,'sampled_depth':not detailed,'detailed_contacts':detailed,
+                          'max_repair_groups':None if detailed else 2,'fragment_refinement':bool(detailed and repair)})
     from object_fit import audit_scene
     alignment=audit_scene(data,work)
     for row in alignment['objects']:
@@ -470,7 +515,7 @@ def process(data, work, c, hints=None, repair=False):
         result['issues'].append({'id':issue_id,'kind':'object_alignment','object':row['object'],
                                   'frame':row['views'][0]['frame'],'detail':detail,'status':'unresolved'})
         result['unresolved'].append(issue_id)
-    overview(data, os.path.join(work,"scene_overview.jpg"))
+    if detailed:overview(data, os.path.join(work,"scene_overview.jpg"))
     jsave(os.path.join(work, "scene_verification.json"), result)
     data["scene_verification"] = {"file": "scene_verification.json", "unresolved": len(result["unresolved"]),
                                    "depth_checked": result["depth_checked"], "repairs": len(repairs)}

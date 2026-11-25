@@ -234,6 +234,13 @@ def alignment_audit(data, pose, y0=0):
             'scope':'Automated visible-joint projection checks; source frames are zero-based. Visual review is still required.'}
 
 
+def cached_alignment(data, pose, y0, work):
+    import validation as V
+    key=V.digest({'geometry':V.geometry(data,people_only=True),'pose':pose,'y0':y0,
+                  'assets':V.rig_assets(data),'implementation':V.implementation(('quality.py','rig.py','body_constraints.py'))})
+    return V.cached_report(os.path.join(work,'human_alignment.json'),key,lambda:alignment_audit(data,pose,y0))
+
+
 def require_alignment(result):
     failed=[r['char'] for r in result['people'] if not r['passed']]
     if failed:

@@ -20,6 +20,7 @@ DEFAULT_CFG = {
     "source_exposure": True,
     "temporal_refinement": True,
     "frame_review": True,
+    "validation_mode": "normal",             # audit enables exhaustive checks and review exports
     "out_width": 3840,                       # white model / comparison width, like the client sample (3840 x source aspect)
     "out_fps": 24,
     "video_bitrate": "30M",
@@ -105,6 +106,7 @@ def cfg():
         with open(CFG_PATH, "w", encoding="utf-8") as fh:
             json.dump(c, fh, ensure_ascii=False, indent=2)
     c = normalize_backends(c)
+    if os.environ.get('BA_VALIDATION_MODE'):c['validation_mode']=os.environ['BA_VALIDATION_MODE']
     if os.environ.get('BA_FREEZE_PEOPLE') == '1': c['_freeze_people'] = True
     sb = os.environ.get("BA_SANDBOX")                  # test runs: everything written goes under this folder
     if sb:

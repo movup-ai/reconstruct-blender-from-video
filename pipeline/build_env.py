@@ -817,7 +817,7 @@ def main():
         colour_card.apply(data)
     except Exception as e:
         print("colour card not applied (%s)" % e)
-    if c.get("scene_verify", True):
+    if c.get("scene_verify", True) and os.environ.get('BA_DEFER_VERIFICATION')!='1':
         import scene_verify
         checked = scene_verify.process(data, work, c, hints)
         meshes = data['meshes']  # preview the protected geometry that will actually be rendered

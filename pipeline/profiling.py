@@ -38,9 +38,16 @@ def recording(path=None):
 def verification_profile(function):
     @functools.wraps(function)
     def measured(data,work,*args,**kwargs):
-        if _active.get() is not None:return function(data,work,*args,**kwargs)
-        with recording(os.path.join(work,'verification_profile.json')):
-            return function(data,work,*args,**kwargs)
+        parent=_active.get()
+        with recording(os.path.join(work,'verification_profile.json')) as child:
+            try:return function(data,work,*args,**kwargs)
+            finally:
+                if parent is not None:
+                    for name,row in child['stages'].items():
+                        target=parent['stages'].setdefault(name,{'calls':0,'seconds':0.})
+                        target['calls']+=row['calls'];target['seconds']+=row['seconds']
+                    for name,count in child.get('counters',{}).items():
+                        counters=parent.setdefault('counters',{});counters[name]=counters.get(name,0)+count
     return measured
 
 

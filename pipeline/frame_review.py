@@ -9,6 +9,24 @@ from common import imwrite_u, open_video, close_video
 
 
 def build(video, render_dir, output, info, width=640):
+    import validation as V
+    from profiling import counter
+    output=Path(output);count=int(info['frames'])
+    renders=[next((Path(render_dir)/('wm_%04d.%s'%(f+1,ext)) for ext in ('jpg','png')
+                   if (Path(render_dir)/('wm_%04d.%s'%(f+1,ext))).is_file()),None) for f in range(count)]
+    key=V.digest({'source':V.file_digest(video),'video':str(video),'info':info,'width':width,
+        'renders':[V.file_digest(p) if p else None for p in renders],
+        'implementation':V.implementation(('frame_review.py',))})
+    cache=output/'build_cache.json';cached=V.load_cache(cache,key)
+    artifacts=[output/'index.html',output/'review.json']+[output/folder/('%06d.jpg'%f)
+        for folder in ('source','model') for f in range(count)]
+    if cached and all(p.is_file() for p in artifacts):
+        counter('review_export_cache_hits');return dict(cached['result'],cache_hit=True)
+    result=_build(video,render_dir,output,info,width);V.save_cache(cache,key,result)
+    return dict(result,cache_hit=False)
+
+
+def _build(video, render_dir, output, info, width=640):
     output=Path(output);source_dir=output/'source';model_dir=output/'model'
     for directory in (source_dir,model_dir):
         directory.mkdir(parents=True,exist_ok=True)

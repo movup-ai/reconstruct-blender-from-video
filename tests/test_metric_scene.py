@@ -162,7 +162,7 @@ class VerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             np.savez_compressed(os.path.join(tmp,'metric_evidence.npz'),**evidence(world))
             before = SV.verify(data,tmp)
-            after = SV.process(data,tmp,{'scene_repair_limit':2},repair=True)
+            after = SV.process(data,tmp,{'validation_mode':'audit','scene_repair_limit':2},repair=True)
             self.assertTrue(after['repairs'])
             self.assertGreater(after['evidence'][0]['coverage_fraction'],before['evidence'][0]['coverage_fraction'])
             self.assertEqual(after['evidence'][0]['conflict_fraction'],0.)
@@ -179,7 +179,7 @@ class VerificationTests(unittest.TestCase):
         before_v = np.asarray([m['v'] for m in data['meshes']])
         with tempfile.TemporaryDirectory() as tmp:
             np.savez_compressed(os.path.join(tmp,'metric_evidence.npz'),**evidence(world))
-            result = SV.process(data,tmp,{'scene_repair_limit':1},repair=True)
+            result = SV.process(data,tmp,{'validation_mode':'audit','scene_repair_limit':1},repair=True)
         moved = [r for r in result['repairs'] if r['action']=='depth-aligned primitive translation']
         self.assertEqual(len(moved),1)
         after_v = np.asarray([m['v'] for m in data['meshes'][:2]])
@@ -236,7 +236,7 @@ class HumanScaleTests(unittest.TestCase):
         data['meshes'] = [cube((-10,0,-.1),(10,20,0))]
         with tempfile.TemporaryDirectory() as tmp:
             before = SV.verify(data,tmp)
-            after = SV.process(data,tmp,{},repair=True)
+            after = SV.process(data,tmp,{'validation_mode':'audit'},repair=True)
         self.assertTrue(any(i['kind']=='foot_support' for i in before['issues']))
         self.assertTrue(any(r['action']=='constant support scale' for r in after['repairs']))
         self.assertFalse(any(i['kind']=='foot_support' for i in after['issues']))
