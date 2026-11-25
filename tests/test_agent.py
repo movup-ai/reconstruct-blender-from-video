@@ -569,7 +569,7 @@ class TestApi(unittest.TestCase):
             self.assertEqual(self.app.store.latest_for(self.cid)['stage'],'background')
             info=json.loads(self.get('/api/clip/%s'%self.cid)[1])
             self.assertTrue(info['background']['ready'])
-            self.assertEqual(info['status']['label'],'waiting for background')
+            self.assertEqual(info['status']['label'],'waiting for background render')
             self.assertEqual(self.post('/api/clip/%s/run?stage=invalid'%self.cid)[0],400)
         finally:
             self.app.runner.pause(self.ws.user);self.app.store.cancel_queued(self.cid)

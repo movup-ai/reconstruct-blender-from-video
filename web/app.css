@@ -279,7 +279,7 @@ pre.log { background:var(--sunk); color:var(--ink); border:1px solid var(--seam)
 .objlist { display:flex; flex-direction:column; gap:8px; }
 .objrow { border:1px solid var(--seam); border-radius:var(--r); padding:10px; background:var(--paper); cursor:pointer; min-width:0; }
 .objrow:hover { border-color:var(--seam-strong); }
-.objrow.osel { border-color:var(--accent); box-shadow:0 0 0 2px rgba(15,110,116,.14); background:#fbfdfd; }
+.objrow.osel { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,.16); background:#eff6ff; }
 .objtop { display:flex; align-items:center; gap:8px; }
 .objtop .sw { width:12px; height:12px; border-radius:3px; flex:none; }
 .objtop input { flex:1; min-width:0; }
@@ -292,7 +292,14 @@ pre.log { background:var(--sunk); color:var(--ink); border:1px solid var(--seam)
 .objprops select { width:100%; min-width:0; font-size:13px; min-height:32px; padding:4px 6px; }
 .objhead { margin:10px 0 4px; }
 .objrow.found { background:var(--sunk); border-style:dashed; }
-.objrow.found.osel { background:#fbfdfd; border-style:solid; }
+.objrow.found.osel { background:#eff6ff; border-style:solid; }
+.object-history { display:inline-flex; gap:4px; margin-left:8px; }
+.object-history button { min-height:26px; padding:3px 9px; font-size:12px; }
+.background-render { display:inline-flex; align-items:center; gap:8px; }
+.loading-spinner { display:none; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; flex:none; }
+.background-render[aria-busy="true"] .loading-spinner { display:inline-block; animation:background-spin .8s linear infinite; }
+@keyframes background-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .background-render[aria-busy="true"] .loading-spinner { animation-duration:2s; } }
 .objtag { flex:none; font-size:11px; color:var(--slate); background:var(--paper); border:1px solid var(--seam-strong); border-radius:999px; padding:0 7px; line-height:18px; white-space:nowrap; }
 .objprops select:disabled, .objtop input:disabled { opacity:.6; }
 .objempty { color:var(--slate); font-size:13.5px; padding:14px; border:1px dashed var(--seam-strong); border-radius:var(--r); text-align:center; }

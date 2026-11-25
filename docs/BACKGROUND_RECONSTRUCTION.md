@@ -1,9 +1,16 @@
 # Background reconstruction and review
 
-The video detail page supports drawing and naming background objects, then **Detect background only**.
+The video detail page supports drawing and naming background objects, then **Render background only**.
 This updates drawn objects using saved depth, people and camera; it preserves unannotated objects.
 **Finish** reuses the result and renders the delivery. Prepare and Finish retain independent queue lanes;
 GPU model inference shares a lease while Blender rendering can overlap another clip's preparation.
+
+Drawing tools are Pen, Rectangle, Circle and Polygon; Select moves and resizes existing objects.
+For polygons, click corners and finish with Enter, a double-click or a click on the first corner.
+Escape cancels an unfinished polygon. Ctrl+Z removes its last corner or undoes the last completed object edit;
+Ctrl+Shift+Z / Ctrl+Y redoes an edit. Undo/Redo buttons provide the same actions. Text fields retain native text undo.
+Selected objects have a solid blue outline and blue handles. Clicking outside the image and object controls
+deselects them. Background rendering displays an animated loading indicator until its queued/running job ends.
 
 ## Repairs
 

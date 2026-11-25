@@ -53,15 +53,17 @@
     <h2><span class="num">3</span>Objects in the set</h2>
     <p class="hint">Choose a tool and draw on the background to add an object. Use Select to move or resize an existing selection, and <kbd>Delete</kbd> to remove it. Dashed outlines are what Prepare found. With type <i>other</i> the
       description decides how it is built. Trees become pine prototypes, bushes become short rounded shrubs, and named furniture uses recognizable models. Use the held-object timeline below for carried objects.
-      Draw a box or outline, name the object, then press <b>Detect background only</b>. It saves these object annotations and updates their background models using the saved people and camera. Finish updates the delivery.</p>
-    <div class="row"><button type="button" id="background-only" class="primary" disabled>Detect background only</button><span class="small muted" id="background-state">Prepare the clip first.</span></div>
+      Draw a box or outline, name the object, then press <b>Render background only</b>. It saves these object annotations and updates the background preview using the saved people and camera. Finish updates the delivery.</p>
+    <div class="row"><button type="button" id="background-only" class="primary background-render" disabled aria-busy="false"><span class="loading-spinner" aria-hidden="true"></span><span id="background-label">Render background only</span></button><span class="small muted" id="background-state" role="status" aria-live="polite">Prepare the clip first.</span></div>
     <div id="object-tools" class="seg object-tools" role="group" aria-label="Object drawing tools">
       <button type="button" data-v="select">Select</button>
       <button type="button" data-v="pen" title="Trace an outline freehand">Pen</button>
-      <button type="button" data-v="line" title="Drag along a narrow object">Line</button>
       <button type="button" data-v="rectangle">Rectangle</button>
       <button type="button" data-v="ellipse" title="Draw a circle or oval">Circle</button>
+      <button type="button" data-v="polygon" title="Click vertices; double-click or press Enter to finish">Polygon</button>
     </div>
+    <span class="object-history"><button type="button" id="object-undo" title="Undo object edit (Ctrl+Z)" disabled>Undo</button> <button type="button" id="object-redo" title="Redo object edit (Ctrl+Shift+Z)" disabled>Redo</button></span>
+    <p id="object-tool-hint" class="small muted">Drag to draw. Ctrl+Z undoes the last object edit.</p>
     <div id="objshots"><div class="empty">Loading…</div></div>
     <div id="geometry-actions" class="small muted"></div>
     <details id="background-result" hidden><summary>Background preview</summary><img id="background-preview" class="prev" alt="Updated background placement and fitted objects"></details>
@@ -219,14 +221,30 @@ async function saveObjects() {                       // objects are kept with ev
   await post(`/api/clip/${CID}/objects?rebuild=0`, objectsBody()); ODIRTY = false;
 }
 $('background-only').onclick = async () => {
-  const button = $('background-only'); button.disabled = true;
+  backgroundRequestPending = true; backgroundActionState();
   try {
     await saveObjects();
     const r = await post(`/api/clip/${CID}/run?stage=background`);
-    toast(r.queued ? 'Detecting annotated background objects. Saved people and camera are preserved.' : 'A background job is already queued.');
+    toast(r.queued ? 'Rendering annotated background objects. Saved people and camera are preserved.' : 'A background job is already queued.');
     await refresh();
-  } catch (e) { toast(e.message, true); button.disabled = false; }
+  } catch (e) { toast(e.message, true); }
+  finally { backgroundRequestPending = false; backgroundActionState(); }
 };
+let backgroundRequestPending = false;
+function backgroundActionState() {
+  const job = INFO?.job, busy = ['queued','running'].includes(job?.state);
+  const backgroundBusy = backgroundRequestPending || (busy && job.stage === 'background');
+  const button = $('background-only');
+  button.disabled = backgroundRequestPending || busy || !INFO?.background?.ready;
+  button.setAttribute('aria-busy', String(backgroundBusy));
+  $('background-label').textContent = backgroundRequestPending ? 'Starting background render…' : backgroundBusy ?
+    (job.state === 'queued' ? 'Background render queued…' : 'Rendering background…') : 'Render background only';
+  $('background-state').textContent = backgroundRequestPending ? 'Saving objects and starting the background render…' :
+    !INFO?.background?.ready ? 'Prepare the clip first.' : backgroundBusy ?
+    (job.state === 'queued' ? 'Waiting for a background processing slot.' : 'Updating the background preview. People and camera are preserved.') :
+    busy ? 'Waiting for this clip’s current job.' : INFO.background.report ?
+    `Last background render: ${INFO.background.report.seconds}s. People and camera reused.` : 'Updates drawn objects; keeps the saved movement and camera.';
+}
 async function saveAll(confirmed) { await saveMarks(); await saveObjects(); const r = await sendReview(confirmed); dirty = false; return r; }
 $('save').onclick = async () => {
   const m = await saveMarks(); await saveObjects(); await sendReview(false); dirty = false;
@@ -340,14 +358,64 @@ function mergeFound(sh) {                           // yours + the found ones th
 async function loadObjects() {
   try { OBJ = await api(`/api/clip/${CID}/objects`); } catch (e) { $('objshots').innerHTML = '<div class="empty">Could not load the objects.</div>'; return; }
   OBJ.shots.forEach(sh => { sh.found = sh.found || []; sh.dropped = sh.dropped || []; mergeFound(sh); });
-  ODIRTY = false; OSEL = null; renderObjects();
+  ODIRTY = false; OSEL = null; objectUndo.length = 0; objectRedo.length = 0; objectDraft = null; renderObjects();
+}
+const objectUndo = [], objectRedo = [];
+const OBJECT_SELECTION = '#2563eb';
+let objectDraft = null;
+function objectSnapshot() {
+  return structuredClone({shots: OBJ.shots.map(sh => ({objects:sh.objects, dropped:sh.dropped})), selection:OSEL});
+}
+function rememberObjects(snapshot = objectSnapshot()) {
+  objectUndo.push(snapshot); if (objectUndo.length > 50) objectUndo.shift(); objectRedo.length = 0;
+  objectHistoryState();
+}
+function objectHistoryState() {
+  $('object-undo').disabled = !objectUndo.length && !objectDraft?.points.length;
+  $('object-redo').disabled = !objectRedo.length || !!objectDraft;
+}
+function restoreObjects(from, to) {
+  if (!from.length || !OBJ) return;
+  to.push(objectSnapshot()); const snapshot = from.pop();
+  OBJ.shots.forEach((sh, i) => Object.assign(sh, snapshot.shots[i]));
+  OSEL = snapshot.selection; objectDraft = null; ODIRTY = true; renderObjects();
+}
+$('object-undo').onclick = () => {
+  if (objectDraft) { objectDraft.points.pop(); if (!objectDraft.points.length) objectDraft = null; paintObjectSelection(); }
+  else restoreObjects(objectUndo, objectRedo);
+  objectHistoryState();
+};
+$('object-redo').onclick = () => restoreObjects(objectRedo, objectUndo);
+function paintObjectSelection() {
+  document.querySelectorAll('.objrow').forEach(row => row.classList.toggle('osel', !!OSEL && +row.dataset.shot === OSEL[0] && +row.dataset.object === OSEL[1]));
+  document.querySelectorAll('.objwrap canvas').forEach(cv => cv.dispatchEvent(new Event('objectselectionchange')));
+  objectHistoryState();
+}
+function addDrawnObject(si, points, rectangle = false) {
+  const sh = OBJ.shots[si], outline = points.map(p => p.map((v,i) => Math.max(0,Math.min(sh.size[i],v))));
+  const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
+  const bbox = [Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
+  const area = Math.abs(outline.reduce((sum,p,i) => { const q = outline[(i+1)%outline.length]; return sum+p[0]*q[1]-q[0]*p[1]; },0))/2;
+  if (outline.length < 3 || bbox[2]-bbox[0] < 4 || bbox[3]-bbox[1] < 4 || area < 8) return false;
+  rememberObjects(); sh.objects.unshift({what:'', type:'other', bbox, outline:rectangle ? undefined : outline, attach:null, facing:'camera'});
+  OSEL = [si,0]; ODIRTY = true; objectDraft = null; renderObjects();
+  document.querySelectorAll('.objwrap canvas')[si]?.focus({preventScroll:true}); return true;
+}
+function finishObjectPolygon() {
+  if (!objectDraft) return;
+  if (!addDrawnObject(objectDraft.si, objectDraft.points)) toast('Add at least three corners to make a polygon.');
 }
 let objectTool = 'rectangle';
 const objectTools = $('object-tools');
 segSet(objectTools, objectTool);
 objectTools.onclick = e => {
   const button = e.target.closest('button[data-v]');
-  if (button) { objectTool = button.dataset.v; segSet(objectTools, objectTool); }
+  if (button) {
+    objectDraft = null; objectTool = button.dataset.v; segSet(objectTools, objectTool); paintObjectSelection();
+    $('object-tool-hint').textContent = objectTool === 'polygon' ? 'Click corners. Double-click, click the first corner, or press Enter to finish. Escape cancels; Ctrl+Z removes the last corner.' :
+      objectTool === 'select' ? 'Click an object to select it. Drag it or its corner handles to move or resize. Ctrl+Z undoes an edit.' :
+      'Drag to draw. Ctrl+Z undoes the last object edit.';
+  }
 };
 function objectOutline(d, scale) {
   if (!d.cur) return [];
@@ -357,12 +425,6 @@ function objectOutline(d, scale) {
     const t = i * Math.PI / 24;
     return [(ax + bx + (bx - ax) * Math.cos(t)) / 2, (ay + by + (by - ay) * Math.sin(t)) / 2];
   });
-  if (d.tool === 'line') {
-    const length = Math.hypot(bx - ax, by - ay);
-    if (!length) return [];
-    const x = -(by - ay) * 5 / (scale * length), y = (bx - ax) * 5 / (scale * length);
-    return [[ax+x,ay+y],[bx+x,by+y],[bx-x,by-y],[ax-x,ay-y]];
-  }
   return [[ax,ay],[bx,ay],[bx,by],[ax,by]];
 }
 function objectsBody() {                            // what Save sends: your objects, and the found ones deleted or changed
@@ -375,6 +437,7 @@ function objectsBody() {                            // what Save sends: your obj
 }
 function touch(o) { if (o.found) o.edited = true; ODIRTY = true; }
 function removeObject(si, oi) {
+  rememberObjects();
   const sh = OBJ.shots[si], o = sh.objects[oi];
   if (o.found) sh.dropped.push({ frame: o.frame, bbox: o.orig, why: 'deleted' });
   sh.objects.splice(oi, 1); OSEL = null; ODIRTY = true; renderObjects();
@@ -388,6 +451,7 @@ function renderObjects() {
   const box = $('objshots');
   const keepScroll = [...box.querySelectorAll('.objgrid')].map(g => g.scrollTop), keepY = window.scrollY;
   drawObjects();
+  objectHistoryState();
   box.querySelectorAll('.objgrid').forEach((g, i) => { if (!keepScroll[i]) return;
     g.scrollTop = keepScroll[i];
     const img = g.querySelector('img');                   // (a picture not loaded yet makes the block shorter: again once it is)
@@ -408,13 +472,13 @@ function drawObjects() {
       ${sh.objects.length ? '' : '<div class="objempty">Choose a tool and draw on the background to add an object.</div>'}</div></div>`;
     box.appendChild(wrap);
     const back = wrap.querySelector('.objback');
-    if (back) back.onclick = e => { e.preventDefault(); sh.dropped = sh.dropped.filter(d => d.why === 'changed'); mergeFound(sh); OSEL = null; ODIRTY = true; renderObjects(); };
+    if (back) back.onclick = e => { e.preventDefault(); rememberObjects(); sh.dropped = sh.dropped.filter(d => d.why === 'changed'); mergeFound(sh); OSEL = null; ODIRTY = true; renderObjects(); };
     const img = wrap.querySelector('img'), cv = wrap.querySelector('canvas');
     const tb = wrap.querySelector('.objlist');
     const col = (o, oi) => o.found && !o.edited ? FOUNDCOL : OCOL[oi % OCOL.length];
     sh.objects.forEach((o, oi) => {                 // one object = two lines: name and remove, then type / placed on / facing
       const tr = el('div', { class: 'objrow' + (o.found && !o.edited ? ' found' : '') }); tb.appendChild(tr); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
-      if (sel) tr.classList.add('osel');
+      if (sel) tr.classList.add('osel'); tr.dataset.shot = si; tr.dataset.object = oi;
       const id = `o${si}_${oi}`, lock = o.nobox ? 'disabled' : '';
       tr.innerHTML = `<div class="objtop"><span class="sw" style="background:${col(o, oi)}"></span>
           <input type="text" value="${esc(o.what)}" maxlength="200" placeholder="Describe it, e.g. white pillar, potted plant, bag in his left hand" title="With type “other”, the description decides how it is built: a thing it names (door, pillar, table, car…) becomes that model; a plant, curtain, statue or anything else is built from its measured shape; “held / in his hand / backpack” puts it on the person’s hand or back." aria-label="Object description" ${lock}>
@@ -428,21 +492,23 @@ function drawObjects() {
           <label>Size in metres (width, height, depth)<input class="object-size" value="${o.size?.join(', ') || ''}" placeholder="auto" ${lock}></label>
         </div>`;
       const [nm] = tr.querySelectorAll('input'); const [ty, kd, fa, dl] = tr.querySelectorAll('select');
-      kd.onchange = () => { o.role = kd.value || null; delete o.colour_role; touch(o); renderObjects(); };
-      dl.onchange = () => { o.level = dl.value ? +dl.value : null; touch(o); renderObjects(); };
+      kd.onchange = () => { rememberObjects(); o.role = kd.value || null; delete o.colour_role; touch(o); renderObjects(); };
+      dl.onchange = () => { rememberObjects(); o.level = dl.value ? +dl.value : null; touch(o); renderObjects(); };
+      let nameBefore;
+      nm.onfocus = () => { nameBefore = objectSnapshot(); };
       nm.oninput = () => { o.what = nm.value; touch(o); };
-      nm.onchange = () => renderObjects();
-      ty.onchange = () => { o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); touch(o); renderObjects(); };
-      fa.onchange = () => { o.facing = fa.value; touch(o); renderObjects(); };
+      nm.onchange = () => { if (nameBefore) rememberObjects(nameBefore); renderObjects(); };
+      ty.onchange = () => { rememberObjects(); o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); touch(o); renderObjects(); };
+      fa.onchange = () => { rememberObjects(); o.facing = fa.value; touch(o); renderObjects(); };
       tr.querySelector('.object-size').onchange = e => {
         const text = e.target.value.trim(), values = text.split(/[,\s]+/).map(Number);
         if (text && (values.length !== 3 || values.some(v => !Number.isFinite(v) || v <= 0 || v > 100))) {
           toast('Enter width, height and depth in metres.'); e.target.value = o.size?.join(', ') || ''; return;
         }
-        o.size = text ? values : null; touch(o);
+        rememberObjects(); o.size = text ? values : null; touch(o);
       };
       tr.querySelector('button').onclick = () => removeObject(si, oi);
-      tr.onclick = e => { if (!e.target.closest('input, select, button')) { OSEL = [si, oi]; renderObjects(); } };
+      tr.onpointerdown = () => { OSEL = [si, oi]; paintObjectSelection(); };
     });
     let drag = null;
     const scale = () => img.clientWidth / sh.size[0];
@@ -458,34 +524,50 @@ function drawObjects() {
       };
       g.font = `${12 * d}px system-ui`; g.textBaseline = 'bottom';
       boxed().forEach(([o, oi]) => { const [x0, y0, x1, y1] = o.bbox.map(v => v * k); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
-        const c = col(o, oi), dashed = o.found && !o.edited;
+        const c = sel ? OBJECT_SELECTION : col(o, oi), dashed = o.found && !o.edited && !sel;
         const outline = o.outline || [[o.bbox[0],o.bbox[1]],[o.bbox[2],o.bbox[1]],[o.bbox[2],o.bbox[3]],[o.bbox[0],o.bbox[3]]];
         g.setLineDash(dashed ? [6 * d, 4 * d] : []); g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = (sel ? 5 : 3) * d; stroke(outline);
         g.strokeStyle = c; g.lineWidth = (sel ? 3 : 1.6) * d; stroke(outline); g.setLineDash([]);
         const label = (o.what || o.type).slice(0, 22); const tw = g.measureText(label).width + 8 * d;
         g.fillStyle = c; g.fillRect(x0, Math.max(0, y0 - 16 * d), tw, 16 * d);
-        g.fillStyle = '#111'; g.fillText(label, x0 + 4 * d, Math.max(16 * d, y0) - 2 * d);
-        if (sel) { g.fillStyle = '#fff'; g.strokeStyle = '#111'; g.lineWidth = 1.2 * d;          // corner handles: drag to resize
+        g.fillStyle = sel ? '#fff' : '#111'; g.fillText(label, x0 + 4 * d, Math.max(16 * d, y0) - 2 * d);
+        if (sel) { g.fillStyle = OBJECT_SELECTION; g.strokeStyle = '#fff'; g.lineWidth = 1.2 * d;
           [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].forEach(([hx, hy]) => { g.fillRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); g.strokeRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); }); } });
-      if (drag?.kind === 'new' && drag.cur) { g.setLineDash([6, 4]); g.strokeStyle = '#fff'; g.lineWidth = 2;
+      if (drag?.kind === 'new' && drag.cur) { g.setLineDash([]); g.strokeStyle = OBJECT_SELECTION; g.lineWidth = 2 * d;
         stroke(objectOutline(drag, scale())); g.setLineDash([]); }
+      if (objectDraft?.si === si) {
+        const points = objectDraft.points; g.strokeStyle = OBJECT_SELECTION; g.lineWidth = 2 * d; g.fillStyle = OBJECT_SELECTION;
+        g.beginPath(); points.concat(objectDraft.hover ? [objectDraft.hover] : []).forEach(([x,y],i) => i ? g.lineTo(x*k,y*k) : g.moveTo(x*k,y*k)); g.stroke();
+        points.forEach(([x,y]) => { g.beginPath(); g.arc(x*k,y*k,4*d,0,Math.PI*2); g.fill(); });
+      }
     }
     const pos = e => { const r = cv.getBoundingClientRect(); const s = scale(); return [(e.clientX - r.left) / s, (e.clientY - r.top) / s]; };
     const inside = (b, p) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+    cv.tabIndex = 0; cv.setAttribute('aria-label', 'Draw or select background objects');
     cv.addEventListener('pointerdown', e => { if (e.button !== 0 || drag) return;
+      cv.focus({preventScroll:true});
+      if (objectTool === 'polygon') {
+        const p = pos(e).map((v,i) => Math.max(0,Math.min(sh.size[i],v)));
+        if (!objectDraft || objectDraft.si !== si) objectDraft = {si,points:[]};
+        const points = objectDraft.points;
+        if (points.length >= 3 && Math.hypot(p[0]-points[0][0],p[1]-points[0][1])*scale() < 8) { finishObjectPolygon(); return; }
+        if (points.length < 256 && (!points.length || Math.hypot(p[0]-points.at(-1)[0],p[1]-points.at(-1)[1])*scale() > 3)) points.push(p);
+        objectDraft.hover = p; paintObjectSelection(); e.preventDefault(); return;
+      }
       cv.setPointerCapture(e.pointerId);
       const p = pos(e), tol = 9 / scale();
       const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null;
       if (so && !so.nobox && ['select','rectangle'].includes(objectTool)) {
         const b = so.bbox, c = [[0, 1], [2, 1], [0, 3], [2, 3]].find(([ix, iy]) => Math.abs(p[0] - b[ix]) < tol && Math.abs(p[1] - b[iy]) < tol);
-        if (c) { drag = { kind: 'size', o: so, c, b0: b.slice() }; return; }
-        if (inside(b, p)) { drag = { kind: 'move', o: so, a: p, b0: b.slice() }; return; }
+        if (c) { drag = { kind: 'size', o: so, c, b0: b.slice(), before:objectSnapshot() }; return; }
+        if (inside(b, p)) { drag = { kind: 'move', o: so, a: p, b0: b.slice(), before:objectSnapshot() }; return; }
       }
       const hit = boxed().filter(([o]) => inside(o.bbox, p))
         .sort((a, b) => (a[0].bbox[2] - a[0].bbox[0]) * (a[0].bbox[3] - a[0].bbox[1]) - (b[0].bbox[2] - b[0].bbox[0]) * (b[0].bbox[3] - b[0].bbox[1]))[0];
       drag = { kind: 'new', a: p, hit, tool: objectTool, points: [p] }; });
     cv.addEventListener('pointermove', e => {
       const p = pos(e), W = sh.size[0], H = sh.size[1];
+      if (objectDraft?.si === si && objectTool === 'polygon') { objectDraft.hover = p; draw(); return; }
       if (!drag) {                                   // the cursor says what a drag will do
         if (!['select','rectangle'].includes(objectTool)) { cv.style.cursor = 'crosshair'; return; }
         const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null, tol = 9 / scale();
@@ -507,7 +589,8 @@ function drawObjects() {
       } else {
         const [ix, iy] = drag.c; b[ix] = Math.max(0, Math.min(W, p[0])); b[iy] = Math.max(0, Math.min(H, p[1]));
       }
-      drag.moved = true; draw(); });
+      drag.moved = drag.o.bbox.some((v,i) => Math.abs(v-drag.b0[i]) > .1); draw(); });
+    cv.addEventListener('dblclick', e => { if (objectTool === 'polygon') { e.preventDefault(); finishObjectPolygon(); } });
     cv.addEventListener('pointercancel', () => {
       if (drag?.o) drag.o.bbox.splice(0, 4, ...drag.b0);
       drag = null; draw();
@@ -519,32 +602,42 @@ function drawObjects() {
         b.splice(0, 4, ...n.map(v => Math.round(v * 10) / 10));
         if (d.moved && d.o.outline) d.o.outline = d.o.outline.map(point => point.map((v,i) =>
           b[i] + (v - d.b0[i]) * (b[i+2] - b[i]) / (d.b0[i+2] - d.b0[i])));
-        if (d.moved) { touch(d.o); renderObjects(); } return;
+        if (d.moved) { rememberObjects(d.before); touch(d.o); renderObjects(); } return;
       }
       const outline = objectOutline(d, scale()).map(p => p.map((v,i) => Math.max(0, Math.min(sh.size[i], v))));
-      const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
-      const b = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-      if (outline.length >= 3 && b[2]-b[0] >= 4 && b[3]-b[1] >= 4 &&
-          (d.tool !== 'line' || Math.hypot(d.cur[0]-d.a[0], d.cur[1]-d.a[1])*scale() >= 4)) {
-        sh.objects.unshift({ what: '', type: 'other', bbox: b, outline: d.tool === 'rectangle' ? undefined : outline, attach: null, facing: 'camera' }); OSEL = [si, 0]; ODIRTY = true; renderObjects();
-        const rows = document.querySelectorAll('.objlist'); const sel = rows[si] && rows[si].querySelector('.objrow.osel select'); if (sel) sel.focus();
-      } else if (d.hit) { OSEL = [si, d.hit[1]]; renderObjects(); } else if (OSEL && OSEL[0] === si) { OSEL = null; renderObjects(); } else draw(); });
+      if (addDrawnObject(si, outline, d.tool === 'rectangle')) return;
+      if (d.hit) OSEL = [si,d.hit[1]]; else OSEL = null;
+      paintObjectSelection(); });
     img.onload = draw; if (img.complete) draw();
-    window.addEventListener('resize', draw);
+    cv.addEventListener('objectselectionchange', draw);
   });
 }
 document.addEventListener('keydown', e => {
-  if (!OSEL || !OBJ || ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+  if (!OBJ || e.defaultPrevented || e.target.closest('input,textarea,[contenteditable="true"]')) return;
+  const undo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z', redo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y';
+  if (undo || redo) { e.preventDefault(); (redo || e.shiftKey ? $('object-redo') : $('object-undo')).click(); return; }
+  if (objectDraft) {
+    if (e.key === 'Enter') { e.preventDefault(); finishObjectPolygon(); }
+    else if (e.key === 'Escape') { e.preventDefault(); objectDraft = null; paintObjectSelection(); }
+    else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); $('object-undo').click(); }
+    return;
+  }
+  if (!OSEL || e.target.tagName === 'SELECT') return;
   if (e.key === 'Delete' || e.key === 'Backspace') { removeObject(OSEL[0], OSEL[1]); e.preventDefault(); }
   else if (e.key === 'Escape') { OSEL = null; renderObjects(); }
 });
+document.addEventListener('pointerdown', e => {
+  if (e.target.closest('.objwrap,.objrow,#object-tools,.object-history')) return;
+  if (OSEL || objectDraft) { OSEL = null; objectDraft = null; paintObjectSelection(); }
+});
+window.addEventListener('resize', paintObjectSelection);
 window.addEventListener('beforeunload', e => { if (ODIRTY) { e.preventDefault(); e.returnValue = ''; } });
 
 function banner() {
   const b = $('banner'), j = INFO.job, s = INFO.status;
   if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
     b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${STAGE[j.stage]}). The queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>. You can review meanwhile.` :
-      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', background: 'Updating annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
+      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', background: 'Rendering annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
@@ -595,9 +688,7 @@ async function load(first) {
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
-  $('background-only').disabled = busy || !INFO.background?.ready;
-  $('background-state').textContent = !INFO.background?.ready ? 'Prepare the clip first.' : busy ? 'Waiting for this clip’s current job.' :
-    INFO.background.report ? `Last background update: ${INFO.background.report.seconds}s. People and camera reused.` : 'Updates drawn objects; keeps the saved movement and camera.';
+  backgroundActionState();
   $('background-result').hidden = !INFO.background?.preview;
   const alignment = INFO.background?.alignment;
   const failed = (alignment?.objects || []).filter(o => !o.passed);

@@ -327,7 +327,7 @@ class Workspace:
     def background(self, cl):
         work = folders(self.c, cl)['work']
         if any(not os.path.isfile(os.path.join(work,fn)) for fn in ('scene_data.json','camera.json','clip_info.json')):
-            raise HttpError(409, 'Prepare the clip first; background detection reuses its saved people and camera.')
+            raise HttpError(409, 'Prepare the clip first; background rendering reuses its saved people and camera.')
         return self.enqueue(cl,'background',force=True)
 
     def finish_reviewed(self):

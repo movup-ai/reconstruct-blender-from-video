@@ -1,7 +1,7 @@
 // Blender Agent - shared helpers for the pages
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-const STAGE = { fit: 'Prepare', background: 'background objects', ai: 'local AI', all: 'Finish' };
+const STAGE = { fit: 'Prepare', background: 'Render background only', ai: 'local AI', all: 'Finish' };
 function el(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) if (v !== '' && v != null) e.setAttribute(k, v);

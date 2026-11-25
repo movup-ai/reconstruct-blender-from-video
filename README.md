@@ -12,7 +12,7 @@ checkpoint locations are documented in [SAM 3 tracking](docs/SAM3_TRACKING.md) a
 Use one concurrent job on the RTX 4070. TensorRT joint engines are cached in `models/trt_cache`.
 The clip editor has a **Held-object timeline** for named props, pickups, releases, transfers and visibility.
 Prop edits reuse fitted people and cameras; only changed scene layers and requested outputs are rebuilt.
-On a prepared clip's detail page, draw and name scene objects, then use **Detect background only** in
+On a prepared clip's detail page, draw and name scene objects, then use **Render background only** in
 **Objects in the set**. It saves only object annotations, segments the drawn boxes (or uses drawn outlines),
 updates their models and shows a background preview. Saved people, movement and camera remain unchanged.
 Use **Finish** afterward to update the rendered video and delivery package.
