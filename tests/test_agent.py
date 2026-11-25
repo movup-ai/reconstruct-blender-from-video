@@ -490,6 +490,19 @@ class TestApi(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIsNone(json.loads(body)["review"])
 
+    def test_rebuilt_comparison_has_a_new_media_version(self):
+        cl=self.ws.lib.clips[0];f=clipsmod.folders(self.ws.c,cl)
+        folder=os.path.join(f['submit'],'comparison');os.makedirs(folder,exist_ok=True)
+        path=os.path.join(folder,'version-test.mp4')
+        try:
+            with open(path,'wb') as stream:stream.write(b'test render')
+            first=json.loads(self.get('/api/clip/'+self.cid)[1])['outputs']
+            self.assertTrue(first['comparison']);stamp=os.stat(path).st_mtime_ns
+            os.utime(path,ns=(stamp,stamp+1000000000))
+            second=json.loads(self.get('/api/clip/'+self.cid)[1])['outputs']
+            self.assertGreater(second['comparison_version'],first['comparison_version'])
+        finally:os.remove(path)
+
     def test_nothing_runs_before_start(self):
         q = json.loads(self.get("/api/clips")[1])["queue"]
         self.assertTrue(q["paused"], "the app starts paused")

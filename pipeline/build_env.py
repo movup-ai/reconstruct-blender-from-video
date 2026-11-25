@@ -259,7 +259,7 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
                 m_['prototype'] = o.get('prototype') or ('pine' if o.get('type') == 'tree' else props.norm_type(o.get('type')))
                 if m_['prototype'] in ('pine', 'forest'):
                     m_.setdefault('role', 'bg')
-        if src.get('px') and o.get('type') not in ('mesh','patch') and not o.get('_fit') and not o.get('size_locked') and hasattr(cam, 'd'):
+        if src.get('px') and src.get('cls')!='drawn' and o.get('type') not in ('mesh','patch') and not o.get('_fit') and not o.get('size_locked') and hasattr(cam, 'd'):
             from geometry_protection import match_source_box
             meshes[k0:] = match_source_box(meshes[k0:], src, cam.d)
     return meshes

@@ -14,7 +14,7 @@ import props
 from common import jsave
 from profiling import stage
 
-VERSION = 1
+VERSION = 2
 FURNITURE = {'chair','office_chair','table','desk','counter','sofa','bed','cabinet','shelf','bookshelf','bench','stool'}
 ROUND = {'plant_pot','pine','palm','bush','vase','bottle','pot'}
 
@@ -46,11 +46,11 @@ def room(fr):
 
 def observation(fr, mask, partial=False, parts=None):
     """Compact mask, calibrated camera, reliable depth, and known foreground occluders."""
-    mask=np.asarray(mask,bool)&fr.valid&~fr.person&~fr.bars
+    mask=np.asarray(mask,bool)&~fr.person&~fr.bars
     if mask.sum()<16:return None
     h,w=fr.H,fr.W;scale=min(1.,256/w);shape=(max(1,round(h*scale)),max(1,round(w*scale)))
     def resize(m):return cv2.resize(np.asarray(m,np.uint8),shape[::-1],interpolation=cv2.INTER_NEAREST)>0
-    p=fr.P[mask];z=p[:,2]*fr.s
+    p=fr.P[mask&fr.valid];z=p[:,2]*fr.s
     z=z[np.isfinite(z)&(z>.05)]
     if len(z)<8:return None
     med=float(np.median(z));mad=float(np.median(np.abs(z-med)))
@@ -72,9 +72,9 @@ def attach(o, fr, mask):
     """Seed a complete prototype from its observed surface, retaining hidden-part uncertainty."""
     kind=props.norm_type(o.get('type'))
     if o.get('type') in ('mesh','patch') or kind not in props.TYPES:return o
-    mask=np.asarray(mask,bool)&fr.valid&~fr.person&~fr.bars
+    mask=np.asarray(mask,bool)&~fr.person&~fr.bars
     if mask.sum()<16:return o
-    P=fr.X[mask];P=P[np.isfinite(P).all(1)]
+    P=fr.X[mask&fr.valid];P=P[np.isfinite(P).all(1)]
     if len(P)<16:return o
     default=np.asarray(props.TYPES[kind][0],float)
     lo,hi=np.percentile(P,[5,95],axis=0);anchor=np.median(P,axis=0)
@@ -105,8 +105,79 @@ def attach(o, fr, mask):
         yaw+={'left':-90,'right':90,'away':180}[o['facing']]
     o.update(pos=position.tolist(),size=dims.tolist(),yaw=yaw,abs_z=True)
     obs=observation(fr,mask,partial,parts)
-    if obs:o.setdefault('_observations',[]).append(obs)
+    if obs:
+        o.setdefault('_observations',[]).append(obs)
+        if (o.get('_src') or {}).get('cls')=='drawn' and o.get('bbox'):
+            obs['annotation_box']=(np.asarray(o['bbox'],float)/obs['source_scale']).tolist()
+            obs['primary']=True
+            if kind in ('pine','tree','palm','forest') and not o.get('_level') and not o.get('size_locked'):
+                obs['ground_plane']=list(getattr(fr,'gp',(0.,0.,0.)))
+                if getattr(fr,'annotation_ground',None):obs['ground_definition']=fr.annotation_ground
+            seed_annotation(o,obs)
+            occluder=fr.person | (fr.valid & (fr.P[:,:,2]*fr.s<obs['depth']-max(.15,.06*obs['depth'])) & ~mask)
+            obs['occluder']=bits(cv2.resize(occluder.astype(np.uint8),tuple(obs['shape'])[::-1],interpolation=cv2.INTER_NEAREST)>0)
     return o
+
+
+def bounds(points, view):
+    if not len(points):return None
+    uv,z=_uv(points,view)
+    if not len(uv) or (z<=.02).any():return None
+    lo=np.maximum(0,uv.min(0));hi=np.minimum(np.asarray(view['shape'])[::-1]-1,uv.max(0))
+    return np.r_[lo,hi]
+
+
+def box_error(points, view):
+    predicted=bounds(points,view);target=np.asarray(view['annotation_box'],float)
+    if predicted is None:return np.full(4,10.)
+    return (predicted-target)/np.tile(np.maximum(target[2:]-target[:2],2.),2)
+
+
+def seed_annotation(o, view):
+    """Use drawn image extent for size/placement; depth determines metres, not the silhouette."""
+    kind=props.norm_type(o['type']);box=np.asarray(view['annotation_box']);K=np.asarray(view['K']);R=np.asarray(view['R']);C=np.asarray(view['C'])
+    span=box[2:]-box[:2];z=float(view['depth']);dims=np.asarray(o['size'],float).copy()
+    if view.get('ground_plane') and box[3]<view['shape'][0]*.97:
+        a,b,c=view['ground_plane'];normal=np.array([-a,-b,1.])
+        ray=np.linalg.solve(K,[(box[0]+box[2])/2,box[3],1.])@R
+        denominator=ray@normal
+        foot_depth=(c-C@normal)/denominator if denominator<-.01 else -1.
+        if view.get('ground_definition'):
+            from build_env import Ground
+            hit=Ground(view['ground_definition']).hit(C,ray)
+            foot_depth=float((hit-C)@R[2]) if hit is not None else -1.
+        if .3<foot_depth<100 and .25<foot_depth/z<4.:
+            view.setdefault('measured_depth',z);view['depth']=z=float(foot_depth)
+            view['depth_sigma']=max(view['depth_sigma'],z*.2);view['ground_contact']=True
+    if not o.get('size_locked'):
+        dims[0]=max(.04,span[0]*z/K[0,0])
+        dims[1]=max(.08,span[1]*z/K[1,1]/max(.3,abs(R[1,2])))
+        if view.get('parts')==['back']:dims[1]/=.51
+        elif view.get('parts')==['top']:dims[1]=props.TYPES[kind][0][1]
+        if kind in ROUND:dims[2]=dims[0]
+        elif kind in ('wall','window','door','curtain','picture','mirror','building'):
+            dims[2]=min(props.TYPES[kind][0][2],max(.08,dims[0]*.08))
+        else:dims[2]=max(.06,min(dims[2],dims[0]))
+    parts=_parts(kind,dims);points=np.concatenate([v for name,v,_ in parts if not view.get('parts') or name in view['parts']])
+    yaw=math.radians(o.get('yaw',0.));q=np.r_[[0,0,0],np.log(dims),yaw]
+    local=_transform(points/dims[[0,2,1]],q);camera=local@R.T
+    center_depth=z-float(np.percentile(camera[:,2],15))
+    pixel=np.r_[(box[:2]+box[2:])/2,1.]
+    center=C+(np.linalg.solve(K,pixel)*center_depth)@R
+    o.update(pos=(center-(local.min(0)+local.max(0))/2).tolist(),size=dims.tolist(),abs_z=True)
+    q=np.r_[o['pos'],np.log(dims),yaw];canonical=points/dims[[0,2,1]]
+    radius=max(1.,z*.5);lower=q-np.r_[radius,radius,radius,.8,.8,.8,.01];upper=q+np.r_[radius,radius,radius,.8,.8,.8,.01]
+    if o.get('size_locked'):lower[3:6]=q[3:6]-1e-6;upper[3:6]=q[3:6]+1e-6
+    def residual(trial):
+        world=_transform(canonical,trial);_,depths=_uv(world,view)
+        depth_weight=.15 if o.get('size_locked') else 1.
+        errors=[box_error(world,view)*3,[(np.percentile(depths,15)-z)/max(.15,view['depth_sigma'])*depth_weight]]
+        if view.get('ground_contact'):
+            errors.append([ground_error(trial,view)/max(.1,np.exp(trial[4])*.1)*2])
+        if kind in ROUND:errors.append([(trial[5]-trial[3])*.5])
+        return np.concatenate(errors)
+    result=least_squares(residual,q,bounds=(lower,upper),max_nfev=70,diff_step=.001)
+    o.update(pos=result.x[:3].tolist(),size=dims.tolist() if o.get('size_locked') else np.exp(result.x[3:6]).tolist(),yaw=float(np.degrees(result.x[6])))
 
 
 def _uv(points, obs):
@@ -144,7 +215,19 @@ def _prepare(obs):
     if len(target)<8:target=_outline(np.c_[x,y],40)
     obs.update(target=target,span=span,mask_array=mask,occluder_array=occluder,
                outside=cv2.distanceTransform((~mask).astype(np.uint8),cv2.DIST_L2,3))
+    if obs.get('ground_definition'):
+        from build_env import Ground
+        obs['_ground']=Ground(obs['ground_definition'])
     return obs
+
+
+def ground_error(q, view):
+    ground=view.get('_ground')
+    if ground is None and view.get('ground_definition'):
+        from build_env import Ground
+        ground=Ground(view['ground_definition'])
+    if ground is not None:return q[2]-ground.at(q[0],q[1])
+    a,b,c=view['ground_plane'];return q[2]-a*q[0]-b*q[1]-c
 
 
 @stage('prototype_fitting')
@@ -160,20 +243,25 @@ def fit(o, max_evaluations=45):
         chosen=[v for name,v in canonical.items() if not view.get('parts') or name in view['parts']]
         if not chosen:chosen=list(canonical.values())
         sets.append(np.concatenate(chosen))
+    annotated=any(v.get('primary') for v in obs)
+    weights=np.array([1. if not annotated or v.get('primary') else v.get('fit_weight',.12) for v in obs])
     def residual(q):
         residuals=[]
-        for view,points in zip(obs,sets):
-            uv,z=_uv(_transform(points,q),view)
+        for view,points,weight in zip(obs,sets,weights):
+            world=_transform(points,q);uv,z=_uv(world,view)
             outline=_outline(uv,80)
             # Symmetric contour error prevents shrinking a prototype to a few interior points.
             dist=cKDTree(outline).query(view['target'])[0]
             outside=map_coordinates(view['outside'],[outline[:,1],outline[:,0]],order=1,mode='constant',cval=view['span'])
             occluded=map_coordinates(view['occluder_array'].astype(float),[outline[:,1],outline[:,0]],order=0,mode='constant',cval=0)>.5
             outside[occluded]=0
-            residuals.extend((dist/view['span'],outside/view['span']))
+            residuals.extend((dist/view['span']*math.sqrt(weight),outside/view['span']*math.sqrt(weight)))
             if not view['partial']:
-                residuals.append((np.median(uv,axis=0)-np.median(view['target'],axis=0))/view['span'])
-            residuals.append(np.array([(np.percentile(z,15)-view['depth'])/view['depth_sigma']])*.15)
+                residuals.append((np.median(uv,axis=0)-np.median(view['target'],axis=0))/view['span']*math.sqrt(weight))
+            residuals.append(np.array([(np.percentile(z,15)-view['depth'])/view['depth_sigma']])*(.6 if view.get('primary') else .15)*math.sqrt(weight))
+            if view.get('annotation_box'):residuals.append(box_error(world,view)*3)
+            if view.get('ground_contact'):
+                residuals.append(np.array([ground_error(q,view)/max(.1,np.exp(q[4])*.1)*2]))
             residuals.append(np.maximum(.02-z,0)*2)
         residuals.append((q[3:6]-q0[3:6])*(100 if o.get('size_locked') else .18))
         if kind in ROUND:residuals.append(np.array([(q[5]-q[3])*.7]))
@@ -198,20 +286,35 @@ def fit(o, max_evaluations=45):
     def silhouette_objective(q):
         trial=dict(o,pos=q[:3].tolist(),size=np.exp(q[3:6]).tolist(),yaw=float(np.degrees(q[6])))
         errors=[]
-        for view in obs:
+        for view,points in zip(obs,sets):
             predicted=raster(trial,view);m=metrics(predicted,view)
             center=m['center_error_px']/max(1.,view['span']*view['source_scale'])
-            errors.append(1-m['iou']+.5*min(3.,center)+.12*min(3.,m['size_error_fraction']))
+            world=_transform(points,q);_,depths=_uv(world,view)
+            depth_error=abs(np.percentile(depths,15)-view['depth'])/view['depth_sigma']
+            value=1-m['iou']+.5*min(3.,center)+.12*min(3.,m['size_error_fraction'])+.08*min(5.,depth_error)
+            if view.get('annotation_box'):
+                actual_dims=np.exp(q[3:6]);actual_parts=_parts(kind,actual_dims)
+                actual_points=np.concatenate([v for name,v,_ in actual_parts if not view.get('parts') or name in view['parts']])
+                actual_world=_transform(actual_points/actual_dims[[0,2,1]],q)
+                error=np.abs(box_error(actual_world,view))
+                value+=2*error.mean()+40*max(0.,error.max()-.025)
+            if view.get('ground_contact'):
+                value+=2*abs(ground_error(q,view))/max(.1,np.exp(q[4])*.1)
+            errors.append(value)
         regularization=np.mean((q[3:6]-q0[3:6])**2)*(.3 if o.get('size_locked') else .025)
         if kind in ROUND:regularization+=(q[5]-q[3])**2*.08
-        return float(np.mean(errors)+.25*max(errors)+regularization)
+        return float(np.average(errors,weights=weights)+.25*max(np.asarray(errors)*weights)+regularization)
     initial_silhouette=silhouette_objective(q0)
+    best=min(solutions,key=silhouette_objective).copy()
     # Projected rectangles have multiple orientation minima; compare fitted headings.
     seeds=sorted(solutions,key=silhouette_objective)[:(3 if kind in ('table','desk','counter','ceiling_light') else 1)]
     for seed in seeds:
         refined=minimize(silhouette_objective,seed,method='Powell',bounds=list(zip(lower,upper)),
                          options={'maxfev':350,'xtol':.002,'ftol':.002})
         if silhouette_objective(refined.x)<silhouette_objective(best):best=refined.x
+    if annotated and not o.get('size_locked'):
+        primary_error=max(np.abs(box_error(_transform(points,best),view)).max() for view,points in zip(obs,sets) if view.get('annotation_box'))
+        if primary_error>.04:best=q0.copy()
     score=float(np.mean(residual(best)**2))
     o.update(pos=best[:3].tolist(),size=np.exp(best[3:6]).tolist(),yaw=float(np.degrees(best[6])),abs_z=True)
     if o.get('size_locked'):o['size']=np.asarray(dims).tolist()
@@ -220,8 +323,49 @@ def fit(o, max_evaluations=45):
     o.pop('face',None)
     o['_fit']={'version':VERSION,'before':initial,'after':score,'observations':len(obs),
                'silhouette_before':initial_silhouette,'silhouette_after':silhouette_objective(best),
+               'annotation_anchored':annotated,
+               'verification_only_frames':[v['frame'] for v in obs if v.get('fit_weight')==0],
                'partial':any(v['partial'] for v in obs),'parameters':['x','y','z','width','height','depth','yaw']}
     return o
+
+
+def vet_observation(o, view):
+    """Retain doubtful views for verification, without letting them displace the edited anchor."""
+    dims=np.asarray(o['size']);parts=view.get('parts')
+    points=np.concatenate([v for name,v,_ in _parts(props.norm_type(o['type']),dims) if not parts or name in parts])
+    q=np.r_[o['pos'],np.log(dims),np.radians(o.get('yaw',0))]
+    projected=bounds(_transform(points/dims[[0,2,1]],q),view)
+    y,x=np.nonzero(unbits(view['mask'],view['shape']))
+    target=np.array([x.min(),y.min(),x.max(),y.max()]);span=np.maximum(target[2:]-target[:2],2.)
+    if projected is None or np.any(projected[2:]<=projected[:2]):bad=True
+    else:
+        center=np.abs((projected[:2]+projected[2:]-target[:2]-target[2:])/2)/span
+        ratio=(projected[2:]-projected[:2])/span
+        bad=center.max()>.75 or ratio.max()>2.5 or ratio.min()<.4
+    view['fit_weight']=0. if bad else .12
+    if bad:view['association_warning']='Mask extent disagrees with the saved camera projection; verification only.'
+    return view
+
+
+def annotation_replaces(previous, edited):
+    """An edited instance replaces overlapping automatic prototypes even from another sampled frame."""
+    views=edited.get('_observations',[])
+    if not views or not views[0].get('annotation_box') or previous.get('type') in ('mesh','patch'):return False
+    if not previous.get('pos') or not previous.get('size'):return False
+    def family(kind):
+        kind=props.norm_type(kind)
+        if kind in ('pine','tree','palm','forest'):return 'tree'
+        if kind in ('bush','hedge'):return 'shrub'
+        if kind in ('car','truck','van','bus'):return 'vehicle'
+        if kind in ('chair','office_chair'):return 'chair'
+        return kind
+    if family(previous.get('type'))!=family(edited.get('type')):return False
+    dims=np.asarray(previous['size']);points=np.concatenate([v for _,v,_ in _parts(props.norm_type(previous['type']),dims)])
+    q=np.r_[previous['pos'],np.log(dims),np.radians(previous.get('yaw',0))]
+    a=bounds(_transform(points/dims[[0,2,1]],q),views[0]);b=np.asarray(views[0]['annotation_box'])
+    if a is None:return False
+    overlap=np.maximum(0,np.minimum(a[2:],b[2:])-np.maximum(a[:2],b[:2])).prod()
+    return overlap/max(1.,min(np.maximum(0,a[2:]-a[:2]).prod(),np.maximum(0,b[2:]-b[:2]).prod()))>.55
 
 
 _flows = {}
@@ -361,7 +505,8 @@ def projected_box(o,data,frame,dx=0.):
     points=_transform(np.concatenate(chosen)/dims[[0,2,1]],q)+[dx,0,0]
     uv,z=Cam(data).project(points,frame)
     if (z<=.1).any():return None
-    lo,hi=uv.min(0),uv.max(0);pad=np.maximum(5.,(hi-lo)*.25)
+    lo,hi=uv.min(0),uv.max(0)
+    pad=np.maximum(5.,(hi-lo)*(.08 if o['_observations'][0].get('primary') else .25))
     low=np.maximum([0,0],lo-pad);high=np.minimum(data['res'],hi+pad)
     if np.any(high-low<5):return None
     return [*low,*high]
@@ -392,13 +537,32 @@ def metrics(predicted, view):
             'partial':view['partial']}
 
 
+def annotation_metrics(points, view):
+    if not view.get('annotation_box'):return {}
+    actual=bounds(points,view);target=np.asarray(view['annotation_box']);span=np.maximum(target[2:]-target[:2],2.)
+    if actual is None:return {'annotation_edge_error':10.,'annotation_center_error_px':1e5,'annotation_size_error_fraction':10.}
+    return {'annotation_edge_error':float(np.max(np.abs(actual-target)/np.tile(span,2))),
+            'annotation_center_error_px':float(np.linalg.norm((actual[:2]+actual[2:]-target[:2]-target[2:])/2)*view['source_scale']),
+            'annotation_size_error_fraction':float(np.max(np.abs(actual[2:]-actual[:2]-span)/span)),
+            'projected_box_px':(actual*view['source_scale']).tolist()}
+
+
+def passes(views):
+    return all(v['iou']>=.35 and v['size_error_fraction']<=.6 and v['center_error_px']<=24 and
+               v.get('annotation_edge_error',0)<=.12 for v in views)
+
+
 @stage('silhouette_verification')
 def audit_objects(objects, work, suffix=''):
     rows=[]
     for o in objects:
         if not o.get('_fit') or o.get('type') in ('mesh','patch'):continue
-        views=[metrics(raster(o,v),v) for v in o['_observations']]
-        passed=all(v['iou']>=.35 and v['size_error_fraction']<=.6 and v['center_error_px']<=24 for v in views)
+        dims=np.asarray(o['size']);q=np.r_[o['pos'],np.log(dims),np.radians(o.get('yaw',0))]
+        views=[]
+        for v in o['_observations']:
+            points=np.concatenate([p for name,p,_ in _parts(props.norm_type(o['type']),dims) if not v.get('parts') or name in v['parts']])
+            views.append(dict(metrics(raster(o,v),v),**annotation_metrics(_transform(points/dims[[0,2,1]],q),v)))
+        passed=passes(views)
         row={'object':o.get('name'),'type':o['type'],'passed':passed,'views':views,'fit':o['_fit']}
         o['_fit']['validation_passed']=passed;rows.append(row)
     jsave(os.path.join(work,'object_alignment%s.json'%suffix),{'version':VERSION,'objects':rows,
@@ -415,7 +579,7 @@ def audit_scene(data, work):
     rows=[]
     for name,group in groups.items():
         views=mesh_metrics(group)
-        passed=all(v['iou']>=.35 and v['size_error_fraction']<=.6 and v['center_error_px']<=24 for v in views)
+        passed=passes(views)
         rows.append({'object':name,'type':group[0].get('kind'),'passed':passed,'views':views,
                      'fit':group[0].get('_object_fit'),'final_geometry':True})
     report={'version':VERSION,'objects':rows,'passed':all(r['passed'] for r in rows),'checked':bool(rows)}
@@ -430,13 +594,15 @@ def mesh_metrics(group):
     views=[]
     for view in group[0].get('_observations',[]):
         predicted=np.zeros(tuple(view['shape']),np.uint8)
+        points=[]
         for mesh in group:
             if view.get('parts') and not any(mesh['name'].endswith('_'+p) for p in view['parts']):continue
+            if len(mesh['v']):points.extend(mesh['v'])
             uv,z=_uv(mesh['v'],view)
             for face in mesh['f']:
                 if len(face)<3 or (z[face]<=.02).any():continue
                 poly=np.clip(np.rint(uv[face]),-10000,10000).astype(np.int32)
                 cv2.fillPoly(predicted,[poly],1)
         predicted[unbits(view['occluder'],view['shape'])]=0
-        views.append(metrics(predicted>0,view))
+        views.append(dict(metrics(predicted>0,view),**annotation_metrics(points,view)))
     return views

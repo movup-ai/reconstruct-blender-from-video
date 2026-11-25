@@ -682,7 +682,13 @@ async function load(first) {
   $('blocks').innerHTML = (INFO.blocks || []).map(b => `<img src="/media/blocks/${CID}/${b}?v=${INFO.job ? INFO.job.id : 0}" alt="set">`).join('');
   $('prev').src = INFO.status.fit ? `/media/preview/${CID}.jpg?v=${INFO.job ? INFO.job.id : 0}` : '';
   $('prevbox').style.visibility = INFO.status.fit ? 'visible' : 'hidden';
-  if (INFO.outputs.comparison) { $('outbox').style.display = ''; if (!$('cmp').getAttribute('src')) $('cmp').src = '/media/comparison/' + CID + '.mp4'; }
+  if (INFO.outputs.comparison) {
+    $('outbox').style.display = '';
+    const videoUrl = `/media/comparison/${CID}.mp4?v=${INFO.outputs.comparison_version || 0}`;
+    if ($('cmp').getAttribute('src') !== videoUrl) $('cmp').src = videoUrl;
+    $('outcap').textContent = 'The finished comparison video: the source on top, the white model below.' +
+      (INFO.status.changed ? ' An earlier render is playing. Press Finish to include the latest saved edits.' : '');
+  }
   if (INFO.job) { $('jobbox').style.display = INFO.job.state === 'failed' ? '' : 'none';   // the raw log only matters when a job failed $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
@@ -722,6 +728,7 @@ async function load(first) {
     toast(INFO.job.state === 'done' ? 'Finished' : 'Failed: ' + (INFO.job.error || ''), INFO.job.state !== 'done');
     if (!['all','background'].includes(INFO.job.stage) && !dirty) { fillForm(INFO.review || INFO.suggested); }
     if (INFO.job.stage !== 'all' && !ODIRTY) loadObjects();
+    if (INFO.job.stage === 'background' && INFO.job.state === 'done') $('background-result').open = true;
   }
   lastState = state;
   return busy;

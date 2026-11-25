@@ -266,7 +266,8 @@ class Workspace:
             regs[r.get("tag", "")] = {"regions": [{k: x.get(k) for k in ("id", "type", "dropped", "height_m", "distance_m")} for x in r.get("regions", [])],
                                       "added": r.get("added", [])}
         out["regions"] = regs
-        out["outputs"] = {"comparison": bool(glob.glob(os.path.join(f["submit"], "comparison", "*.mp4"))), "zip": os.path.exists(f["zip"]),
+        comparisons=glob.glob(os.path.join(f['submit'],'comparison','*.mp4'))
+        out["outputs"] = {"comparison": bool(comparisons), 'comparison_version':max((os.stat(p).st_mtime_ns for p in comparisons),default=None), "zip": os.path.exists(f["zip"]),
                           "zip_path": f["zip"]}
         if job:
             lp = job.get("log") or os.path.join(f["work"], "job_%s.log" % job["stage"])

@@ -27,6 +27,85 @@ def observation(obj,frame=0,center=(0,0,1.4),parts=None):
 
 
 class ObjectFitTests(unittest.TestCase):
+    def test_drawn_tree_keeps_its_extent_despite_bad_later_masks(self):
+        actual={'type':'pine','pos':[-1.8,8.,0.],'size':[.9,3.5,.9],'yaw':0}
+        view=observation(actual)
+        points=np.concatenate([v for _,v,_ in O._parts('pine',actual['size'])])+actual['pos']
+        view.update(primary=True,annotation_box=O.bounds(points,view).tolist())
+        candidate=dict(actual,pos=[-1.,8.,1.],size=[.4,1.2,.4],_observations=[view])
+        O.seed_annotation(candidate,view)
+        bad=dict(view,frame=2,primary=False);bad.pop('annotation_box')
+        mask=O.unbits(view['mask'],view['shape']);bad['mask']=O.bits(np.roll(mask,55,axis=1))
+        candidate['_observations'].append(bad)
+        O.fit(candidate,max_evaluations=30)
+        points=np.concatenate([v for _,v,_ in O._parts('pine',candidate['size'])])
+        q=np.r_[candidate['pos'],np.log(candidate['size']),np.radians(candidate['yaw'])]
+        world=O._transform(points/np.asarray(candidate['size'])[[0,2,1]],q)
+        self.assertLess(np.abs(O.box_error(world,view)).max(),.12)
+        self.assertGreater(candidate['size'][1],2.8)
+        self.assertLessEqual(candidate['_fit']['silhouette_after'],candidate['_fit']['silhouette_before']+1e-8)
+
+    def test_invalid_depth_does_not_crop_the_object_silhouette(self):
+        shape=(60,80);mask=np.zeros(shape,bool);mask[5:55,10:30]=True
+        valid=np.zeros(shape,bool);valid[30:]=True
+        fr=types.SimpleNamespace(H=60,W=80,P=np.dstack([np.zeros(shape),np.zeros(shape),np.full(shape,7.)]),
+            person=np.zeros(shape,bool),bars=np.zeros(shape,bool),valid=valid,s=1.,fpix=80.,Rw=np.eye(3),Cl=np.zeros(3),k=1.,f=0)
+        view=O.observation(fr,mask)
+        np.testing.assert_array_equal(O.unbits(view['mask'],shape),mask)
+        self.assertEqual(view['depth'],7.)
+
+    def test_visible_tree_base_reconciles_wrong_foliage_depth_with_the_ground(self):
+        actual={'type':'palm','pos':[0,8.,0.],'size':[.8,3.5,.8],'yaw':0}
+        view=observation(actual);points=np.concatenate([v for _,v,_ in O._parts('palm',actual['size'])])+actual['pos']
+        view.update(primary=True,annotation_box=O.bounds(points,view).tolist(),depth=18.,ground_plane=[0.,0.,0.])
+        candidate=dict(actual,size=[.8,1.,.8],_observations=[view])
+        O.seed_annotation(candidate,view);O.fit(candidate,max_evaluations=25)
+        self.assertTrue(view['ground_contact']);self.assertEqual(view['measured_depth'],18.)
+        self.assertLess(abs(candidate['pos'][2]),.05)
+        self.assertLess(abs(candidate['pos'][1]-8.),1.)
+        self.assertGreater(candidate['size'][1],3.)
+
+    def test_tree_contact_uses_the_actual_terrain_instead_of_flat_zero(self):
+        actual={'type':'pine','pos':[0,8.,.6],'size':[.8,3.5,.8],'yaw':0}
+        view=observation(actual);points=np.concatenate([v for _,v,_ in O._parts('pine',actual['size'])])+actual['pos']
+        terrain={'z':.5,'heights':[[0.,8.,.1]],'falloff':3.}
+        view.update(primary=True,annotation_box=O.bounds(points,view).tolist(),ground_plane=[0.,0.,0.],ground_definition=terrain)
+        candidate=dict(actual,pos=[0,8,0],_observations=[view]);O.seed_annotation(candidate,view);O.fit(candidate,max_evaluations=25)
+        from build_env import Ground
+        self.assertLess(abs(candidate['pos'][2]-Ground(terrain).at(*candidate['pos'][:2])),.03)
+        self.assertGreater(candidate['pos'][2],.5)
+
+    def test_refinement_never_replaces_a_better_starting_fit(self):
+        actual={'type':'palm','pos':[0,7.,.1],'size':[.8,3.,.8],'yaw':0}
+        view=observation(actual);candidate=dict(actual,_observations=[view])
+        O.fit(candidate,max_evaluations=15)
+        self.assertLessEqual(candidate['_fit']['silhouette_after'],candidate['_fit']['silhouette_before']+1e-8)
+
+    def test_edit_replaces_an_automatic_tree_from_another_sampled_frame(self):
+        tree={'type':'pine','pos':[-.5,7.,0.],'size':[.8,3.,.8],'yaw':0}
+        view=observation(tree);points=np.concatenate([v for _,v,_ in O._parts('pine',tree['size'])])+tree['pos']
+        view['annotation_box']=O.bounds(points,view).tolist()
+        edited=dict(tree,_observations=[view]);automatic=dict(tree,_src={'frame':29})
+        self.assertTrue(O.annotation_replaces(automatic,edited))
+        self.assertFalse(O.annotation_replaces(dict(automatic,pos=[3.,7.,0.]),edited))
+        self.assertFalse(O.annotation_replaces(dict(automatic,type='chair'),edited))
+
+    def test_drawn_fallback_is_not_silently_uniformly_shrunk_by_the_builder(self):
+        from build_env import build,Cam
+        data={'frames':1,'res':[192,144],'lens':34.,'sensor':36.,'cam':[[0,0,1.4,90,0,0]],'zoom':[1.]}
+        obj={'name':'drawn','type':'pine','bbox':[10,5,30,120],'dist':4.,'frame':0,
+             '_src':{'cls':'drawn','frame':0,'px':[10,5,30,120]}}
+        with patch('geometry_protection.match_source_box',side_effect=AssertionError('legacy uniform shrink')):
+            self.assertTrue(build({'ground':{'size':0},'objects':[obj]},Cam(data)))
+
+    def test_explicit_distance_scales_fitted_placement_and_dimensions_together(self):
+        tree={'type':'pine','pos':[1.,6.,0.],'size':[.8,3.,.8],'dist':6.,'_C':[0.,0.,1.5],
+              '_reach':[6.,7.], '_observations':[{'depth':6.,'depth_sigma':.5}]}
+        E.push_back(tree,2.)
+        np.testing.assert_allclose(tree['pos'],[2.,12.,-1.5])
+        np.testing.assert_allclose(tree['size'],[1.6,6.,1.6])
+        self.assertEqual(tree['_observations'][0]['depth'],12.)
+
     def test_image_flow_matches_the_same_chair_with_uncertain_camera(self):
         rng=np.random.default_rng(4);first=rng.integers(0,256,(144,192,3),dtype=np.uint8)
         second=cv2.warpAffine(first,np.float32([[1,0,9],[0,1,2]]),(192,144))

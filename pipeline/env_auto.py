@@ -1214,8 +1214,8 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
             cv2.fillPoly(mask, [np.rint(np.asarray(outline) * fr.k).astype(np.int32)], 1)
             m &= mask.astype(bool)
         boxm = m & fr.valid & ~fr.bars
-        m = boxm & ~fr.person
-        if m.sum() < 20:                                          # hidden behind a person here: no depth of its own ->
+        m = m & ~fr.person & ~fr.bars
+        if (m & fr.valid).sum() < 20:                             # hidden behind a person here: no depth of its own ->
             kind = d.get("kind") or props.norm_type(o.get("type"))   # a model standing on the floor under its box
             print("  annotation %r: hidden by a person in this frame - %s model on the floor under its box" % (what, kind))
             ob = {"name": "drawn_%d" % (first + i), "type": kind, "bbox": [float(v) for v in b], "frame": int(f0),
@@ -1232,7 +1232,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
         if not outline and models is not None and getattr(fr, "rgb", None) is not None:
             try:
                 sm = models.sam_box_mask(fr.rgb, [x0, y0, x1, y1]) & m
-                if sm.sum() >= 0.12 * m.sum():
+                if sm.sum() >= 0.12 * m.sum() and (sm & fr.valid).sum() >= 16:
                     m = sm
             except Exception as e:
                 print("  annotation %r: no outline (%s) - the whole box is used" % (what, e))
@@ -1245,7 +1245,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
             R = region(fr, m, indoor)
             if R is not None and R.get("cls") != "sky":
                 k = onto_fit_floor(R, C, fr.gp).get("kscale", 1.0)
-        V = fr.X[m] - C
+        V = fr.X[m & fr.valid] - C
         hd = np.hypot(V[:, 0], V[:, 1]) * k
         az = np.degrees(np.arctan2(V[:, 1], V[:, 0]))
         lvl = {"_level": int(o["level"]) if str(o.get("level") or "").isdigit() else None, "_C": [float(v) for v in C],
@@ -1273,7 +1273,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
         if o.get("facing") in ("left", "right", "away"):
             ob["facing"] = o["facing"]
         if o.get('size'): ob.update(size=o['size'], size_locked=True)
-        if not ob.get('_level'):object_fit.attach(ob,fr,m)
+        object_fit.attach(ob,fr,m)
         out.append(ob)
     return out
 
@@ -1292,6 +1292,11 @@ def push_back(o, s):
         o["v"] = [rnd(C + s * (np.array(q, float) - C), 3) for q in o["v"]]
     else:
         o["dist"] = round(float(o["dist"]) * s, 2)
+        if o.get('pos') is not None:
+            o['pos']=(C+s*(np.asarray(o['pos'])-C)).tolist()
+            if not o.get('size_locked'):o['size']=(np.asarray(o['size'])*s).tolist()
+            for view in o.get('_observations',[]):
+                view['depth']*=s;view['depth_sigma']*=s;view['manual_depth']=True
     o["_reach"] = [r * s for r in o["_reach"]]
 
 
@@ -1621,8 +1626,16 @@ def additional_observations(objects,shot,data,ci,pose,models,shared,frames):
                 ys,xs=np.nonzero(moved)
                 if len(xs)>=16:
                     ratio=ci['W']/source['shape'][1]
-                    box=[max(0,(xs.min()-2)*ratio),max(0,(ys.min()-2)*ratio),
-                         min(ci['W']-1,(xs.max()+2)*ratio),min(ci['Hpic']-1,(ys.max()+2)*ratio)]
+                    flowed=np.array([max(0,(xs.min()-2)*ratio),max(0,(ys.min()-2)*ratio),
+                                     min(ci['W']-1,(xs.max()+2)*ratio),min(ci['Hpic']-1,(ys.max()+2)*ratio)])
+                    # Large inter-frame motion can trap dense flow on a different tree or wall.
+                    # A calibrated projection of the edited anchor must not be replaced by that drift.
+                    if box is None:box=flowed.tolist()
+                    else:
+                        projected=np.asarray(box);span=np.maximum(projected[2:]-projected[:2],5.)
+                        delta=np.abs((flowed[:2]+flowed[2:]-projected[:2]-projected[2:])/2)/span
+                        size_ratio=(flowed[2:]-flowed[:2])/span
+                        if delta.max()<.35 and size_ratio.min()>.5 and size_ratio.max()<1.8:box=flowed.tolist()
             if box is None:continue
             prompt=[int(round(v*k)) for v in box]
             requests.append({'rgb':rgb,'automatic':False,'boxes':[prompt]});jobs.append((o,f,prompt))
@@ -1641,7 +1654,10 @@ def additional_observations(objects,shot,data,ci,pose,models,shared,frames):
         mask &=region_mask
         source=o['_observations'][0]
         observation=object_fit.observation(fr,mask,source['partial'],source.get('parts'))
-        if observation and abs(observation['depth']/source['depth']-1)<.5:
+        if observation:
+            object_fit.vet_observation(o,observation)
+            if abs(observation['depth']/source['depth']-1)>=.3:
+                observation.update(fit_weight=0.,association_warning='Depth is inconsistent with the edited source view; verification only.')
             o['_observations'].append(observation)
         else:o.setdefault('_observation_failures',[]).append(f)
 
@@ -1706,6 +1722,7 @@ def run_annotations(name, models, c):
                 fr.segm=SimpleNamespace(names=list(evidence['names']))
             indoor,room_evidence=object_fit.room(fr)
             scene['room_evidence']=room_evidence
+            fr.annotation_ground=scene.get('ground') or {}
             new+=user_objects(annotations,tag,fr,C,f,first=len(new),indoor=indoor,fit=False,models=models)
         additional_observations(new,shot,data,ci,pose,models,shared,frames)
         deleted=[o for sh in annotations.get('shots',{}).values() for o in sh.get('dropped',[])]
@@ -1713,6 +1730,7 @@ def run_annotations(name, models, c):
               px_iou((o.get('_src') or {}).get('px',[0,0,0,0]),d['bbox'])>.5 for d in deleted)]
         keep=[o for o in keep if not any((o.get('_src') or {}).get('frame')==u.get('frame') and
               px_iou((o.get('_src') or {}).get('px',[0,0,0,0]),u['bbox'])>.3 for u in new)]
+        keep=[o for o in keep if not any(object_fit.annotation_replaces(o,u) for u in new)]
         if any(o.get('_level') for o in new):
             by_level(new,people_points(data,range(shot['frames'][0],shot['frames'][1]+1,3),dx))
         for o in new:
@@ -1722,7 +1740,8 @@ def run_annotations(name, models, c):
         object_fit.audit_objects(scene['objects'],work,'_s%d'%sid if len(shots)>1 else '')
         if len(shots)==1:env=scene
         else:env.setdefault('shots',{})[str(sid)]=scene
-    env['annotation_build']={'frames':sorted(frames),'objects':sum(len(sh.get('objects',[])) for sh in annotations.get('shots',{}).values())}
+    env['annotation_build']={'frames':sorted(frames),'fitting_version':object_fit.VERSION,
+                             'objects':sum(len(sh.get('objects',[])) for sh in annotations.get('shots',{}).values())}
     os.makedirs(os.path.dirname(env_path),exist_ok=True)
     with open(env_path,'w',encoding='utf-8') as target:target.write(dumps_env(env))
     print('  annotated background ready: %d source frames; no person or camera inference'%len(frames),flush=True)
@@ -2088,16 +2107,15 @@ def run_clip(name, models, a, c):
             for k_ in ("_level", "_C", "_reach", "_az"):
                 u.pop(k_, None)
         if mine:                                                 # the boxes drawn on the clip page win over what is found there
-            keep = [o for o in keep if not any(o["_src"].get("frame", u["frame"]) == u["frame"] and
-                                               (px_iou(o["_src"]["px"], u["bbox"]) > 0.3 or px_inside(o["_src"]["px"], u["bbox"]) > 0.6)
+            keep = [o for o in keep if not any(object_fit.annotation_replaces(o,u) or (o["_src"].get("frame", u["frame"]) == u["frame"] and
+                                               (px_iou(o["_src"]["px"], u["bbox"]) > 0.3 or px_inside(o["_src"]["px"], u["bbox"]) > 0.6))
                                                for u in mine)] + mine
             print("  %d object(s) drawn on the clip page" % len(mine))
         for o in keep:
             o.pop("_R", None)
         for i, o in enumerate(keep):
             o["name"] = "%s_%d" % (o["_src"]["cls"], i)
-            object_fit.fit(o)
-        object_fit.audit_objects(keep,work,'_s%d'%sid if len(shots)>1 else '')
+            if o['_src']['cls']!='drawn':object_fit.fit(o)
         ground = {"size": 30 if indoor else 300, "colour": "ground"}
         if slope:
             ground.update(slope_deg=slope["slope_deg"], slope_dir_deg=slope["slope_dir_deg"], origin=slope["origin"])
@@ -2121,6 +2139,14 @@ def run_clip(name, models, a, c):
             for o in keep:
                 if o["_src"]["cls"] == "slope":
                     o["off"] = True                             # the heightfield already has it
+        for o in mine:
+            if o.get('_observations'):
+                view=o['_observations'][0]
+                if view.get('ground_contact'):
+                    view['ground_definition']=ground
+                    object_fit.seed_annotation(o,view)
+            object_fit.fit(o)
+        object_fit.audit_objects(keep,work,'_s%d'%sid if len(shots)>1 else '')
         out_shots[str(sid)] = {"ground": ground, "objects": keep}
         report[str(sid)] = rep
         print("shot %d: fit camera h %.2f pitch %.1f | MoGe %s | %s | slope %s | %d objects" % (

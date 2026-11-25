@@ -394,6 +394,10 @@ def process(data, work, c, hints=None, repair=False):
             shift = depth_correction(group,bundles)
             if shift is None: continue
             replaced = {id(m): dict(m,v=(np.asarray(m['v'])+shift).tolist()) for m in group}
+            from object_fit import mesh_metrics
+            before_alignment=mesh_metrics(group);after_alignment=mesh_metrics(list(replaced.values()))
+            if any(b.get('annotation_edge_error',0)>max(.04,a.get('annotation_edge_error',0)+.01)
+                   for a,b in zip(before_alignment,after_alignment)):continue
             trial = dict(data,meshes=[replaced.get(id(m),m) for m in data['meshes']])
             checked = verify(trial,work,justification,bundles=bundles,raster_cache=cache)
             old_bad = {(i['kind'],i['object'],i['frame']) for i in result['issues'] if i['kind']!='coverage'}

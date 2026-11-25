@@ -11,6 +11,30 @@ Escape cancels an unfinished polygon. Ctrl+Z removes its last corner or undoes t
 Ctrl+Shift+Z / Ctrl+Y redoes an edit. Undo/Redo buttons provide the same actions. Text fields retain native text undo.
 Selected objects have a solid blue outline and blue handles. Clicking outside the image and object controls
 deselects them. Background rendering displays an animated loading indicator until its queued/running job ends.
+The background preview opens when its job completes. An older comparison video is labelled until Finish updates
+the delivery; completed videos use a new media version so the browser loads the new render.
+
+## Edited-object placement
+
+Edited annotations anchor the prototype's projected bounds in their source frame. Segmentation determines the
+visible shape; invalid depth pixels no longer crop that silhouette. Valid depth determines scale in metres.
+The fitter retains its initial candidate and cannot replace it with a worse objective. Later automatically
+matched views have less influence and inconsistent matches remain verification-only observations.
+
+Dense flow cannot replace a calibrated projected prompt when their positions disagree substantially. This
+avoids matching a different tree or wall during a large camera move. Matching automatic instances from other
+sampled frames are replaced by the edited object, rather than left as duplicate small prototypes.
+
+For trees with an annotated base inside the picture, the saved ground surface (including its terrain heightfield)
+constrains contact. This prevents unreliable crown depth from burying the trunk. Explicit dimensions and distance
+overrides take precedence. Placement/occlusion repairs also respect the edited bounds; drawn fallback objects
+bypass the old uniform shrinking rule.
+
+On `T014_p70d7ac25_t014-1-repair`, three edited pines and a palm were rebuilt and rendered through 134 frames.
+Their source-frame projected size errors were 0.8–2.6% and center errors were 4.7–9.9 source pixels in the final
+terrain-aware test. Saved characters, cameras and zoom were identical before and after the rebuild and render.
+These are bounds measurements: prototype silhouette fidelity and uncertain later-frame depth still have separate
+review flags. The tree/palm shapes remain the named prototypes selected by the user.
 
 ## Repairs
 
