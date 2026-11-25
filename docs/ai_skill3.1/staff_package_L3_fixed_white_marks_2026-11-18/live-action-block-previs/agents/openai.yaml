@@ -1,0 +1,4 @@
+interface:
+  display_name: "Live action to ten-part mannequin previs"
+  short_description: "Editable L3 previs with fixed white eye/chest marks, semantic colors, and frame review"
+  default_prompt: "Use $live-action-block-previs with the supplied L3 standard model, fixed pure-white eye and chest marks, and client production standards to create Blender 3D previs and a stacked frame-by-frame comparison from my live-action footage."

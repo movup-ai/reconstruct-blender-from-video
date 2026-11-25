@@ -1,0 +1,75 @@
+{
+  "srgb_0_255": {
+    "RED": [
+      194,
+      70,
+      58
+    ],
+    "BLUE": [
+      65,
+      93,
+      203
+    ],
+    "GREEN": [
+      58,
+      142,
+      83
+    ],
+    "YELLOW": [
+      202,
+      154,
+      46
+    ],
+    "BROWN": [
+      137,
+      100,
+      58
+    ],
+    "GRAY": [
+      175,
+      175,
+      175
+    ],
+    "PINK": [
+      197,
+      102,
+      146
+    ],
+    "ORANGE": [
+      208,
+      130,
+      56
+    ],
+    "WHITE": [
+      244,
+      244,
+      244
+    ],
+    "PURPLE": [
+      114,
+      73,
+      179
+    ],
+    "FRONT_MARK": [
+      255,
+      255,
+      255
+    ]
+  },
+  "semantics": {
+    "RED": "protagonist",
+    "BLUE": "second role",
+    "GREEN": "third role",
+    "YELLOW": "fourth role",
+    "BROWN": "foreground",
+    "GRAY": "legacy background fallback",
+    "PINK": "distant interactive object",
+    "ORANGE": "near interactive object",
+    "WHITE": "light source representation",
+    "PURPLE": "special target",
+    "FRONT_MARK": "Pure neutral white integrated eye/front and chest stripes; follows source dark exposure without cyan tint."
+  },
+  "background_policy": "Sample approximate background colors from each new source after consistent color management. This supersedes uniform gray backgrounds.",
+  "identity_policy": "Keep character and prop identity colors stable across shots.",
+  "mark_revision": "2026-11-18 user requested pure white, supersedes all older cyan stripe references"
+}
