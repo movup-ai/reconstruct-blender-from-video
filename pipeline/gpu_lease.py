@@ -14,6 +14,7 @@ class Lease:
 
     def acquire(self):
         if self.file is not None or not self.path: return
+        started = time.perf_counter()
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
         stream = open(self.path, 'a+b')
         stream.seek(0, os.SEEK_END)
@@ -30,6 +31,8 @@ class Lease:
                         import fcntl
                         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.file = stream
+                    from profiling import add_seconds
+                    add_seconds('inference_slot_wait', time.perf_counter()-started)
                     if waiting: print('  model inference slot acquired', flush=True)
                     return
                 except (BlockingIOError, OSError):

@@ -2,6 +2,7 @@
 import cv2
 import numpy as np
 from functools import lru_cache
+from profiling import stage,counter
 
 
 @lru_cache(maxsize=4)
@@ -49,6 +50,7 @@ def person_conflict(predicted, depth, person, valid=None, rendered=None):
     return int(wrong.sum()), int(observed.sum()), wrong
 
 
+@stage('occlusion_protection')
 def protect(data, bundles, max_shift=3.):
     """Correct depth first, then trim only unsupported conflicting surface fragments.
 
@@ -133,7 +135,8 @@ def protect(data, bundles, max_shift=3.):
     return actions
 
 
-def clip_unsupported_faces(mesh, observations, levels=6):
+@stage('occlusion_clipping')
+def clip_unsupported_faces(mesh, observations, levels=6, max_triangles=100000):
     """Keep visible/supported geometry; remove only fragments in front of observed human pixels.
 
     Evidence for the object in another view protects a fragment from destructive trimming.
@@ -164,28 +167,63 @@ def clip_unsupported_faces(mesh, observations, levels=6):
             bad[ids]|=mask[xy[ids,1],xy[ids,0]]&(z[ids]<target[xy[ids,1],xy[ids,0]]-.03)
         return bad&~supported
     vertices=np.asarray(mesh['v'],float);kept=[]
-    def visit(tri,level):
-        a,b,c=tri;ab=(a+b)/2;bc=(b+c)/2;ca=(c+a)/2
-        probes=np.array([a,b,c,ab,bc,ca,(a+b+c)/3]);bad=sample(probes)
-        if bad.all():return
-        if not bad.any():
-            # A large face can contain a small protected person between its samples.
-            intersects=False
-            for mask,target,K,R,C in masks:
-                cam=(tri-C)@R.T;uv=cam@K.T;uv=uv[:,:2]/np.maximum(cam[:,2,None],.02)
-                lo=np.maximum(0,np.floor(uv.min(0))).astype(int);hi=np.minimum([mask.shape[1]-1,mask.shape[0]-1],np.ceil(uv.max(0))).astype(int)
-                if (hi>=lo).all():
-                    local=mask[lo[1]:hi[1]+1,lo[0]:hi[0]+1]
-                    if local.any() and cam[:,2].min()<np.max(target[lo[1]:hi[1]+1,lo[0]:hi[0]+1][local])-.03:
-                        intersects=True;break
-            if not intersects or level==0:kept.append(tri);return
-        if level==0:return
-        for child in ([a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca]):visit(np.asarray(child),level-1)
-    for indices in triangles(mesh['f']):visit(vertices[indices],levels)
+    # Project many probes together instead of doing seven tiny matrix operations
+    # per triangle, per recursive child, per camera. Preserve the same split rules.
+    integrals=[cv2.integral(mask.astype(np.uint8)) for mask,*_ in masks]
+    pending=[(vertices[triangles(mesh['f'])],levels)];processed=0;limited=False
+    while pending:
+        current,level=pending.pop()
+        for start in range(0,len(current),512):
+            batch=current[start:start+512];a,b,c=batch[:,0],batch[:,1],batch[:,2]
+            if processed+len(batch)>max_triangles:
+                kept.append(current[start:]);kept.extend(tris for tris,_ in pending)
+                pending.clear();limited=True;counter('occlusion_clip_budget_exhausted');break
+            processed+=len(batch)
+            ab=(a+b)/2;bc=(b+c)/2;ca=(c+a)/2
+            probes=np.stack([a,b,c,ab,bc,ca,(a+b+c)/3],axis=1)
+            bad=sample(probes.reshape(-1,3)).reshape(-1,7)
+            clear=~bad.any(1);intersects=np.zeros(len(batch),bool)
+            if level:
+                # A triangle whose vertices all sample the same pixel in every
+                # view cannot conceal an unsampled mask feature. Depth is linear
+                # over the triangle, and the corner probes already test it.
+                constant=clear.copy()
+                for mask,K,R,C in supports+[(m,k,r,c) for m,_,k,r,c in masks]:
+                    ids=np.flatnonzero(constant)
+                    if not len(ids):break
+                    cam=(batch[ids]-C)@R.T;z=cam[:,:,2];uv=cam@K.T
+                    xy=np.rint(uv[:,:,:2]/np.maximum(z[:,:,None],.02)).astype(int)
+                    same=(xy==xy[:,:1]).all((1,2))
+                    outside=(xy[:,:,0]<0).all(1)|(xy[:,:,1]<0).all(1)|(xy[:,:,0]>=mask.shape[1]).all(1)|(xy[:,:,1]>=mask.shape[0]).all(1)
+                    constant[ids]&=(z<=.02).all(1)|((z>.02).all(1)&(same|outside))
+                for integral,(mask,target,K,R,C) in zip(integrals,masks):
+                    ids=np.flatnonzero(clear&~constant&~intersects)
+                    if not len(ids):break
+                    cam=(batch[ids]-C)@R.T;uv=cam@K.T;uv=uv[:,:,:2]/np.maximum(cam[:,:,2,None],.02)
+                    lo=np.maximum(0,np.floor(uv.min(1))).astype(int)
+                    hi=np.minimum([mask.shape[1]-1,mask.shape[0]-1],np.ceil(uv.max(1))).astype(int)
+                    valid=(hi>=lo).all(1);rows=np.flatnonzero(valid)
+                    low,high=lo[rows],hi[rows]
+                    count=integral[high[:,1]+1,high[:,0]+1]-integral[low[:,1],high[:,0]+1]-integral[high[:,1]+1,low[:,0]]+integral[low[:,1],low[:,0]]
+                    for row in rows[count>0]:
+                        x0,y0=lo[row];x1,y1=hi[row]
+                        local=mask[y0:y1+1,x0:x1+1]
+                        if cam[row,:,2].min()<np.max(target[y0:y1+1,x0:x1+1][local])-.03:
+                            intersects[ids[row]]=True
+            accepted=clear&~intersects
+            if accepted.any():kept.append(batch[accepted])
+            split=~bad.all(1)&~accepted
+            if level and split.any():
+                children=np.stack([np.stack([a,ab,ca],1),np.stack([ab,b,bc],1),
+                                   np.stack([ca,bc,c],1),np.stack([ab,bc,ca],1)],axis=1)
+                pending.append((children[split].reshape(-1,3,3),level-1))
     if not kept:return dict(mesh,f=[])
-    points=np.asarray(kept).reshape(-1,3)
+    points=np.concatenate(kept).reshape(-1,3)
     unique,inverse=np.unique(np.round(points,7),axis=0,return_inverse=True)
-    return dict(mesh,v=unique.tolist(),f=inverse.reshape(-1,3).tolist(),_occlusion_clipped=True)
+    result=dict(mesh,v=unique.tolist(),f=inverse.reshape(-1,3).tolist(),_occlusion_clipped=True)
+    result.pop('_occlusion_clip_limited',None)
+    if limited:result['_occlusion_clip_limited']=True
+    return result
 
 
 def match_source_box(group, source, data):

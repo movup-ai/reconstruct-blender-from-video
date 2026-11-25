@@ -708,6 +708,7 @@ def run_clip(video, c, args):
     held_detect(name, video, work, c)                     # before the set: the set leaves carried objects out
     rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
     rep["held_objects"] = held_place(name, work, video, c)
+    gpu_lease.release()  # Verification below uses CPU geometry only.
     if c.get("scene_verify", True):
         import scene_verify
         final_data = jload(dp)
@@ -880,6 +881,7 @@ def background_only(name, video, work, c, args, t0):
         log('  background only: detecting annotated objects; people and camera are frozen')
         commands = [sys.executable, os.path.join(HERE,'env_auto.py'), name, '--annotations-only']
         stage('background_annotations')(subprocess.run)(commands, cwd=AGENT, check=True)
+        gpu_lease.release()
         env_path = os.path.join(output_dir(), name, 'env_auto.json')
         stage('background_build')(subprocess.run)([sys.executable, os.path.join(HERE,'build_env.py'), name, '--env', env_path], cwd=AGENT, check=True)
         data = jload(dp)
@@ -1021,6 +1023,7 @@ def make_set(name, video, work, c, stage, hand_set):
                     env_p, what = cl_p, "Claude set (%s)" % now["model"]
                 else:
                     log("  set: Claude set failed (exit %s) - the local set is used" % r.returncode)
+    gpu_lease.release()  # build_env verifies geometry on the CPU; models have exited.
     r = subprocess.run([py, os.path.join(here, "build_env.py"), name] + (["--env", env_p] if env_p else []), cwd=AGENT)
     if r.returncode != 0:
         log("  set: build_env failed (exit %s) - depth set kept" % r.returncode)

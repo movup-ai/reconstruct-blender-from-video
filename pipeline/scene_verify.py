@@ -30,10 +30,16 @@ def rasterize(vertices, faces, K, R, C, shape):
     """Near-clipped, perspective-correct software z-buffer, OpenCV camera convention."""
     camera = (np.asarray(vertices, float)-C) @ R.T
     depth = np.full(shape, np.inf)
-    for face in triangles(faces):
-        poly = camera[face]
-        if not np.isfinite(poly).all(): continue
-        poly = _clip_near(poly)
+    polygons=camera[triangles(faces)]
+    finite=np.isfinite(polygons).all((1,2));front=(polygons[:,:,2]>=.01).all(1)
+    visible=finite&(polygons[:,:,2].max(1)>=.01)
+    ids=np.flatnonzero(visible&front)
+    if len(ids):
+        uv=polygons[ids]@K.T;uv=uv[:,:,:2]/uv[:,:,2,None]
+        low=uv.min(1);high=uv.max(1)
+        visible[ids]&=(high>=0).all(1)&(low<np.asarray(shape)[::-1]).all(1)
+    for poly in polygons[visible]:
+        if (poly[:,2]<.01).any():poly = _clip_near(poly)
         for i in range(1, len(poly)-1):
             xyz = poly[[0, i, i+1]]
             uv = xyz @ K.T; uv = uv[:, :2] / uv[:, 2:]
@@ -137,6 +143,7 @@ def _body(ch, f):
     return samples, feet
 
 
+@stage('scene_checks')
 def verify(data, work, justifications=None, bundles=None, resolution=160, raster_cache=None):
     issues, evidence, frames = [], [], set()
     if bundles is None: bundles, skipped = load_evidence(data, work)
@@ -148,6 +155,10 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
     meshes, mesh_keys = [], {}
     seen = {}
     for mesh in data.get("meshes", []):
+        if mesh.get('_occlusion_clip_limited'):
+            issue('occlusion_refinement_limit',mesh.get('name','mesh'),
+                  (mesh.get('visible_frames') or [0])[0],
+                  'Occlusion refinement reached its work limit; unprocessed geometry was retained for review')
         vertices = np.asarray(mesh.get("v", []), float)
         faces = mesh.get("f", [])
         if vertices.ndim != 2 or vertices.shape[1:] != (3,) or not np.isfinite(vertices).all() or not faces:
@@ -233,8 +244,9 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
         for f in sorted(selected):
             if f >= len(ch["root"]) or (ch.get("visible") and not ch["visible"][f]): continue
             body, feet = _body(ch, f)
-            for mesh in meshes:
-                if any(inside_mesh(p, mesh["v"], mesh["f"]) for p in body):
+            for mesh,(low,high) in zip(meshes,bounds):
+                candidates=body[((body>low+.01)&(body<high-.01)).all(1)]
+                if any(inside_mesh(p, mesh["v"], mesh["f"]) for p in candidates):
                     issue("penetration", mesh["name"], f, "Body or limb samples of %s intersect this object" % name)
             gaps = []
             for foot in feet:
@@ -312,6 +324,7 @@ def scale_attached_props(data, ch, factor):
             key[6:9] = (np.asarray(key[6:9])*factor).tolist()
 
 
+@stage('support_scale_search')
 def support_scale(data, ch):
     """Small constant scale suggested by sustained support, excluding likely airborne motion."""
     from build_env import cam_mats
@@ -372,6 +385,7 @@ def process(data, work, c, hints=None, repair=False):
     justification = hints.get("scene_justifications", {})
     scale_changes = [] if c.get('_freeze_people') else place_people(data, hints)
     cache = {}
+    print('  scene verification: checking geometry, depth, and contacts',flush=True)
     result = verify(data, work, justification, bundles=bundles, raster_cache=cache)
     repairs = []
     if bundles:
@@ -438,6 +452,7 @@ def process(data, work, c, hints=None, repair=False):
                 result = checked
                 repairs.append({"object": name, "action": "constant support scale", "factor": factor})
     if c.get('protect_people', True):
+        print('  scene verification: repairing source-visible person occlusion',flush=True)
         from geometry_protection import protect
         protection = protect(data, bundles)
         if protection:
@@ -462,6 +477,7 @@ def process(data, work, c, hints=None, repair=False):
     return result
 
 
+@stage('verification_preview')
 def overview(data, path):
     """Three global inspection views per shot, independent of the source camera."""
     from common import imwrite_u
