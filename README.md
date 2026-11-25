@@ -4,8 +4,9 @@ Local white-model production app. It turns the film clips in the `SOURCE` folder
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
 Person reconstruction uses **SAM 3 tracking → RTMPose masked joints → SAM 3D Body → editable Blender rigs**.
 New preparations use the supplied **L3 character standard**, fixed white markings, continuous arm refinement,
-source-color backgrounds, and conservative source-exposure matching. Finished packages include a frame review
-page with overlay and playback controls. Existing clips need one Re-check to adopt the new skeleton.
+source-color backgrounds, and conservative source-exposure matching. Normal processing uses sampled checks,
+bounded repairs, and cached validation results. **Settings → Validation mode → Audit** enables exhaustive checks
+and a frame review page with overlay and playback controls. Existing clips need one Re-check to adopt the new skeleton.
 See [L3 integration, testing, and known limits](docs/L3_PREVIS.md).
 SAM 3 also segments scene objects using the same local `models/sam3/sam3.pt` checkpoint. Its image and video
 workers and the body worker run sequentially in the isolated Python 3.12 CUDA environment. RTMPose uses
@@ -55,7 +56,8 @@ backs up previous person edits. See [SAM 3 setup, operation and limitations](doc
 
 The existing models now support MAVE-style shared metric evidence, gravity and Manhattan alignment,
 proxy-based depth scale calibration, numerical scene checks and bounded geometry repair. Prepare and
-Finish run these stages automatically; Settings has switches for shared geometry, scene checks and repair.
+Finish reuse unchanged validation. Normal mode limits depth views and repairs; optional Audit adds detailed contact,
+surface and full-frame rig checks. Settings has switches for shared geometry, scene checks and repair.
 The clip's Things to check list includes unresolved geometry issues. See [the implementation and testing guide](docs/MAVE_EXISTING_MODELS.md)
 for diagnostics, evidence queries, human scale controls and the differences from the paper.
 

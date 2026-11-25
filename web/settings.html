@@ -37,9 +37,12 @@
       <label class="k" for="metric_scene">Shared scene geometry</label>
       <div><input id="metric_scene" type="checkbox"> Align scene axes and depth using MoGe and fitted people</div>
       <label class="k" for="scene_verify">Scene checks</label>
-      <div><input id="scene_verify" type="checkbox"> Check depth, missing surfaces, body collisions and foot support</div>
+      <div><input id="scene_verify" type="checkbox"> Check scene consistency and sampled depth alignment</div>
+      <label class="k" for="validation_mode">Validation mode</label>
+      <div><select id="validation_mode"><option value="normal">Normal — automatic and bounded</option><option value="audit">Audit — exhaustive validation</option></select></div>
+      <div></div><div class="help">Normal reuses unchanged checks and limits automatic repairs. Audit adds detailed contacts, full-frame rig checks and frame-review exports. Changing modes preserves tracking and body fitting.</div>
       <label class="k" for="scene_repair">Measured surface repair</label>
-      <div><input id="scene_repair" type="checkbox"> Add measured planar surfaces when verification improves</div>
+      <div><input id="scene_repair" type="checkbox"> Try bounded depth corrections; Audit also tests additional surfaces</div>
       <label class="k" for="set_adaptive_frames">Set views</label>
       <div><input id="set_adaptive_frames" type="checkbox"> Measure additional views when the camera moves</div>
       <label class="k" for="set_max_frames">Maximum automatic views per shot</label>
@@ -157,6 +160,7 @@ async function load() {
   segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('finish_parallel').value = S.finish_parallel || 1; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
   for (const key of ['camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
   for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
+  $('validation_mode').value = S.validation_mode || 'normal';
   $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
     <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' && S.local ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
@@ -190,6 +194,7 @@ for (const key of ['camera_backend', 'da3_model', 'da3_python', 'sam3_checkpoint
   $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
 }
 for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
+$('validation_mode').onchange = e => set({ validation_mode:e.target.value }, 'Validation mode saved');
 $('set_max_frames').onchange = e => set({ set_max_frames: +e.target.value }, 'Set view limit saved');
 $('sam3d_stride').onchange = e => set({ sam3d_stride: +e.target.value }, 'Body inference interval saved');
 $('da3_meters_per_unit').onchange = e => set({ da3_meters_per_unit: e.target.value === '' ? null : +e.target.value }, 'Camera scale saved');

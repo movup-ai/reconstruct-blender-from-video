@@ -276,6 +276,8 @@ class Workspace:
                              'preview':os.path.getmtime(background_preview) if os.path.isfile(background_preview) else None,
                              'report':read_json(os.path.join(f['work'],'report_background.json'))}
         out['background']['alignment'] = read_json(os.path.join(f['work'],'object_alignment.json'))
+        validation=read_json(os.path.join(f['work'],'scene_verification.json')) or {}
+        out['background']['validation']={k:validation.get(k) for k in ('mode','cache_hit','exhaustive','checked_depth_frames')}
         out['background']['timings'] = {name:read_json(os.path.join(f['work'],name+'_profile.json'))
                                         for name in ('environment','verification')}
         out["suggested"] = review.suggested(c, cl) if pose else None

@@ -68,6 +68,7 @@
     <div id="geometry-actions" class="small muted"></div>
     <details id="background-result" hidden><summary>Background preview</summary><img id="background-preview" class="prev" alt="Updated background placement and fitted objects"></details>
     <p id="background-alignment" class="small muted"></p>
+    <p id="background-validation" class="small muted"></p>
     <details id="background-timings" hidden><summary>Background timings</summary><div id="background-timing-rows" class="small"></div><p class="small muted">Loading and inference are separate. Cached work is reused. Nested timings overlap and should not be added together.</p></details>
   </section>
 
@@ -722,6 +723,8 @@ async function load(first) {
   const alignment = INFO.background?.alignment;
   const failed = (alignment?.objects || []).filter(o => !o.passed);
   $('background-alignment').textContent = alignment?.checked ? `${alignment.objects.length} objects checked against source masks. ${failed.length ? `${failed.length} need review: ${failed.map(o => o.object).join(', ')}.` : 'All passed size, center and silhouette checks.'}` : '';
+  const validation = INFO.background?.validation;
+  $('background-validation').textContent = validation?.mode ? `${validation.mode === 'audit' ? 'Audit: detailed scene checks' : 'Normal: sampled scene checks and bounded repair'}. ${validation.cache_hit ? 'Reused unchanged validation results.' : `${validation.checked_depth_frames?.length || 0} depth views checked.`}` : '';
   const timingLabels = {model_loading:'Model loading',sam_model_loading:'SAM model loading',sam_inference:'SAM inference',sam_worker_overhead:'SAM worker startup and transfer',semantic_classification:'Semantic classification',object_classification:'Object classification',vegetation_classification:'Vegetation classification',vegetation_instance_separation:'Separating shrub instances',vegetation_recovery:'Automatic shrub recovery',prototype_observation_matching:'Matching and segmenting additional views',prototype_fitting:'Joint prototype fitting',silhouette_verification:'Projected silhouette verification',scene_verification:'Scene verification and repair',scene_checks:'Geometry, depth and contact checks',occlusion_protection:'Protecting visible people',occlusion_clipping:'Occlusion fragment refinement',support_scale_search:'Checking support scale',verification_preview:'Verification preview',inference_slot_wait:'Waiting for model inference slot',geometry_inference:'Depth inference'};
   const timingRows = Object.entries(INFO.background?.timings || {}).flatMap(([worker, p]) => p ? [
     `<p><b>${esc(worker)}: ${(+p.total_seconds || 0).toFixed(2)}s</b></p>`,
