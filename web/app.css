@@ -392,7 +392,7 @@ table.subs tr.probs li { margin:2px 0; }
 }
 @media (max-width:760px) { .deliverhint { margin-top:10px; } }
 
-/* Clips page: Cards / Progress switch, the progress table and its summary line */
+/* Clips page: Cards / Table switch, the table and its summary line */
 .viewsw { margin-left:auto; border:0; padding:3px; gap:2px; background:var(--sunk); border-radius:8px; }
 .tabs .viewsw button { border:0; border-radius:6px; min-height:28px; padding:0 14px; background:transparent; color:var(--slate);
                        box-shadow:none; font-weight:500; outline:none; }
@@ -404,6 +404,8 @@ table.subs tr.probs li { margin:2px 0; }
 .progsum b { color:var(--ink); }
 .tablewrap { overflow-x:auto; }
 table.progtable td { vertical-align:top; }
+.table-actions { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.table-actions .rm, .table-actions .qb { position:static; opacity:1; }
 table.progtable th.r, table.progtable td.r { text-align:right; }
 table.progtable .nowrap { white-space:nowrap; }
 table.progtable td.pname a { display:flex; gap:10px; align-items:center; color:inherit; text-decoration:none; min-width:0; }

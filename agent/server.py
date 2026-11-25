@@ -172,8 +172,15 @@ class Workspace:
             return {"ok": True, "dry": True, "busy": busy, "clips": [x for x in items if x["paths"]]}
         removed, failed, done = 0, [], []
         for cl in todo:
-            self.store.clear_clip(cl.id)
-            r = clipsmod.reset(self.c, cl)
+            # Workers claim jobs under this same lock. Recheck before touching files.
+            with self.runner.cond:
+                if any(j["clip"] == cl.id for j in self.store.running()):
+                    busy.append(cl.name)
+                    continue
+                self.store.cancel_queued(clip=cl.id, user=self.user)
+                r = clipsmod.reset(self.c, cl)
+                if not r["failed"]:
+                    self.store.clear_clip(cl.id, self.user)
             removed += len(r["removed"]); failed += [{"clip": cl.name, "path": p, "reason": why} for p, why in r["failed"]]
             if r["removed"]:
                 done.append(cl.name)
@@ -1079,6 +1086,9 @@ def make_handler(app):
                 return self.send(200, {"ok": True, "clips": len(ws.lib.clips)})
             if parts == ["api", "pause"]:
                 app.runner.pause(ws.user)
+                return self.send(200, {"ok": True})
+            if parts == ["api", "resume"]:
+                app.runner.resume(ws.user)
                 return self.send(200, {"ok": True})
             if parts in (["api", "finish_reviewed"], ["api", "render_confirmed"]):
                 return self.send(200, dict(ws.finish_reviewed(), ok=True))

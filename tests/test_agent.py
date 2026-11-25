@@ -439,14 +439,29 @@ class TestApi(unittest.TestCase):
         os.makedirs(f["work"], exist_ok=True)
         with open(os.path.join(f["work"], "old.txt"), "w") as fh:
             fh.write("x")
+        for stage in ("fit", "all"):
+            jid = self.app.store.enqueue(cl.id, stage, user=self.ws.user)
+            self.assertEqual(self.app.store.take({self.ws.user})["id"], jid)
+            self.app.store.finish(jid, True)
+        self.assertIn(cl.id, self.app.store.timing())
         st, d = self.post("/api/clip/%s/reset?dry=1" % self.cid)
         self.assertEqual(st, 200); self.assertTrue(d["dry"])
         self.assertIn(f["work"], [p["path"] for x in d["clips"] for p in x["paths"]])
         self.assertTrue(os.path.exists(f["work"]), "a dry run deletes nothing")
+        self.assertIn(cl.id, self.app.store.timing())
         st, d = self.post("/api/reset_all")
         self.assertEqual(st, 200); self.assertTrue(d["ok"])
         self.assertFalse(os.path.exists(f["work"]))
         self.assertTrue(os.path.exists(cl.video))
+        self.assertNotIn(cl.id, self.app.store.timing())
+        self.assertIsNone(self.app.store.latest_for(cl.id))
+
+    def test_resume_runs_waiting_queue_without_enqueuing_prepare(self):
+        self.app.runner.pause(self.ws.user)
+        with unittest.mock.patch.object(self.ws, "start", side_effect=AssertionError("unexpected Prepare")):
+            self.assertEqual(self.post("/api/resume")[0], 200)
+            self.assertFalse(self.app.runner.is_paused(self.ws.user))
+        self.app.runner.pause(self.ws.user)
 
     def test_new_pages_and_endpoints(self):
         for p in ("/submissions", "/settings", "/help", "/favicon.svg"):

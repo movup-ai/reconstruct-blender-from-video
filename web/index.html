@@ -34,7 +34,7 @@
   <div class="bar" id="bar" role="img"></div>
 
   <div class="tabs" id="tabsrow"><span id="tabs" class="contents"></span>
-    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip's Prepare and Finish: where it is and how long each took">Progress</button></span>
+    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip's Prepare and Finish: where it is and how long each took">Table</button></span>
     <input type="text" class="search" id="search" placeholder="Search clips" aria-label="Search clips" autocomplete="off" spellcheck="false"></div>
   <div id="progsum" class="progsum" style="display:none"></div>
   <div id="list"><div class="empty">Loading…</div></div>
@@ -77,17 +77,29 @@ function stepCell(c, step, p) {
   if (step === 'finish' && c.status.fit) return `<div class="pst muted">${c.status.confirmed ? 'reviewed, not finished' : 'needs review first'}</div>`;
   return '<div class="pst muted">–</div>';
 }
+function clipActions(c) {
+  const short = esc(c.name.replace(/^[^_]+_/, ''));
+  const running = c.status.job?.state === 'running', waiting = c.status.job?.state === 'queued';
+  const held = !c.status.fit && c.status.held;
+  const queue = running ? '' : waiting || (!c.status.fit && !held)
+    ? `<button class="qb" data-hold="${c.id}" data-name="${short}">Take out</button>`
+    : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${short}">Add back</button>` : '';
+  const remove = `<button class="rm" data-rm="${c.id}" data-name="${short}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : 'title="Remove from the list (the file stays in SOURCE)"'} aria-label="Remove ${short} from the list">&#10005;</button>`;
+  return {held, queue, remove};
+}
 function renderTable(list, clips, prog) {
   const rows = clips.map(c => {
     const short = c.name.replace(/^[^_]+_/, ''), t = c.took || {}, tot = t.done ? t.done.machine : (t.open ? t.open.machine : null);
+    const actions = clipActions(c);
     return `<tr><td class="pname"><a href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt=""><span><b title="${esc(c.name)}">${esc(short)}</b>
         <span class="small muted">${c.package ? esc(c.package) : 'no delivery name'}</span></span></a></td>
       <td data-k="Status">${chip(c.status)}</td>
       <td data-k="Prepare">${stepCell(c, 'prepare', prog[c.id])}</td>
       <td data-k="Finish">${stepCell(c, 'finish', prog[c.id])}</td>
-      <td data-k="Computer time" class="r nowrap" title="${t.done ? `From Start to the zip: ${fmtDur(t.done.wall)} with the queue and your review` : ''}">${tot != null ? fmtDur(tot) : '–'}</td></tr>`; }).join('');
+      <td data-k="Computer time" class="r nowrap" title="${t.done ? `From Start to the zip: ${fmtDur(t.done.wall)} with the queue and your review` : ''}">${tot != null ? fmtDur(tot) : '–'}</td>
+      <td data-k="Actions"><div class="table-actions">${actions.queue}${actions.remove}</div></td></tr>`; }).join('');
   list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th><th>Status</th><th>Prepare</th><th>Finish</th>
-    <th class="r" title="How long the computer worked on the clip (all its jobs), not counting waiting">Computer time</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <th class="r" title="How long the computer worked on the clip (all its jobs), not counting waiting">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function progressSummary(cs, q) {
   const box = $('progsum');
@@ -147,8 +159,12 @@ function render() {
   $('queue').innerHTML = nowP.length || waitP ? (q.paused ? (nowP.length ? '<b>Pausing</b> after the running job. ' : 'Paused · ') : '') +
       `<b>${nowP.length}</b> preparing, <b>${waitP}</b> waiting` + jobLines(nowP) :
     todo ? '' : (cs.length ? 'Every video is prepared.' : '');
-  $('finq').innerHTML = nowF.length || waitF ? (q.paused ? (nowF.length ? '<b>Pausing</b> after the running job. ' : 'Paused: press Start in step 1 · ') : '') +
-      `<b>${nowF.length}</b> finishing, <b>${waitF}</b> waiting` + jobLines(nowF) : '';
+  $('finq').innerHTML = nowF.length || waitF ? (q.paused ? (nowF.length ? '<b>Pausing</b> after the running job. ' : 'Paused · ') : '') +
+      `<b>${nowF.length}</b> finishing, <b>${waitF}</b> waiting <button id="finishpause" title="${q.paused ? 'Resume waiting jobs' : 'Pause the queue after the current jobs finish'}">${q.paused ? 'Resume queue' : 'Pause queue'}</button>` + jobLines(nowF) : '';
+  if ($('finishpause')) $('finishpause').onclick = async () => {
+    await post(q.paused ? '/api/resume' : '/api/pause');
+    load();
+  };
   const minor = [];
   if (failed) minor.push(`<a href="#" id="retry">Retry ${failed} failed</a>`);
   if (q.queued) minor.push(`<a href="#" id="cancel">Remove ${q.queued} waiting job(s)</a>`);
@@ -195,18 +211,14 @@ function render() {
   for (const [film, group] of Object.entries(films)) {
     if (Object.keys(films).length > 1 || film) list.insertAdjacentHTML('beforeend', `<h2>${esc(film || 'Videos')} · ${group.length}</h2>`);
     const g = el('div', { class: 'grid' });
-    group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, ''), running = c.status.job && c.status.job.state === 'running';
-      // in or out of the waiting line: Take out (Start leaves it) / Add back
-      const waiting = c.status.job && c.status.job.state === 'queued', held = !c.status.fit && c.status.held;
-      const qb = running ? '' : waiting || (!c.status.fit && !held)
-        ? `<button class="qb" data-hold="${c.id}" data-name="${esc(short)}" title="${waiting ? 'Take this job out of the waiting line' : 'Start leaves this video out'} until you add it back">Take out</button>`
-        : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${esc(short)}" title="Put this video back in line: Start prepares it with the others">Add back</button>` : '';
+    group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, '');
+      const {held, queue: qb, remove} = clipActions(c);
       g.insertAdjacentHTML('beforeend', `<div class="clipcard${qb ? ' hasq' : ''}${held ? ' held' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
         <div class="t"><span class="n" title="${esc(c.name)}">${esc(short)}</span>${chip(c.status)}</div>
         ${c.zip ? `<div class="small muted zipt" title="${esc(['From ' + c.zip, c.task.project, c.task.name, c.task.task].filter(Boolean).join('\n'))}">&#128230; ${esc([c.task.code, c.task.name].filter(Boolean).join(' · ') || c.zip)}</div>` : ''}
         <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
-        <button class="rm" data-rm="${c.id}" data-name="${esc(short)}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : `title="Remove from the list (the file stays in SOURCE)"`} aria-label="Remove ${esc(short)} from the list">&#10005;</button>${qb}</div>`); });
+        ${remove}${qb}</div>`); });
     list.appendChild(g);
   }
   bindCardButtons(list);

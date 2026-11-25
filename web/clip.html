@@ -107,6 +107,7 @@
   <label class="small muted" style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> open the next clip after</label>
   <button id="confirm" title="Save and mark the clip reviewed. It is finished later with “Finish all reviewed” on the Clips page.">&#10003; Mark reviewed</button>
   <button id="finish" class="primary" title="Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip">&#9654; Finish now</button>
+  <button id="finishqueue" hidden>Pause queue</button>
 </div></footer>
 <div class="toast" id="toast"></div>
 <div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
@@ -490,6 +491,14 @@ function banner() {
 }
 async function load(first) {
   INFO = await api('/api/clip/' + CID);
+  const finishQueue = $('finishqueue');
+  finishQueue.hidden = INFO.job?.stage !== 'all' || !['queued', 'running'].includes(INFO.job.state);
+  finishQueue.textContent = INFO.paused ? 'Resume queue' : 'Pause queue';
+  finishQueue.title = INFO.paused ? 'Resume waiting jobs' : 'Pause the queue after the current jobs finish';
+  finishQueue.onclick = async () => {
+    await post(INFO.paused ? '/api/resume' : '/api/pause');
+    refresh();
+  };
   $('geometry-actions').textContent = (INFO.geometry_protection || []).slice(-12).map(a => `${a.object}: ${a.action || a.reason}`).join(' · ');
   document.title = INFO.clip.name + ' · Blender Agent';
   $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('title').title = INFO.clip.name; $('film').textContent = INFO.clip.film;
