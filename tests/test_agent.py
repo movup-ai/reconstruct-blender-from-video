@@ -555,6 +555,18 @@ class TestApi(unittest.TestCase):
             self.app.runner.pause()
             self.post("/api/cancel_queued")
 
+    def test_prepare_from_details_clears_taken_out_state(self):
+        path = "/api/clip/%s" % self.cid
+        self.assertEqual(self.post(path + "/hold")[0], 200)
+        try:
+            self.assertTrue(self.post(path + "/run?stage=fit")[1]["queued"])
+            st = json.loads(self.get("/api/clips")[1])["clips"][0]["status"]
+            self.assertEqual((st["held"], st["label"]), (False, "waiting to prepare"))
+        finally:
+            self.app.runner.pause(self.ws.user)
+            self.post(path + "/cancel")
+            self.post(path + "/unhold")
+
     def test_remove_from_list_and_put_back(self):
         code, d = self.post("/api/clip/%s/remove" % self.cid)
         self.assertEqual(code, 200)

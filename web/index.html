@@ -80,7 +80,7 @@ function stepCell(c, step, p) {
 function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
   const running = c.status.job?.state === 'running', waiting = c.status.job?.state === 'queued';
-  const held = !c.status.fit && c.status.held;
+  const held = c.status.held && c.status.label === 'taken out';
   const queue = running ? '' : waiting || (!c.status.fit && !held)
     ? `<button class="qb" data-hold="${c.id}" data-name="${short}">Take out</button>`
     : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${short}">Add back</button>` : '';

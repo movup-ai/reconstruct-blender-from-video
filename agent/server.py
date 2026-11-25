@@ -1170,6 +1170,8 @@ def make_handler(app):
                     if stage == "all" and not (read_json(f["review"]) or {}).get("confirmed"):
                         raise HttpError(409, "confirm the clip first")
                     jid = ws.enqueue(cl, stage, force=True)
+                    if stage == "fit":
+                        set_held(cl.id, False, ws.c)                       # explicit Prepare puts the clip back in line
                     app.runner.resume(ws.user)                           # the person asked for it: their queue runs
                     return self.send(200, {"ok": True, "queued": bool(jid)})
                 if action == "objects":
