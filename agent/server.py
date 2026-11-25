@@ -231,6 +231,8 @@ class Workspace:
                 "repairs": verification.get("repairs", [])}
             sd = read_json(f["scene"])
             if sd:
+                out['prop_warnings'] = sd.get('prop_timeline_warnings', [])
+                out['geometry_protection'] = sd.get('geometry_protection', [])
                 kinds = {}
                 for m in sd.get("meshes", []):
                     k = (re.match(r"[a-z]+", m["name"]) or [m["name"]])[0]
@@ -579,6 +581,8 @@ def card_role(o):
 def save_objects(c, cl, body):
     import props
     f = folders(c, cl)
+    import dependencies
+    dependencies.adopt_existing(cl.video, c, f['work'], f['marks'], os.path.join(output_dir(c), cl.name))
     p = os.path.join(f["marks"], "env_ai.json")
     env = read_json(p, {}) or {}
     env.setdefault("provider", "edited by hand")
@@ -598,10 +602,15 @@ def save_objects(c, cl, body):
             b = [max(0.0, min(W, b[0])), max(0.0, min(H, b[1])), max(0.0, min(W, b[2])), max(0.0, min(H, b[3]))]
             if b[2] - b[0] < 3 or b[3] - b[1] < 3:
                 continue
+            size = o.get('size')
+            if size is not None:
+                from prop_timeline import finite_vector
+                size = finite_vector(size, 3, 'Object dimensions')
+                if min(size) <= 0 or max(size) > 100: raise ValueError('Object dimensions must be between 0 and 100 metres')
             objs.append({"what": str(o.get("what", ""))[:200], "type": props.norm_type(o.get("type")), "bbox": [round(v, 1) for v in b],
                          "attach": o.get("attach") if o.get("attach") in ("floor", "wall") else None,
                          "facing": o.get("facing") if o.get("facing") in ("camera", "left", "right", "away") else "camera",
-                         "size": o.get("size") if isinstance(o.get("size"), list) and len(o.get("size")) == 3 else None,
+                         "size": size,
                          "role": card_role(o),
                          "level": distance_level(o.get("level"))})
         cur = shots.setdefault(tag, {"scene": "", "labels": {}, "drop": []})
@@ -1120,6 +1129,11 @@ def make_handler(app):
                     return self.send(200, {"ok": True})
                 if action == "review":
                     d = review.validate(self.body_json())
+                    import dependencies
+                    dependencies.adopt_existing(cl.video, ws.c, f['work'], f['marks'], os.path.join(output_dir(ws.c), cl.name))
+                    from prop_timeline import validate as validate_timeline
+                    pose = read_json(f['pose'], {}) or {}
+                    d['prop_timeline'] = validate_timeline(d['prop_timeline'], pose.get('frames'))
                     d.setdefault("clip", cl.name); d.setdefault("video", cl.video)
                     review.write(f["review"], d)
                     if d["notes"].strip():                    # the description goes into meta.jsonl

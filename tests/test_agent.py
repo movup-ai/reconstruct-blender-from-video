@@ -634,6 +634,21 @@ class TestApi(unittest.TestCase):
         code, body, _ = self.get("/api/clip/" + self.cid)
         self.assertEqual(json.loads(body)["review"]["notes"], "test")
 
+    def test_review_timeline_roundtrip_and_reject_unknown_owner(self):
+        timeline=[{'id':'cup','name':'Cup','shape':'cyl','size_m':[.08,.12,.08],
+                   'events':[{'frame':0,'state':'held','person':1,'joint':'left'},
+                             {'frame':10,'state':'free'}, {'frame':20,'state':'hidden'}],
+                   'keyframes':[{'frame':10,'box':[10,10,20,30],'depth_m':3.}]}]
+        body={'people':{'1':{}},'prop_mode':'manual','prop_timeline':timeline}
+        code,result=self.post('/api/clip/%s/review'%self.cid,body)
+        self.assertEqual(code,200,result); self.assertFalse(result['queued'])
+        code,raw,_=self.get('/api/clip/'+self.cid)
+        saved=json.loads(raw)['review']
+        self.assertEqual(saved['prop_mode'],'manual')
+        self.assertEqual(saved['prop_timeline'][0]['events'][1]['state'],'free')
+        timeline[0]['events'][0]['person']=99
+        self.assertEqual(self.post('/api/clip/%s/review'%self.cid,body)[0],400)
+
 
 class TestHeldPose(unittest.TestCase):
     """a pose copied between key frames (Same pose in next): the frames between are blended from the fixes, not shaky"""

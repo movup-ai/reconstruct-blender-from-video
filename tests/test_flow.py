@@ -369,7 +369,7 @@ class TestAnnotations(unittest.TestCase):
         self.assertEqual((p("white pillar by the door")["mode"], p("white pillar by the door")["kind"]), ("model", "pillar"))
         self.assertEqual(p("desk lamp with white shade")["kind"], "lamp", "the thing is the last noun")
         self.assertEqual(p("the thing on the shelf")["mode"], "shape", "not the shelf it stands on")
-        self.assertEqual(p("a big potted plant next to the wall")["mode"], "shape")
+        self.assertEqual(p("a big potted plant next to the wall")["kind"], "plant_pot")
         self.assertEqual(p("old sculpture of a horse")["mode"], "shape")
         h = p("plastic bag held in his left hand")
         self.assertEqual((h["mode"], h["side"], h["label"]), ("held", "L", "bag"))

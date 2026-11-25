@@ -66,7 +66,7 @@ def suppress_masks(masks, scores, shape, threshold=.6, limit=256):
                                  interpolation=cv2.INTER_LINEAR) > .5 for i in keep], bool).reshape(-1, *shape)
 
 
-def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=None, **options):
+def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=None, _queue=None, **options):
     """Return automatic masks and one mask per requested XYXY box; failures never use a retired model."""
     rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
     if rgb.ndim != 3 or rgb.shape[2] != 3 or not rgb.shape[0] or not rgb.shape[1]:
@@ -101,6 +101,9 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
                     'peak_vram_mb': float(result['peak_vram_mb'])}
     if cache and os.path.isfile(cache):
         return read(cache)
+    if _queue is not None:
+        _queue.append((rgb, params, checkpoint, cache))
+        return None
     if before_inference:
         before_inference()
     with tempfile.TemporaryDirectory(prefix='sam3_scene_') as tmp:
@@ -130,20 +133,65 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
         return result
 
 
+def prefetch(requests, c, cache_dir, before_inference=None):
+    """Segment uncached scene views sequentially with one checkpoint load and bounded GPU memory."""
+    if not cache_dir: raise ValueError('Scene prefetch requires a cache directory')
+    pending = []
+    for request in requests:
+        segment(request['rgb'], c, cache_dir=cache_dir, _queue=pending,
+                automatic=request.get('automatic', True), boxes=request.get('boxes', ()), **request.get('options', {}))
+    if not pending: return 0
+    if before_inference: before_inference()
+    with tempfile.TemporaryDirectory(prefix='sam3_scene_batch_') as tmp:
+        jobs = []
+        for i, (rgb, params, checkpoint, cache) in enumerate(pending):
+            image, output = os.path.join(tmp, '%d.png'%i), os.path.join(tmp, '%d.npz'%i)
+            ok, encoded = cv2.imencode('.png', cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+            if not ok: raise RuntimeError('Could not encode scene view')
+            with open(image, 'wb') as target: target.write(encoded.tobytes())
+            jobs.append(dict(params, image=image, checkpoint=checkpoint, output=output))
+        job_path = os.path.join(tmp, 'jobs.json'); jsave(job_path, jobs)
+        subprocess.run([c.get('sam3_python') or DEFAULT_CFG['sam3_python'], os.path.abspath(__file__),
+                        '--worker', job_path, os.path.join(tmp,'unused.npz')], check=True,
+                       timeout=max(60, float(c.get('sam3_timeout_min',40))*60),
+                       creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,
+                       env=dict(os.environ,PYTHONUNBUFFERED='1',PYTHONIOENCODING='utf-8'))
+        for job, (rgb, params, checkpoint, cache) in zip(jobs, pending):
+            with np.load(job['output'], allow_pickle=False) as a:
+                result = {k:a[k].copy() for k in ('masks','box_masks','peak_vram_mb')}
+                if result['masks'].ndim!=3 or result['masks'].shape[1:]!=rgb.shape[:2] or result['box_masks'].shape!=(len(params['boxes']),*rgb.shape[:2]):
+                    raise ValueError('Invalid batch scene mask dimensions')
+            with tempfile.NamedTemporaryFile(dir=cache_dir,suffix='.npz',delete=False) as target: temp=target.name
+            try:
+                np.savez_compressed(temp, **result); os.replace(temp,cache)
+            finally:
+                if os.path.exists(temp): os.remove(temp)
+    return len(pending)
+
+
 def worker(job_path, output):
     sys.path.insert(0, os.path.join(AGENT, 'third_party', 'sam3'))
     import torch
-    from PIL import Image
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
 
     if not torch.cuda.is_available():
         raise RuntimeError('SAM 3 scene segmentation needs an NVIDIA GPU')
-    job = jload(job_path)
+    jobs = jload(job_path)
+    jobs = jobs if isinstance(jobs,list) else [dict(jobs,output=output)]
+    if not jobs: return
     torch.cuda.reset_peak_memory_stats()
-    model = build_sam3_image_model(checkpoint_path=job['checkpoint'], load_from_HF=False,
+    model = build_sam3_image_model(checkpoint_path=jobs[0]['checkpoint'], load_from_HF=False,
                                    enable_inst_interactivity=True, device='cuda')
     processor = Sam3Processor(model)
+    for job in jobs:
+        if job['checkpoint'] != jobs[0]['checkpoint']: raise ValueError('A batch must use one checkpoint')
+        worker_image(job, job['output'], model, processor)
+
+
+def worker_image(job, output, model, processor):
+    import torch
+    from PIL import Image
     image = Image.open(job['image']).convert('RGB')
     shape = (image.height, image.width)
     with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16):

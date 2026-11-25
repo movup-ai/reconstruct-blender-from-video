@@ -124,6 +124,9 @@ def export(bpy, path, blend_name, data=None):
             out["camera"]["lens_mm_per_frame"] = [_r(float(data["lens"]) * float(z), 3) for z in zoom]
             out["camera"]["note"] = "camera keyed every frame (location + rotation, and the lens: it zooms); shot frames are 1-based Blender frames"
         out["source"] = {"clip": data.get("name"), "picture_size": data.get("res"), "fps": data.get("fps"), "frames": data.get("frames")}
+        out['props'] = [{'id':p.get('object_id',p['name']), 'object':p['name'], 'label':p.get('label'),
+                         'size_m':p.get('size_m'), 'events':p.get('events', []),
+                         'event_frames':'0-based source frames'} for p in data.get('props',[]) if p.get('held')]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))

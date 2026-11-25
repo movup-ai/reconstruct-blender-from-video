@@ -52,13 +52,14 @@
   <section class="step" id="s-objects">
     <h2><span class="num">3</span>Objects in the set</h2>
     <p class="hint">Dashed boxes are what Prepare found. Click a box to fix its type, drag it to move, drag a corner to resize, <kbd>Delete</kbd> removes it. Drag on the picture to add a missing one. Describe each one in your own words; with type <i>other</i> the
-      description decides how it is built (a named thing like a door, pillar or table becomes that model; plants, curtains,
-      statues and anything else get their measured shape; “in his hand”, “held”, “backpack” put it on the person).
+      description decides how it is built. Trees become pine prototypes, bushes become short rounded shrubs, and named furniture uses recognizable models. Use the held-object timeline below for carried objects.
       <b>Re-check</b> builds the set again with your changes, and Finish uses them.</p>
     <div id="objshots"><div class="empty">Loading…</div></div>
+    <div id="geometry-actions" class="small muted"></div>
   </section>
 
 
+  <section class="step" id="s-props"><h2><span class="num">4</span>Held-object timeline</h2><div id="prop-timeline"></div></section>
   <details class="step" id="s-more">
     <summary>More <span>(camera, set, held objects, description: filled in automatically, change only if wrong)</span></summary>
   <div class="sub" id="s-camera">
@@ -113,6 +114,7 @@
   <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Other / Not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
   <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
 <script src="/static/common.js"></script>
+<script src="/static/prop_timeline.js"></script>
 <script>
 nav('clips');
 const CID = location.pathname.split('/').pop();
@@ -122,6 +124,7 @@ const EXTRA_COLS = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'];
 const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'], ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
 let INFO = null, lastState = null, dirty = false;
 const msg = t => $('msg').textContent = t;
+const propEditor = new PropTimelineEditor($('prop-timeline'), $('src'), () => dirty = true);
 
 function quality(px) {                                // how well the 3D person lines up with the video
   if (px == null) return '';
@@ -173,6 +176,7 @@ function propRow(p = {}) {
 }
 function fillForm(rv) {
   fillPeople(rv);
+  propEditor.load(rv, INFO);
   segSet($('camtype'), rv?.camera?.type || 'static');
   $('lens').value = rv?.camera?.lens || INFO.defaults.lens; $('camnote').value = rv?.camera?.note || '';
   const env = rv?.environment || {};
@@ -186,7 +190,7 @@ function collect(confirmed) {
     height: +d.querySelector('.h').value, name: d.querySelector('.nm').value.trim() });
   const props = [...$('props').tBodies[0].rows].map(tr => ({ name: tr.querySelector('.pn').value.trim(), kind: tr.querySelector('.pk').value,
     frames: tr.querySelector('.pf').value.trim(), note: tr.querySelector('.pw').value.trim() })).filter(p => p.name);
-  return { confirmed, people, camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
+  return { confirmed, people, ...propEditor.value(), camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
            environment: { depth_set: $('env_depth').checked, set_colours: $('env_colour').value, use_ai: $('env_useai').checked, props }, notes: $('notes').value };
 }
 function saveMarks() {
@@ -377,6 +381,7 @@ function drawObjects() {
           <label title="Its colour-card meaning, which sets its colour in the video. Auto: decided from what it is and where it is against the people (walls grey, lamps white, a door near a person orange...)."><span class="kindlab">Kind${roleOf(o) ? `<i class="kdot" style="background:${CARD_KINDS.find(k => k[0] === roleOf(o))[2]}"></i>` : ''}</span><select id="${id}k" ${lock}><option value="">auto</option>${CARD_KINDS.map(([v, l]) => `<option value="${v}" ${v === roleOf(o) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label title="Which way its front points. Used for library models (door, car, cabinet...); a shape built from the measured surface ignores it.">Facing<select id="${id}f" ${lock}>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label title="How far from the camera, compared with the other objects you numbered in this shot: a bigger number is farther away. The biggest number in the shot (2 or more) is the back of the set: it is placed behind every person, so nobody walks through it. Auto: where the depth measures it.">Distance<select id="${id}d" ${lock}><option value="">auto</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => `<option value="${v}" ${v === o.level ? 'selected' : ''}>${v}${v === 1 ? ' · near' : v === 9 ? ' · far' : ''}</option>`).join('')}</select></label>
+          <label>Size in metres (width, height, depth)<input class="object-size" value="${o.size?.join(', ') || ''}" placeholder="auto" ${lock}></label>
         </div>`;
       const [nm] = tr.querySelectorAll('input'); const [ty, kd, fa, dl] = tr.querySelectorAll('select');
       kd.onchange = () => { o.role = kd.value || null; delete o.colour_role; touch(o); renderObjects(); };
@@ -385,6 +390,13 @@ function drawObjects() {
       nm.onchange = () => renderObjects();
       ty.onchange = () => { o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); touch(o); renderObjects(); };
       fa.onchange = () => { o.facing = fa.value; touch(o); renderObjects(); };
+      tr.querySelector('.object-size').onchange = e => {
+        const text = e.target.value.trim(), values = text.split(/[,\s]+/).map(Number);
+        if (text && (values.length !== 3 || values.some(v => !Number.isFinite(v) || v <= 0 || v > 100))) {
+          toast('Enter width, height and depth in metres.'); e.target.value = o.size?.join(', ') || ''; return;
+        }
+        o.size = text ? values : null; touch(o);
+      };
       tr.querySelector('button').onclick = () => removeObject(si, oi);
       tr.onclick = e => { if (!e.target.closest('input, select, button')) { OSEL = [si, oi]; renderObjects(); } };
     });
@@ -478,6 +490,7 @@ function banner() {
 }
 async function load(first) {
   INFO = await api('/api/clip/' + CID);
+  $('geometry-actions').textContent = (INFO.geometry_protection || []).slice(-12).map(a => `${a.object}: ${a.action || a.reason}`).join(' · ');
   document.title = INFO.clip.name + ' · Blender Agent';
   $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('title').title = INFO.clip.name; $('film').textContent = INFO.clip.film;
   $('state').innerHTML = chip(INFO.paused && /^waiting to/.test(INFO.status.label) ? Object.assign({}, INFO.status, { label: 'waiting for Start' }) : INFO.status); $('pos').textContent = `${INFO.index + 1} of ${INFO.count}`;

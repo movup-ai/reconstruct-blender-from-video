@@ -58,6 +58,7 @@ DEFAULT_CFG = {
     "scene_verify": True,
     "scene_repair": True,                   # measured planar patches accepted only after verification
     "scene_repair_limit": 4,
+    "protect_people": True,                # correct or suppress background geometry covering source-visible people
 }
 
 RETIRED_SETTINGS = ("rtmo_model", "detect_stride", "pose3d")

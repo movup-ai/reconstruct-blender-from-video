@@ -375,6 +375,14 @@ def run_clip(video, c, args):
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render an edited scene (no new fitting)
         return render_only(name, video, work, c, args, t0)
+    # Compare semantic inputs before loading video frames or any inference models.
+    import dependencies
+    dependency_config = dict(c)
+    state = dependencies.read(os.path.join(work, 'build_state.json'), {}) or {}
+    current = dependencies.inputs(video, c, work, marks_dir(video, c), os.path.join(output_dir(), name),
+                                  review=c['_review'], overrides={'hints':hints})
+    if state.get('fit') == current['fit'] and os.path.isfile(os.path.join(work, 'scene_data.json')):
+        return rebuild_edits(name, video, work, c, args, t0, state, current)
     # Evidence belongs to this fit's cameras and shots. Never reuse a previous fit's files.
     for evidence_path in glob.glob(os.path.join(work, "metric_evidence*.npz")):
         os.remove(evidence_path)
@@ -388,6 +396,8 @@ def run_clip(video, c, args):
         log('  tracking changed: review the new person IDs before Finish')
         return {'clip':name,'status':'waiting'}
     pose = jload(pose_p); checked = jload(chk_p) if chk_p else None
+    processed_inputs = dependencies.inputs(video, dependency_config, work, marks_dir(video,c),
+        os.path.join(output_dir(),name), review=c['_review'], overrides={'hints':hints,'pose':pose,'checked':checked})
     c['_persistent_tracks'] = True
     log("  marks: %s%s" % (pose_p, "  + checked: " + chk_p if chk_p else "  (not checked by a person)"))
     frames, fps = read_frames(video)
@@ -654,6 +664,7 @@ def run_clip(video, c, args):
             "palette": palette, "sky": sky or [228, 229, 232], "exposure": 1.2, "gain": {"_video": c.get("video_gain", 2.2), "_ground": c.get("ground_gain", 3.2)},
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
     data['human_backend'] = 'sam3d_body'
+    jsave(os.path.join(work, 'fitted_scene.json'), data)
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     chars = chars_all
     if not chars:
@@ -672,10 +683,9 @@ def run_clip(video, c, args):
     info = {"W": W, "Hfull": Hfull, "y0": y0, "Hpic": Hp, "frames": N, "fps": fps}
     jsave(os.path.join(work, "clip_info.json"), dict(info, video=video, desc_path=os.path.join(os.path.dirname(pose_p), "desc.txt")))
     frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder
-    held_on = held_detect(name, video, work, c)            # before the set: the set leaves carried objects out
+    held_detect(name, video, work, c)                     # before the set: the set leaves carried objects out
     rep["set"] = make_set(name, video, work, c, args.stage, hand_set)
-    if held_on is not None:                                # found ones + the ones annotated as held on the clip page
-        rep["held_objects"] = held_place(name, work, video, c)
+    rep["held_objects"] = held_place(name, work, video, c)
     if c.get("scene_verify", True):
         import scene_verify
         final_data = jload(dp)
@@ -688,12 +698,15 @@ def run_clip(video, c, args):
         warns += ["quality - " + w for w in rep["quality"]["flags"]]
         log("  scene verification: %d unresolved, %d measured repairs" %
             (len(verification["unresolved"]), len(verification["repairs"])))
+        # Re-anchor after any measured human placement correction.
+        rep['held_objects'] = held_place(name, work, video, c)
     if args.stage in ("blend", "all"):
         blender_render(c, work, dp, N)
     if args.stage == "all":
         rep.update(make_zip(name, video, work, c))
     rep["seconds"] = round(time.time() - t0, 1); rep["status"] = "ok"
     jsave(os.path.join(work, "report.json"), rep)
+    jsave(os.path.join(work, 'build_state.json'), processed_inputs)
     log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
     return rep
 
@@ -702,6 +715,10 @@ def held_detect(name, video, work, c):
     """objects people carry (held_objects.py): found once on the NVIDIA card (output\\<clip>\\held.json, kept while
     pose.json is unchanged).  Off with config / hints.json "held_objects": false.  -> placed after the set or not"""
     import held_objects as HO
+    rv = c.get('_review', {})
+    if rv.get('prop_mode', 'manual' if rv.get('prop_timeline') else 'auto') != 'auto':
+        log('  prop timeline: using explicit events; automatic held detection skipped')
+        return None
     hp = os.path.join(marks_dir(video, c), "hints.json")
     hints = jload(hp) if os.path.exists(hp) else {}
     if not HO.enabled(c, hints):
@@ -724,7 +741,7 @@ def held_detect(name, video, work, c):
     return True
 
 
-def held_place(name, work, video, c):
+def held_place_auto(name, work, video, c):
     """put the found objects and the ones annotated as held into scene_data.json on the fitted hands / backs (after
     build_env, which moves people onto the set's ground) -> [{"name", "label", "frames"}]"""
     import held_objects as HO
@@ -751,6 +768,62 @@ def held_place(name, work, video, c):
         return []
 
 
+def held_place(name, work, video, c):
+    """Timeline validation errors must fail the job, never silently erase user annotations."""
+    import prop_timeline
+    rv = c.get('_review', {})
+    mode = rv.get('prop_mode', 'manual' if rv.get('prop_timeline') else 'auto')
+    dp = os.path.join(work, 'scene_data.json')
+    data = jload(dp)
+    data['props'] = [p for p in data.get('props', []) if not p.get('held')]
+    jsave(dp, data)
+    import held_objects
+    made = held_place_auto(name, work, video, c) if mode == 'auto' and held_objects.enabled(c,c.get('_hints',{})) else []
+    data = jload(dp)
+    ci = jload(os.path.join(work, 'clip_info.json'))
+    if mode != 'off':
+        result = prop_timeline.apply(data, rv.get('prop_timeline', []), y0=ci.get('y0', 0))
+        made += [{'name': p, 'timeline': True} for p in result['objects']]
+    else:
+        prop_timeline.apply(data, [], y0=ci.get('y0', 0))
+    jsave(dp, data)
+    return made
+
+
+def rebuild_edits(name, video, work, c, args, t0, previous, current):
+    """Reuse people/cameras/evidence; only build affected scene layers and requested outputs."""
+    import dependencies
+    dp = os.path.join(work, 'scene_data.json')
+    rep = dependencies.read(os.path.join(work, 'report.json'), {}) or {}
+    data = jload(dp)
+    env_changed = previous.get('environment') != current['environment']
+    props_changed = env_changed or previous.get('props') != current['props']
+    log('  cached people and cameras: unchanged; background=%s, props=%s' % (env_changed, props_changed))
+    if env_changed:
+        baseline = dependencies.read(os.path.join(work, 'fitted_scene.json'))
+        if baseline:
+            jsave(dp, baseline)
+        # Old scenes can be migrated once without refitting their people.
+        hand = hand_set_path(video, name, c) is not None and not getattr(args, 'auto_set', False)
+        rep['set'] = make_set(name, video, work, c, args.stage, hand)
+    if props_changed:
+        rep['held_objects'] = held_place(name, work, video, c)
+    data = jload(dp)
+    if args.stage == 'fit' and (env_changed or props_changed) and c.get('scene_verify', True):
+        import scene_verify
+        scene_verify.process(data, work, dict(c, _freeze_people=True), c.get('_hints'), repair=False)
+    jsave(dp, data)
+    if args.stage in ('all', 'blend'):
+        rendered = render_only(name, video, work, dict(c, _freeze_people=True), args, t0)
+        rep.update(rendered)
+    rep['scene_verification'] = jload(dp).get('scene_verification', {})
+    rep.update(clip=name, video=video, status='ok', seconds=round(time.time()-t0, 1),
+               reused_people=True, rebuilt_environment=env_changed, rebuilt_props=props_changed)
+    jsave(os.path.join(work, 'report.json'), rep)
+    jsave(os.path.join(work, 'build_state.json'), current)
+    return rep
+
+
 SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
 
 
@@ -764,13 +837,13 @@ def set_inputs(work, drawn):
         with open(path, "rb") as source:
             for block in iter(lambda: source.read(1024*1024), b""):
                 evidence.update(block)
-    return {"lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
+    return {"geometry_version": 3, "lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
             "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea, "metric_evidence": evidence.hexdigest()}
 
 
 def same_set_inputs(a, b, pos=0.05, ang=0.5, lens=0.3):
     """the set still fits: same frames and drawn objects, lens within 0.3 mm, camera within 5 cm / 0.5 deg every frame"""
-    if not a or not b or a.get("frames") != b.get("frames") or a.get("env_ai") != b.get("env_ai"):
+    if not a or not b or a.get('geometry_version') != b.get('geometry_version') or a.get("frames") != b.get("frames") or a.get("env_ai") != b.get("env_ai"):
         return False
     if a.get("segmentation") != b.get("segmentation"):
         return False

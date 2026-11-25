@@ -301,7 +301,7 @@ def fingerprint(c, cl):
                  "tracker_backend", "sam3_checkpoint", "sam3_python", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
                  "sam_points", "sam3_image_batch", "sam3_image_max_masks",
                  "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_python", "sam3d_stride", "sam3d_surface_side")}
-    h.update(json.dumps({"pipeline_version": 6, **settings}, sort_keys=True).encode("utf-8"))
+    h.update(json.dumps({"pipeline_version": 7, **settings}, sort_keys=True).encode("utf-8"))
     return h.hexdigest()
 
 

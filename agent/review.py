@@ -76,6 +76,16 @@ def validate(d):
                           "props": [{k: str(p.get(k, ""))[:120] for k in ("name", "kind", "frames", "note")}
                                     for p in (env.get("props") or []) if p.get("name")]}
     out["notes"] = str(d.get("notes", ""))[:2000]
+    from prop_timeline import validate as validate_timeline
+    out['prop_timeline'] = validate_timeline(d.get('prop_timeline', []))
+    mode = d.get('prop_mode', 'manual' if out['prop_timeline'] else 'auto')
+    if mode not in ('auto', 'manual', 'off'): raise ValueError('Unknown prop mode')
+    out['prop_mode'] = mode
+    owners = set(out['people'])
+    for obj in out['prop_timeline']:
+        for event in obj['events']:
+            if event['person'] is not None and str(event['person']) not in owners:
+                raise ValueError('Prop owner is not a character in this clip')
     for k in ("clip", "video"):
         if k in d:
             out[k] = d[k]

@@ -800,6 +800,41 @@ def assemble(rig, Q, N, smooth, span=None):
         out["visible"].append(bool(first <= f <= last))
     return out, B
 
+def cached_fit_track(world, y0, fs, K, height, c, style, hint, lift, p3):
+    """Cache each numeric fit independently of character names, colours and other people."""
+    import tempfile
+    from dependencies import digest
+    directory = os.path.join(c['_work'], 'person_fit_cache') if c.get('_work') else None
+    path = None
+    if directory:
+        frames = list(range(max(fs)+1))
+        key = digest({'version': 1, 'frames': fs, 'keypoints': K, 'y0': y0, 'height': height,
+            'style': style, 'hint': hint, 'lift': lift, 'p3': p3, 'step': c.get('fit_step', 2),
+            'camera': [world.cam.K(), [world.C_at(f) for f in frames],
+                       [world.R_cw(f) for f in frames], [world.f_at(f) for f in frames]]})
+        os.makedirs(directory, exist_ok=True); path = os.path.join(directory, key+'.npz')
+        if os.path.exists(path):
+            try:
+                with np.load(path, allow_pickle=False) as a:
+                    fr, values, errors = a['frames'], a['values'], a['errors']
+                    if values.shape != (len(fr), NP) or not np.isfinite(values).all(): raise ValueError('Invalid fit cache')
+                    log('      numeric person fit: reused')
+                    return Rig(height, style), dict(zip(fr.tolist(), values)), dict(zip(fr.tolist(), errors.tolist()))
+            except (OSError, ValueError, KeyError):
+                pass
+    rig, Q, err = fit_track(world, y0, fs, K, height, step=c.get('fit_step', 2), style=style,
+                           hint=hint, lift=lift, p3=p3)
+    if path:
+        fr = sorted(Q)
+        with tempfile.NamedTemporaryFile(dir=directory, suffix='.npz', delete=False) as target: temp = target.name
+        try:
+            np.savez_compressed(temp, frames=fr, values=np.asarray([Q[f] for f in fr]), errors=[err[f] for f in fr])
+            os.replace(temp, path)
+        finally:
+            if os.path.exists(temp): os.remove(temp)
+    return rig, Q, err
+
+
 def fit_all(world, y0, people, N, c):
     """people {id: (frames, kps)} -> DATA['chars'] entries + per-person report"""
     labels = ["Main character", "Second character"]
@@ -850,8 +885,7 @@ def fit_all(world, y0, people, N, c):
                 hint['_body_hip'] = targets
                 hint['distance'] = [[t[0],float(np.linalg.norm(np.asarray(t[1:3])-world.C_at(int(t[0]))[:2]))] for t in targets]
             if not any(k in hint for k in ('legs','leg_pose','mount')): hint['legs'] = 'free'
-        rig, Q, err = fit_track(world, y0, fs, K, height, step=c.get("fit_step", 2), style=style, hint=hint,
-                                lift=lifts.get(pid), p3=p3)
+        rig, Q, err = cached_fit_track(world, y0, fs, K, height, c, style, hint, lifts.get(pid), p3)
         sm = (hint or {}).get("smooth", 1.0 if (hint or {}).get("follow_dots") else c.get("smooth_frames", 1.5))
         keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)))
         if c.get('_persistent_tracks'):

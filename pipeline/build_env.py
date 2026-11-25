@@ -250,6 +250,13 @@ def build(env, cam, frame0=0, dx=0.0, tag="", origin=None):
                 "role": o.get("role") or MEANING.get(str(o.get("colour") or ""))}
         for m_ in meshes[k0:]:                               # what each part belongs to (colour_card.py decides its colour)
             m_.update({k: v for k, v in info.items() if v is not None})
+            m_['_source'] = src
+            m_['_primitive'] = info['obj']
+            if o.get('prototype') or props.norm_type(o.get('type')) in ('pine', 'tree', 'bush', 'hedge', 'plant_pot', 'palm'):
+                m_['prototype'] = o.get('prototype') or ('pine' if o.get('type') == 'tree' else props.norm_type(o.get('type')))
+        if src.get('px') and not o.get('size_locked') and hasattr(cam, 'd'):
+            from geometry_protection import match_source_box
+            meshes[k0:] = match_source_box(meshes[k0:], src, cam.d)
     return meshes
 
 
@@ -291,8 +298,11 @@ def _build_one(o, n, meshes, cam, frame0, dx, tag, zg, gz):
                            "colour": o.get("colour", "far"), "layer": 1})
             return
         if "bbox" in o:
+            requested_size = o.get('size') if o.get('size_locked') else None
             o = from_bbox(o, cam, zg, frame0, dx)
+            if requested_size is not None: o['size'] = requested_size
         kind = props.norm_type(o.get("type"))
+        if kind == 'tree': kind = 'pine'
         (dw, dh, dd), _ = props.TYPES[kind]
         w, h, d = [float(v) for v in (o.get("size") or [dw, dh, dd])]
         p = where(o, cam, zg, frame0, dx, gz)
@@ -803,6 +813,7 @@ def main():
     if c.get("scene_verify", True):
         import scene_verify
         checked = scene_verify.process(data, work, c, hints)
+        meshes = data['meshes']  # preview the protected geometry that will actually be rendered
         print("scene verification: %d unresolved issue(s)" % len(checked["unresolved"]))
     jsave(dp, data)
     N = data["frames"]

@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 from common import cfg, jload, jsave, output_dir, AGENT, box_iou as iou
 
 MODEL_DIR = os.path.join(AGENT, "models", "grounding_dino")
-VERSION = 1
+VERSION = 2
 PROMPTS = {"held": ("object held in hand.", 0.35), "worn": ("backpack.", 0.35)}
 WRISTS = {9: "wrist_L", 10: "wrist_R"}                   # COCO left / right wrist -> rig joint (the person's own side)
 # CLIP word -> (label, shape); shape None = not an object (a false detection)
@@ -110,18 +110,37 @@ def groups(dets, seen, min_frames=3, min_share=0.25):
         frames = sorted({d["f"] for d in ds})
         if len(frames) < min_frames or len(frames) < min_share * max(1, seen.get(tid, 1)):
             continue
-        votes = {}
-        for d in ds:
-            if d.get("label"):
-                votes[d["label"]] = votes.get(d["label"], 0.0) + d["score"]
-        label = max(votes, key=votes.get) if votes else ("backpack" if kind == "worn" else "object")
-        shape = next((s for w, (l, s) in WORDS.items() if l == label), "box") or "box"
         best = {}
         for d in ds:                                             # one box per frame (the surest)
             if d["f"] not in best or d["score"] > best[d["f"]]["score"]:
                 best[d["f"]] = d
-        out.append({"track": tid, "joint": j, "kind": kind, "label": label, "shape": shape,
-                    "boxes": {str(f): [round(v, 1) for v in best[f]["box"]] for f in frames}})
+        # Missing detections never imply an object remained held through the gap.
+        gap = max(8, 3 * float(np.median(np.diff(frames)))) if len(frames)>1 else 8
+        episodes = [[]]
+        for f in frames:
+            if episodes[-1] and f-episodes[-1][-1] > gap: episodes.append([])
+            episodes[-1].append(f)
+        stable_episodes = []
+        for episode in episodes:
+            # Require a sustained label change; one noisy classification does not create a new object.
+            starts = [0]; base = best[episode[0]].get('label')
+            for i in range(1,len(episode)-min_frames+1):
+                labels = [best[f].get('label') for f in episode[i:i+min_frames]]
+                if labels[0] != base and len(set(labels)) == 1:
+                    starts.append(i); base=labels[0]
+            starts.append(len(episode))
+            stable_episodes.extend(episode[a:b] for a,b in zip(starts,starts[1:]))
+        for episode in stable_episodes:
+            if len(episode) < min_frames: continue
+            votes = {}
+            for f in episode:
+                d=best[f]; label=d.get('label') or ('backpack' if kind=='worn' else 'object')
+                votes[label]=votes.get(label,0.)+d['score']
+            label=max(votes,key=votes.get)
+            shape=next((s for w,(l,s) in WORDS.items() if l==label),'box') or 'box'
+            out.append({"track": tid, "joint": j, "kind": kind, "label": label, "shape": shape,
+                        "span": [episode[0],episode[-1]],
+                        "boxes": {str(f): [round(v, 1) for v in best[f]["box"]] for f in episode}})
     return out
 
 
@@ -215,7 +234,7 @@ def place(data, held, y0=0):
             w, h, d = 0.30 * s, 0.42 * s, 0.16 * s
             V, F = box_mesh(w, d, h)
             for f in range(N):
-                if not vis[f]:
+                if not vis[f] or not o.get('span', [max(0,min(boxes)-2), min(N-1,max(boxes)+2)])[0] <= f <= o.get('span', [max(0,min(boxes)-2),min(N-1,max(boxes)+2)])[1]:
                     continue
                 Wf = W(f)
                 Rc = Wf["chest"][0]
@@ -255,8 +274,7 @@ def place(data, held, y0=0):
             OFF *= np.minimum(1.0, 0.7 / np.maximum(np.linalg.norm(OFF, axis=1, keepdims=True), 1e-9))   # within reach
             V, F = shape_mesh(o["shape"], w, h)
             seen = sorted(off)
-            share = len(seen) / float(max(1, sum(1 for f in range(0, N, held.get("step", 2)) if vis[f])))
-            lo, hi = (0, N - 1) if (share >= 0.6 or o.get("manual")) else (max(0, seen[0] - 3), min(N - 1, seen[-1] + 3))   # carried throughout
+            lo, hi = o.get('span', [max(0, seen[0] - 2), min(N - 1, seen[-1] + 2)])
             shown = 0
             for f in range(N):
                 if not vis[f] or not lo <= f <= hi:
@@ -281,7 +299,7 @@ def place(data, held, y0=0):
 
 def annotated(video, c, ci, pose, work):
     """objects annotated on the clip page (Objects step) as held by a person ("bag in his left hand", "backpack") ->
-    held.json objects ("manual": shown for the whole time the person is seen).  The box is the one drawn on that
+    held.json objects ("manual": bounded to the annotated shot). The box is the one drawn on that
     frame; the person is the one the box touches (nearest when none), the hand the description names, else the
     nearer wrist; a backpack / "on his back" / "wearing" goes on the back."""
     import describe
@@ -330,17 +348,18 @@ def annotated(video, c, ci, pose, work):
                 shape = next((s for w, (l, s) in WORDS.items() if l == label and s), None) or ("bag" if d.get("worn") else "box")
                 out.append({"track": tid, "joint": joint, "kind": "worn" if d.get("worn") else "held", "label": label,
                             "shape": shape, "boxes": {str(f): [round(v, 1) for v in box]}, "manual": True,
+                            "span": next((s['frames'] for s in shots if s['frames'][0] <= f <= s['frames'][1]), [f,f]),
                             "what": o.get("what", "")})
     return out
 
 
 def with_annotated(held, ann):
     """held.json + the annotated ones: an annotation on a hand where one was found renames it (the person's words
-    win) and keeps it the whole time; otherwise it is added"""
+    win) within its annotated span; otherwise it is added"""
     held = dict(held or {"objects": [], "step": 2})
     objs = [dict(o) for o in held.get("objects", [])]
     for a in ann:
-        same = next((o for o in objs if o["track"] == a["track"] and o["joint"] == a["joint"] and o["kind"] == a["kind"]), None)
+        same = next((o for o in objs if o["track"] == a["track"] and o["joint"] == a["joint"] and o["kind"] == a["kind"] and o['label'] == a['label'] and o.get('span') == a.get('span')), None)
         if same is not None:
             same.update(label=a["label"], shape=a["shape"], manual=True)
             same["boxes"] = dict(same["boxes"], **a["boxes"])

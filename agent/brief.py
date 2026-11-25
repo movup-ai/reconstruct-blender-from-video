@@ -96,6 +96,8 @@ def clip_brief(c, cl):
         "camera": dict(rv.get("camera") or {}, cuts=cam.get("cuts", [])),
         "people": people, "ignored_tracks": ignored,
         "props": (rv.get("environment") or {}).get("props", []),
+        "prop_mode": rv.get('prop_mode', 'auto'),
+        "prop_timeline": rv.get('prop_timeline', []),
         "description": rv.get("notes", ""),
         "shots": shot_rows,
         "warnings": rep.get("warnings", []),

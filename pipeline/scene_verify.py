@@ -3,6 +3,7 @@ import argparse
 import copy
 import glob
 import hashlib
+import json
 import os
 
 import cv2
@@ -193,6 +194,15 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
             person = cv2.resize(person.astype(np.uint8), shape[::-1], interpolation=cv2.INTER_NEAREST) > 0
             valid = cv2.resize(valid.astype(np.uint8), shape[::-1], interpolation=cv2.INTER_NEAREST) > 0
             K = K.copy(); K[0] *= shape[1]/w; K[1] *= shape[0]/h
+            from geometry_protection import rendered_people_depth
+            human_state = [(ch.get('style'), ch['height'], ch['root'][f], ch['pelvis_z'][f],
+                            ch.get('visible',[True]*data['frames'])[f], {j:r[f] for j,r in ch['rot'].items()})
+                           for ch in data.get('chars',{}).values()]
+            human_key = ('people', f, shape, hashlib.sha256(json.dumps(human_state).encode()).hexdigest())
+            rendered = raster_cache.get(human_key) if raster_cache is not None else None
+            if rendered is None:
+                rendered = rendered_people_depth(data,f,K,R,C,shape)
+                if raster_cache is not None: raster_cache[human_key] = rendered
             combined = np.full(shape, np.inf)
             for mesh in meshes:
                 key = (mesh_keys[id(mesh)], f, shape)
@@ -202,6 +212,10 @@ def verify(data, work, justifications=None, bundles=None, resolution=160, raster
                     if raster_cache is not None and len(raster_cache) < 128:
                         raster_cache[key] = predicted
                 measured, _ = compare_depth(obs, predicted, person, valid)
+                from geometry_protection import person_conflict
+                blocked, human_pixels, _ = person_conflict(predicted, obs, person, valid, rendered)
+                if blocked >= max(8, .025 * human_pixels):
+                    issue('person_occlusion', mesh['name'], f, '%d source-visible person pixels blocked by background geometry' % blocked)
                 if measured["pixels"] >= 20 and measured["conflict_fraction"] > .1:
                     issue("occlusion", mesh["name"], f, "%.0f%% of overlapping pixels lie in front of observed surfaces" % (100*measured["conflict_fraction"]))
                 np.minimum(combined, predicted, out=combined)
@@ -355,7 +369,7 @@ def process(data, work, c, hints=None, repair=False):
     """Verify edits, keep only evidence-improving proposals, persist all unresolved issues."""
     hints = hints or {}; bundles, skipped = load_evidence(data, work)
     justification = hints.get("scene_justifications", {})
-    scale_changes = place_people(data, hints)
+    scale_changes = [] if c.get('_freeze_people') else place_people(data, hints)
     cache = {}
     result = verify(data, work, justification, bundles=bundles, raster_cache=cache)
     repairs = []
@@ -399,7 +413,7 @@ def process(data, work, c, hints=None, repair=False):
             if _score(checked) > _score(result)+.005 and not (new_bad-old_bad):
                 data["meshes"].append(proposal); result = checked
                 repairs.append({"object": proposal["name"], "action": "added measured planar surface"})
-    if repair:
+    if repair and not c.get('_freeze_people'):
         for name, ch in list(data.get("chars", {}).items()):
             hint = (hints.get("people") or {}).get(str(ch.get("track_id")), {})
             # Explicit choices and mounted people are never superseded by inferred support.
@@ -417,6 +431,12 @@ def process(data, work, c, hints=None, repair=False):
                 scale_attached_props(data, candidate, factor)
                 result = checked
                 repairs.append({"object": name, "action": "constant support scale", "factor": factor})
+    if c.get('protect_people', True):
+        from geometry_protection import protect
+        protection = protect(data, bundles)
+        if protection:
+            repairs += protection
+            result = verify(data, work, justification, bundles=bundles)
     result.update(repairs=repairs, human_scale_changes=scale_changes, skipped_stale_evidence=skipped)
     overview(data, os.path.join(work,"scene_overview.jpg"))
     jsave(os.path.join(work, "scene_verification.json"), result)

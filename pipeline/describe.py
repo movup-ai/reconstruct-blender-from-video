@@ -84,17 +84,18 @@ def parse(what, typed=None):
     if typed not in ("other", "box", "object", ""):              # a type picked in the list
         import props
         k = props.norm_type(typed)
+        if k == 'tree': k = 'pine'
         if k != "other":
-            out.update(mode="shape" if k in ("plant_pot", "bush") else "model", kind=k, label=(noun[1] if noun else k.replace("_", " ")))
+            out.update(mode="model", kind=k, label=(noun[1] if noun else k.replace("_", " ")))
             return out
     if noun and noun[0] == "type":
         k = types[noun[1]]
-        if k in ("plant_pot", "bush"):                            # (library plants look nothing like the real one)
-            out.update(mode="shape", label=noun[1])
-        else:
-            out.update(mode="model", kind=k, label=noun[1])
+        out.update(mode="model", kind=k, label=noun[1])
     elif noun:
         out.update(mode="shape", label=noun[1])
     else:
         out.update(mode="shape", label=text[:30] or None)
+    from prototypes import vegetation_kind
+    prototype = vegetation_kind(out['label'], indoor=False)
+    if prototype and out['mode'] != 'held': out.update(mode='model', kind=prototype)
     return out

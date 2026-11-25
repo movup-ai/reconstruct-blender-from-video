@@ -236,6 +236,10 @@ def people_boxes(pose, f, y0, k, W, H):
         import held_objects
         for b in held_objects.boxes_at(pose["_held"], f):
             out.append([max(0, b[0] * k), max(0, (b[1] - y0) * k), min(W - 1, b[2] * k), min(H - 1, (b[3] - y0) * k)])
+    if pose.get('_prop_timeline'):
+        import prop_timeline
+        for b in prop_timeline.boxes_at(pose['_prop_timeline'], {}, f):
+            out.append([max(0,b[0]*k), max(0,(b[1]-y0)*k), min(W-1,b[2]*k), min(H-1,(b[3]-y0)*k)])
     return out, feet
 
 
@@ -292,6 +296,12 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     if persistent_masks is not None:
         from sam3_tracking import union_at
         pm = union_at(persistent_masks,f,Wk,Hk)
+        import prop_timeline, held_objects
+        prop_boxes = prop_timeline.boxes_at(pose.get('_prop_timeline', []), {}, f)
+        if pose.get('_held'): prop_boxes += held_objects.boxes_at(pose['_held'], f)
+        for b in prop_boxes:
+            x0,y1,x1,y2 = [int(v) for v in (b[0]*k,(b[1]-ci['y0'])*k,b[2]*k,(b[3]-ci['y0'])*k)]
+            pm[max(0,y1):min(Hk,y2+1),max(0,x0):min(Wk,x1+1)] = True
     else:
         pm = models.sam_boxes(rgb, boxes) if boxes else np.zeros((Hk, Wk), bool)
     box_m = np.zeros((Hk, Wk), bool)
@@ -343,7 +353,7 @@ def split_by_class(fr, m, min_share=0.2, min_area=0.004):
     return out
 
 
-SOFT_GROUPS = {"plant": "plant", "pot": "plant", "flower": "plant", "vase": "plant", "tree": "plant", "palm": "plant"}
+SOFT_GROUPS = {"plant": "plant", "pot": "plant", "flower": "plant", "vase": "plant"}
 
 
 def soft_parts(fr, min_area=0.003):
@@ -568,7 +578,9 @@ def sem_regions(regs, fr, indoor):
     measured shape (R["relief"]) from sem_decide"""
     for R in regs:
         if R.get("soft"):                                        # cut out by its class already (soft_parts)
-            print("    %s: measured shape" % R["label"][0])
+            from prototypes import vegetation_kind
+            prototype = vegetation_kind(R['label'][0], indoor)
+            print('    %s: %s' % (R['label'][0], (prototype+' prototype') if prototype else 'measured shape'))
             continue
         m = R["mask"] & ~fr.person
         name, share = fr.segm.label(fr.sem, m) if m.any() else (None, 0.0)
@@ -826,6 +838,11 @@ def make_object(R, C, indoor, fr, fpix, name):
     src = {"cls": cls, "frame": int(fr.f), "px": [int(v / fr.k) for v in R["bbox_px"]], "range": round(r, 1), "area": round(R["area"], 3)}
     if R.get("label"):
         src["label"] = list(R["label"])                          # what CLIP sees (namer.py), for the review page
+    from prototypes import vegetation_kind, measured_object
+    prototype = vegetation_kind((R.get('label') or ('',))[0], indoor)
+    if prototype is None and cls == 'vegetation': prototype = 'bush' if z95-z5 < 2 else 'pine'
+    if prototype:
+        return measured_object(prototype, P, name, src)
     pt = R.get("ptype")
     if cls in ("sky", "floor", "ceiling"):
         return None
@@ -1125,6 +1142,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
         if not b or len(b) != 4:
             continue
         d = describe.parse(o.get("what"), o.get("type"))
+        if o.get('size') and d['mode'] != 'held': d['mode'] = 'model'
         what = (o.get("what") or o.get("type") or "").strip()
         if d["mode"] == "held":
             print("  annotation %r: held by a person - placed on the hand / back (held_objects)" % what)
@@ -1145,6 +1163,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
                 ob["role"] = role
             if o.get("facing") in ("left", "right", "away"):
                 ob["facing"] = o["facing"]
+            if o.get('size'): ob.update(size=o['size'], size_locked=True)
             out.append(ob); continue
         if models is not None and getattr(fr, "rgb", None) is not None:      # the thing itself: SAM's cut of the box
             try:
@@ -1189,6 +1208,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
             ob["role"] = role
         if o.get("facing") in ("left", "right", "away"):
             ob["facing"] = o["facing"]
+        if o.get('size'): ob.update(size=o['size'], size_locked=True)
         out.append(ob)
     return out
 
@@ -1498,14 +1518,18 @@ def run_clip(name, models, a, c):
     from run_pipeline import marks_dir
     pp = os.path.join(marks_dir(ci["video"], c), "pose.json")
     pose = jload(pp) if os.path.exists(pp) else {"people": []}
+    review = jload(os.path.join(os.path.dirname(pp),'review.json')) if os.path.exists(os.path.join(os.path.dirname(pp),'review.json')) else {}
+    pose['_prop_timeline'] = review.get('prop_timeline', []) if review.get('prop_mode') != 'off' else []
     if pose.get('tracker_backend') == 'sam3' and os.path.isfile(os.path.join(os.path.dirname(pp),'sam3_masks.npz')):
         from sam3_tracking import read_masks
         pose['_sam3_bundle'] = read_masks(os.path.join(os.path.dirname(pp),'sam3_masks.npz'))
     hj = os.path.join(output_dir(), name, "held.json")          # objects people carry (held_objects.py): masked out
-    pose["_held"] = jload(hj) if os.path.exists(hj) else None   # with the people, never built as fixed boxes
+    import held_objects
+    automatic_props = review.get('prop_mode', 'manual' if review.get('prop_timeline') else 'auto') == 'auto' and held_objects.enabled(c,{})
+    pose["_held"] = jload(hj) if automatic_props and os.path.exists(hj) else None
     try:                                                        # (and the ones annotated as held on the clip page)
         import held_objects
-        ann = held_objects.annotated(ci["video"], c, ci, pose, work)
+        ann = held_objects.annotated(ci["video"], c, ci, pose, work) if automatic_props else []
         if ann:
             pose["_held"] = held_objects.with_annotated(pose["_held"], ann)
     except Exception as e:
@@ -1524,6 +1548,24 @@ def run_clip(name, models, a, c):
     for sid_, fs_ in drawn.items():
         want[sid_] = sorted(set(want.get(sid_, [])) | set(fs_.values()))
     frames = read_frames_at(ci["video"], [f for v in want.values() for f in v])
+    # Load SAM 3 once for all automatic views and drawn boxes; release it before geometry work.
+    from sam3_scene import prefetch
+    requests = []
+    for f, image in frames.items():
+        picture = image[ci['y0']:ci['y0']+Hp]
+        k = min(1.,1024./picture.shape[1]); h,w = picture.shape[:2]
+        if k<1: picture=cv2.resize(picture,(round(w*k),round(h*k)),interpolation=cv2.INTER_AREA)
+        rgb = cv2.cvtColor(picture,cv2.COLOR_BGR2RGB)
+        requests.append({'rgb':rgb})
+        for sid, tags in drawn.items():
+            for tag, keyframe in tags.items():
+                if keyframe != f: continue
+                for obj in user_env['shots'][tag].get('objects',[]):
+                    if obj.get('bbox'):
+                        box = [int(round(v*k)) for v in obj['bbox']]
+                        requests.append({'rgb':rgb,'automatic':False,'boxes':[box]})
+    count = prefetch(requests, c, models.scene_cache, models._release_scene_gpu)
+    print('  SAM 3 scene batch: %d uncached requests (%s)' % (count, 'one model load' if count else 'all cached'))
     acam = AutoCam(W, Hp, f_full, data.get("zoom"))        # (with the lens zoom: each frame's own focal length)
     out_shots, report, sheet_rows = {}, {}, []
     for s in shots:

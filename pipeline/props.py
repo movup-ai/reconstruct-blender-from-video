@@ -9,6 +9,7 @@ import numpy as np
 
 # type -> default size (width, height, depth) in metres and where it usually is
 TYPES = {
+    "palm": ((3.0, 6.0, 3.0), "floor"),
     "door": ((0.9, 2.05, 0.12), "wall"), "window": ((1.2, 1.3, 0.12), "wall"), "cabinet": ((0.8, 0.9, 0.6), "floor"),
     "wall_cabinet": ((0.8, 0.7, 0.35), "wall"), "shelf": ((1.2, 0.9, 0.3), "wall"), "bookshelf": ((0.9, 1.9, 0.35), "floor"),
     "counter": ((1.8, 0.9, 0.6), "floor"), "sink": ((1.2, 0.9, 0.6), "floor"), "table": ((1.2, 0.75, 0.8), "floor"),
@@ -336,6 +337,14 @@ def build(kind, w, h, d, seed=0):
             for i in range(2):
                 a = rng.uniform(0, 2 * math.pi)
                 add("clump%d" % i, puff(math.cos(a) * W * 0.6, math.sin(a) * D * 0.6, zc + ch * 0.35, W * 0.45, D * 0.45, ch * 0.22, rng=rng))
+    elif kind == "palm":
+        add("trunk", cyl(0, 0, max(.03, w*.04), 0, h*.83, 8), "dark")
+        for i in range(8):
+            a = i*math.pi/4; u = np.array([math.cos(a)*W, math.sin(a)*D, 0.])
+            v = np.array([-math.sin(a)*w*.08, math.cos(a)*d*.08, 0.])
+            origin = np.array([0.,0.,h*.86])
+            vertices = [origin, origin+u*.55+v+[0,0,h*.14], origin+u, origin+u*.55-v+[0,0,h*.14]]
+            add("leaves%d" % i, ([p.tolist() for p in vertices], [[0,1,2,3]]))
     elif kind == "pine":                                             # trunk + stacked tiers (low-poly fir)
         add("trunk", cyl(0, 0, max(0.1, w * 0.05), 0, h * 0.25, 6), "dark")
         tiers = 3 if h < 5 else 4
