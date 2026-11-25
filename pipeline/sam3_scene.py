@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from zipfile import BadZipFile
 
 import cv2
 import numpy as np
@@ -84,6 +85,7 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
               'iou': float(options.get('iou', .7)), 'stability': float(options.get('stability', .86)),
               'nms': float(options.get('nms', .6)), 'min_area': float(options.get('min_area', .002)),
               'batch': int(c.get('sam3_image_batch', 16)), 'limit': int(c.get('sam3_image_max_masks', 256))}
+    if automatic and c.get('sam3_vegetation_prompts',True):params['vegetation_prompts']=['bush','shrub','hedge']
     if not 1 <= params['points'] <= 64 or not 1 <= params['batch'] <= 32 or not 1 <= params['limit'] <= 512:
         raise ValueError('SAM 3 scene grid, batch or mask limit is outside the supported range')
     stamp = os.stat(checkpoint)
@@ -95,15 +97,22 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
         os.makedirs(cache_dir, exist_ok=True)
     cache = os.path.join(cache_dir, key + '.npz') if cache_dir else None
     def read(path):
-        with np.load(path, allow_pickle=False) as result:
+        with open(path,'rb') as source, np.load(source, allow_pickle=False) as result:
             masks, prompted = result['masks'].copy(), result['box_masks'].copy()
             if masks.ndim != 3 or masks.shape[1:] != rgb.shape[:2] or prompted.shape != (len(boxes), *rgb.shape[:2]):
                 raise ValueError('Invalid SAM 3 scene mask dimensions')
-            return {'masks': masks.astype(bool), 'box_masks': prompted.astype(bool),
-                    'peak_vram_mb': float(result['peak_vram_mb'])}
+            concepts=result['concept_masks'].copy() if 'concept_masks' in result else np.zeros((0,*rgb.shape[:2]),bool)
+            labels=result['concept_labels'].copy() if 'concept_labels' in result else np.array([],dtype='U5')
+            scores=result['concept_scores'].copy() if 'concept_scores' in result else np.zeros(0)
+            if concepts.shape!=(len(labels),*rgb.shape[:2]) or scores.shape!=(len(labels),) or not np.isfinite(scores).all():raise ValueError('Invalid SAM vegetation results')
+            return {'masks': masks.astype(bool), 'box_masks': prompted.astype(bool),'concept_masks':concepts.astype(bool),
+                    'concept_labels':labels,'concept_scores':scores,'peak_vram_mb': float(result['peak_vram_mb'])}
     if cache and os.path.isfile(cache):
-        counter('sam_cache_hits')
-        return read(cache)
+        try:
+            result=read(cache);counter('sam_cache_hits');return result
+        except (OSError,ValueError,KeyError,EOFError,BadZipFile):
+            counter('sam_invalid_cache')
+            os.replace(cache,cache+'.invalid_'+str(time.time_ns()))
     if _queue is not None:
         _queue.append((rgb, params, checkpoint, cache))
         return None
@@ -175,6 +184,8 @@ def prefetch(requests, c, cache_dir, before_inference=None):
                 loading+=float(a['model_loading_seconds']) if 'model_loading_seconds' in a else 0.
                 inference+=float(a['inference_seconds']) if 'inference_seconds' in a else 0.
                 result = {k:a[k].copy() for k in ('masks','box_masks','peak_vram_mb')}
+                for key in ('concept_masks','concept_labels','concept_scores'):
+                    if key in a:result[key]=a[key].copy()
                 if result['masks'].ndim!=3 or result['masks'].shape[1:]!=rgb.shape[:2] or result['box_masks'].shape!=(len(params['boxes']),*rgb.shape[:2]):
                     raise ValueError('Invalid batch scene mask dimensions')
             with tempfile.NamedTemporaryFile(dir=cache_dir,suffix='.npz',delete=False) as target: temp=target.name
@@ -231,6 +242,16 @@ def worker_image(job, output, model, processor):
                 masks, scores = grid_candidates(low, scores, job['iou'], job['stability'], job['min_area'])
                 selected.extend(masks); quality.extend(scores)
         automatic = suppress_masks(selected, quality, shape, job['nms'], job['limit'])
+        concept_masks,concept_labels,concept_scores=[],[],[]
+        for prompt in job.get('vegetation_prompts',[]):
+            processor.reset_all_prompts(state)
+            result=processor.set_text_prompt(prompt,state)
+            masks=result['masks'].detach().cpu().numpy().reshape(-1,*shape)
+            scores=result['scores'].float().detach().cpu().numpy().reshape(-1)
+            for mask,score in zip(masks,scores):
+                if score>=.55 and .0015<=mask.mean()<=.75:
+                    concept_masks.append(mask);concept_labels.append('bush' if prompt=='shrub' else prompt);concept_scores.append(float(score))
+        processor.reset_all_prompts(state)
         prompted = []
         for box in job['boxes']:
             masks, scores, _ = model.predict_inst(state, box=np.asarray(box, np.float32), multimask_output=True)
@@ -241,6 +262,8 @@ def worker_image(job, output, model, processor):
             prompted.append(masks[int(np.argmax(scores))] > 0)
     torch.cuda.synchronize();elapsed=time.perf_counter()-started
     np.savez_compressed(output, masks=automatic, box_masks=np.asarray(prompted, bool).reshape(-1, *shape),
+                        concept_masks=np.asarray(concept_masks,bool).reshape(-1,*shape),concept_labels=np.asarray(concept_labels,dtype='U5'),
+                        concept_scores=np.asarray(concept_scores,np.float32),
                         peak_vram_mb=torch.cuda.max_memory_allocated() / 1024**2,
                         model_loading_seconds=job.get('_model_loading_seconds',0.),inference_seconds=elapsed)
 

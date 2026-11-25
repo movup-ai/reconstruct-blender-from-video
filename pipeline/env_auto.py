@@ -95,8 +95,11 @@ class Models:
 
     def sam_auto(self, rgb, n=None, iou_t=.7, stab_t=.86, nms_t=.6, min_area=.002):
         if getattr(self, 'annotations_only', False): return []
-        masks = self._sam_scene(rgb, automatic=True, points=n or self.pps,
-                                iou=iou_t, stability=stab_t, nms=nms_t, min_area=min_area)['masks']
+        result = self._sam_scene(rgb, automatic=True, points=n or self.pps,
+                                iou=iou_t, stability=stab_t, nms=nms_t, min_area=min_area)
+        self.scene_concepts=[{'mask':mask,'label':str(label),'score':float(score)} for mask,label,score in
+                             zip(result.get('concept_masks',[]),result.get('concept_labels',[]),result.get('concept_scores',[]))]
+        masks=result['masks']
         return [{"segmentation": m, "area": int(m.sum())} for m in masks]
 
     def sam_box_mask(self, rgb, box):
@@ -345,6 +348,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     fr.feet = np.array(fr.feet).reshape(-1, 3)
     t1 = time.time()
     masks = models.sam_auto(rgb)
+    fr.scene_concepts=getattr(models,'scene_concepts',[])
     fr.t_moge, fr.t_sam = t1 - t0, time.time() - t1
     fr.segm = getattr(models, "seg", None)
     if shared is not None and fr.segm is not None and list(shared["names"]) == fr.segm.names and (shared['labels'].shape[1]>=Wk or getattr(models,'use_shared_labels',False)):
@@ -356,6 +360,14 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     for i, m in enumerate(masks):                                # big first, smaller ones on top
         lab[m["segmentation"]] = i
     lab[fr.bars] = -1                                            # nothing is built from the bars
+    fr.vegetation_instances=[]
+    if fr.sem is not None and fr.segm is not None:
+        ids=[i for i,n in enumerate(fr.segm.names) if n in ('plant','tree','flower','palm')]
+        foliage=np.isin(fr.sem,ids)&~fr.person&~fr.bars
+        for proposal in masks:
+            visible=proposal['segmentation']&~fr.person&~fr.bars
+            if visible.sum()<.0015*visible.size:continue
+            if (visible&foliage).sum()/visible.sum()>=.65:fr.vegetation_instances.append(visible)
     fr.soft = soft_parts(fr) if fr.sem is not None else []
     for m, _ in fr.soft:                                         # the plants / curtains... are their own pieces: SAM's
         lab[m] = -1                                              # regions (a wall with a plant in front) lose them
@@ -383,7 +395,7 @@ def split_by_class(fr, m, min_share=0.2, min_area=0.004):
 SOFT_GROUPS = {"plant": "plant", "pot": "plant", "flower": "plant", "vase": "plant"}
 
 
-def soft_parts(fr, min_area=0.003):
+def soft_parts(fr, min_area=0.0015):
     """the soft / irregular things the segmentation finds (semseg ROLE "relief", and trees indoors) as connected pieces,
     straight from its map: a plant and its pot, flowers in a vase are one piece -> [(mask, class name)]"""
     import semseg
@@ -392,7 +404,7 @@ def soft_parts(fr, min_area=0.003):
     for k, n in enumerate(names):
         if semseg.role(n) in ("relief", "tree") or n in SOFT_GROUPS:
             group.setdefault(SOFT_GROUPS.get(n, n), []).append(k)
-    free = fr.valid & ~fr.person & ~fr.bars
+    free = ~fr.person & ~fr.bars
     out = []
     ker = np.ones((5, 5), np.uint8)
     for gname, ks in group.items():
@@ -433,10 +445,14 @@ def colour_stats(img, m):
     return px.mean(0), float(hsv[:, 2].mean()), float(hsv[:, 1].mean()), green
 
 
-def region(fr, m, indoor):
+def region(fr, m, indoor, known_foliage=False):
     """measurements of one mask (bool, work res) -> dict, or None when too small / mostly sky / people"""
     area = m.sum()
-    if area < 0.003 * m.size:
+    foliage_share=1. if known_foliage else 0.
+    if getattr(fr,'sem',None) is not None and getattr(fr,'segm',None) is not None and area:
+        ids=[i for i,n in enumerate(fr.segm.names) if n in ('tree','plant','flower','palm')]
+        foliage_share=max(foliage_share,float(np.isin(fr.sem[m],ids).mean()))
+    if area < (.0015 if foliage_share>.65 else .003) * m.size:
         return None
     pf = (m & fr.person).sum() / area
     if pf > 0.35:
@@ -448,7 +464,7 @@ def region(fr, m, indoor):
     if use.sum() < 40:
         use = mm & fr.valid
     R = dict(mask=m, area=float(area / m.size), sky=float(sky))
-    if sky > 0.6 or use.sum() < 30:
+    if (sky > 0.6 and foliage_share<=.65) or use.sum() < 30:
         R["cls"] = "sky"; return R
     ys, xs = np.nonzero(use)
     step = max(1, int(len(xs) / 4000))
@@ -485,6 +501,25 @@ def region(fr, m, indoor):
             fr.f, R["cls"], R["area"], R["rng"], rnd(R["z"], 2), rnd(R["ext"], 1), R["planar"], float(np.median(N[:, 2])), R["up_frac"],
             R["vert_frac"], R["green"], R["tex"], R["nvar"], [int(v / fr.k) for v in R["bbox_px"]]))
     return R
+
+
+@stage('vegetation_classification')
+def shrub_concepts(fr, indoor):
+    """Accept local SAM vegetation concepts with geometry checks and instance deduplication."""
+    claimed=np.zeros((fr.H,fr.W),bool);regions=[]
+    for concept in sorted(getattr(fr,'scene_concepts',[]),key=lambda c:-c['score'])[:32]:
+        mask=concept['mask']&~fr.person&~fr.bars
+        if mask.sum()<.0015*mask.size or (mask&claimed).sum()>.55*mask.sum():continue
+        R=region(fr,mask,indoor,known_foliage=True)
+        if R is None or R['cls']=='sky':continue
+        if R['up_frac']>.85 and R['z'][2]-R['z'][0]<.12:continue
+        box=R['bbox_px'];aspect=(box[2]-box[0]+1)/max(1,box[3]-box[1]+1)
+        if R['z'][2]>4. and aspect<.6:continue
+        if concept['label'] not in ('bush','hedge'):continue
+        R.update(cls='object',label=(concept['label'],concept['score']),soft=True,
+                 detector='sam3 vegetation concept',ptype=concept['label'])
+        claimed|=mask;regions.append(R)
+    return regions,claimed
 
 
 def classify(R, indoor):
@@ -609,8 +644,9 @@ def sem_regions(regs, fr, indoor):
     measured shape (R["relief"]) from sem_decide"""
     for R in regs:
         if R.get("soft"):                                        # cut out by its class already (soft_parts)
-            from prototypes import vegetation_kind
-            prototype = vegetation_kind(R['label'][0], indoor)
+            from prototypes import automatic_kind
+            prototype,evidence = automatic_kind(R['label'][0],R['Pabs'],R['mask'],indoor,fr.gp)
+            R['vegetation_evidence']=evidence
             if R['label'][0] in ('vase','pot'):
                 R.update(ptype=R['label'][0],relief=False)
             print('    %s: %s' % (R['label'][0], (prototype+' prototype') if prototype else 'measured shape'))
@@ -770,6 +806,7 @@ def merge_regions(regs, H, W, join=None):
             a, b = regs[i], regs[j]
             if not A[i, j]:
                 continue
+            if a.get('detector') or b.get('detector'):continue  # Preserve independently detected shrub instances.
             if join is not None:
                 if join(a, b):
                     par[find(j)] = find(i)
@@ -883,15 +920,20 @@ def _make_object(R, C, indoor, fr, fpix, name):
     tol = 0.15 + 0.025 * r
     col = colour_for(cls, R, indoor)
     src = {"cls": cls, "frame": int(fr.f), "px": [int(v / fr.k) for v in R["bbox_px"]], "range": round(r, 1), "area": round(R["area"], 3)}
+    if R.get('detector'):src['detector']=R['detector']
     if R.get("label"):
         src["label"] = list(R["label"])                          # what CLIP sees (namer.py), for the review page
-    from prototypes import vegetation_kind, measured_object
-    prototype = vegetation_kind((R.get('label') or ('',))[0], indoor)
+    from prototypes import vegetation_kind, automatic_kind, measured_object
+    label=(R.get('label') or ('',))[0]
+    if R.get('mask') is not None:
+        prototype,evidence=automatic_kind(label,R.get('Pabs',P),R['mask'],indoor,getattr(fr,'gp',(0.,0.,0.)))
+        if prototype:src['vegetation']=evidence
+    else:prototype=vegetation_kind(label,indoor)
     if cls=='vegetation' and prototype is None and getattr(fr,'sem',None) is not None:
         foliage=[i for i,label in enumerate(fr.segm.names) if label in ('plant','flower','tree','palm','grass')]
         if np.isin(fr.sem[R['mask']],foliage).mean()<.1:
             cls='object'  # Green paint or reflections alone do not establish a plant.
-    if cls == 'vegetation' and prototype in (None, 'pine'):
+    if cls == 'vegetation' and prototype is None:
         height = z95 - z5
         low, high = np.percentile(P[:, :2], [5, 95], axis=0)
         if height >= 2 and (high - low).max() >= 2.5 * height:
@@ -1948,9 +1990,10 @@ def run_clip(name, models, a, c):
                     indoor,room_evidence = object_fit.room(fr)
                     rep['room_evidence']=room_evidence
                     rep["indoor"] = indoor; rep["sky_frac"] = round(float(skyf), 3)
-                regs = []
+                regs,concept_claimed = shrub_concepts(fr,indoor)
                 for i in range(fr.n_masks):
                     for mi in split_by_class(fr, fr.lab == i):
+                        mi=mi&~concept_claimed
                         R = region(fr, mi, indoor)
                         if R is None or R["cls"] == "sky":
                             continue
@@ -1971,7 +2014,9 @@ def run_clip(name, models, a, c):
                 regs = merge_regions(regs, fr.H, fr.W)
                 if fr.sem is not None:                           # the segmentation model names every piece
                     regs = merge_regions(regs, fr.H, fr.W)
-                    for m, nm in fr.soft:                        # plants, curtains...: from the segmentation map
+                    from prototypes import split_shrubs
+                    pieces=[piece for m,nm in fr.soft for piece in split_shrubs(fr,m&~concept_claimed,nm,indoor)]
+                    for m, nm in pieces:
                         R = region(fr, m, indoor)
                         if R is not None and R["cls"] != "sky":
                             R["cls"] = "object"; R["relief"] = True; R["label"] = (nm, 1.0); R["soft"] = True
@@ -2115,7 +2160,7 @@ def run_clip(name, models, a, c):
             o.pop("_R", None)
         for i, o in enumerate(keep):
             o["name"] = "%s_%d" % (o["_src"]["cls"], i)
-            if o['_src']['cls']!='drawn':object_fit.fit(o)
+            if o['_src']['cls']!='drawn' and not any(v.get('detection_box') for v in o.get('_observations',[])):object_fit.fit(o)
         ground = {"size": 30 if indoor else 300, "colour": "ground"}
         if slope:
             ground.update(slope_deg=slope["slope_deg"], slope_dir_deg=slope["slope_dir_deg"], origin=slope["origin"])
@@ -2139,7 +2184,8 @@ def run_clip(name, models, a, c):
             for o in keep:
                 if o["_src"]["cls"] == "slope":
                     o["off"] = True                             # the heightfield already has it
-        for o in mine:
+        anchored=[o for o in keep if o['_src']['cls']=='drawn' or any(v.get('detection_box') for v in o.get('_observations',[]))]
+        for o in anchored:
             if o.get('_observations'):
                 view=o['_observations'][0]
                 if view.get('ground_contact'):

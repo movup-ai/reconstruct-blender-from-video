@@ -87,11 +87,11 @@ def lump(cx, cy, cz, rx, ry, rz, n=16, jit=0.18, rng=None, flat_bottom=None):
     return [tuple(round(float(x), 4) for x in P[i]) for i in used], [tuple(ix[i] for i in f) for f in F]
 
 
-def puff(cx, cy, cz, rx, ry, rz, rng=None, seg=11, ring=7):
+def puff(cx, cy, cz, rx, ry, rz, rng=None, seg=11, ring=7, detail=2):
     """rounded foliage clump (a many-sided ellipsoid, slightly squashed and tilted at random): clusters of these read
     as leaves / bushes / tree crowns, unlike the large flat facets of `lump`, which read as rock"""
     rng = rng if rng is not None else np.random.default_rng(0)
-    V, F = icosphere(2)                     # finer sphere, drawn smooth-shaded (build_env FOLIAGE): reads as leaves, not stone
+    V, F = icosphere(detail)                # smooth-shaded foliage; shrubs need fewer faces
     V = V * (1 + rng.uniform(-0.015, 0.015, (len(V), 1)))
     a = rng.uniform(0, 2 * math.pi); ca, sa = math.cos(a), math.sin(a)
     x, y, z = V[:, 0] * rx, V[:, 1] * ry, V[:, 2] * rz
@@ -357,28 +357,29 @@ def build(kind, w, h, d, seed=0):
         # one rounded body (the mass of leaves) with smaller rounded clumps along its top outline and front:
         # reads as a shrub / foliage, not as a pile of stones
         D = max(D, min(W, h * 0.5))                                  # a bush is never a thin sheet
-        add("bushbody", puff(0, 0, h * 0.4, W * 0.78, D * 0.85, h * 0.4, rng=rng))
-        c = min(1.1, max(0.22, min(w, h) * 0.3))                     # clump radius
-        n_arc = max(3, int(round(math.pi * W * 0.9 / (c * 1.3))))
+        add("bushbody", puff(0, 0, h * 0.4, W * 0.78, D * 0.85, h * 0.4, rng=rng, detail=1))
+        c = max(.01, min(w,h,d) * .3)
+        n_arc = min(9, max(3, int(round(math.pi * W * .9 / (c * 1.3)))))
         for i in range(n_arc):                                       # clumps along the top outline, left -> right
             a = math.pi * (0.06 + 0.88 * (i + rng.uniform(0.3, 0.7)) / n_arc)
             r = c * rng.uniform(0.85, 1.15)
             cx = -math.cos(a) * (W - r * 0.85); cz = h * 0.4 + math.sin(a) * (h * 0.6 - r * 0.8)
-            add("clump%d" % i, puff(cx, rng.uniform(-0.25, 0.25) * D, max(r * 0.7, cz), r, min(r, D * 0.9), r * 0.85, rng=rng))
-        n_f = max(1, int(round(w / (3.0 * c))))
+            add("clump%d" % i, puff(cx, rng.uniform(-0.25, 0.25) * D, max(r * 0.7, cz), r, min(r, D * 0.9), r * 0.85, rng=rng, detail=1))
+        n_f = min(5, max(1, int(round(w / (3.0 * c)))))
         for i in range(n_f):                                         # a few clumps bulging at the front
             cx = ((i + 0.5) / n_f - 0.5) * w * 0.7 + rng.uniform(-0.2, 0.2) * c
             r = c * rng.uniform(0.8, 1.05)
-            add("front%d" % i, puff(cx, -D * 0.45, h * rng.uniform(0.3, 0.5), r, min(r, D * 0.7), r * 0.8, rng=rng))
+            add("front%d" % i, puff(cx, -D * 0.45, h * rng.uniform(0.3, 0.5), r, min(r, D * 0.7), r * 0.8, rng=rng, detail=1))
     elif kind == "rock":                                             # irregular faceted block
         add("mass", lump(0, 0, h * 0.42, W * 1.05, D * 1.05, h * 0.62, n=11, jit=0.22, rng=rng, flat_bottom=0.0))
     elif kind in ("hedge", "bank"):                                  # long low faceted mass (hedge row / grass bank), along x
         nseg = max(2, int(round(w / (1.1 if kind == "hedge" else 3.0))))
+        if kind == "hedge": nseg = min(14,nseg)
         for i in range(nseg):
             x0 = -W + w * i / nseg; x1 = -W + w * (i + 1) / nseg; cx = (x0 + x1) / 2
             hh = h * (1 + rng.uniform(-0.12, 0.08))
             if kind == "hedge":
-                add("hedgeseg%d" % i, puff(cx, rng.uniform(-0.05, 0.05) * d, hh * 0.45, (x1 - x0) * 0.8, D * 1.05, hh * 0.58, rng=rng))
+                add("hedgeseg%d" % i, puff(cx, rng.uniform(-0.05, 0.05) * d, hh * 0.45, (x1 - x0) * 0.8, D * 1.05, hh * 0.58, rng=rng, detail=1))
             else:                                                    # bank: wide base, rounded faceted top
                 add("seg%d" % i, lump(cx, 0, 0, (x1 - x0) * 0.8, D, hh, n=16, jit=0.1, rng=rng, flat_bottom=0.0))
     elif kind == "horse":                                            # block horse, length along x (like vehicles), head at +x
@@ -434,6 +435,10 @@ def build(kind, w, h, d, seed=0):
         add("body", box(-W, W, -D, D, 0, h * 0.8)); add("strap", box(-W * 0.6, W * 0.6, -0.01, 0.01, h * 0.8, h), "dark")
     else:                                                              # wall, box, other
         add("body", box(-W, W, -D, D, 0, h))
+    if kind in ('bush','hedge'):
+        vertices=np.concatenate([v for _,v,_,_ in P]);lo=vertices.min(0);span=np.maximum(np.ptp(vertices,axis=0),1e-6)
+        target=np.array([w,d,h]);origin=np.array([-w/2,-d/2,0.])
+        P=[(name,((np.asarray(v)-lo)*target/span+origin).tolist(),faces,shade) for name,v,faces,shade in P]
     return P
 
 

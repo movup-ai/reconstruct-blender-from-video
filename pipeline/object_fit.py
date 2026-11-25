@@ -1,5 +1,6 @@
 """Joint, visibility-aware fitting of recognizable prototypes to image/depth observations."""
 import base64
+import copy
 import hashlib
 import math
 import os
@@ -14,7 +15,7 @@ import props
 from common import jsave
 from profiling import stage
 
-VERSION = 2
+VERSION = 3
 FURNITURE = {'chair','office_chair','table','desk','counter','sofa','bed','cabinet','shelf','bookshelf','bench','stool'}
 ROUND = {'plant_pot','pine','palm','bush','vase','bottle','pot'}
 
@@ -116,6 +117,12 @@ def attach(o, fr, mask):
             seed_annotation(o,obs)
             occluder=fr.person | (fr.valid & (fr.P[:,:,2]*fr.s<obs['depth']-max(.15,.06*obs['depth'])) & ~mask)
             obs['occluder']=bits(cv2.resize(occluder.astype(np.uint8),tuple(obs['shape'])[::-1],interpolation=cv2.INTER_NEAREST)>0)
+        elif kind in ('bush','hedge'):
+            y,x=np.nonzero(unbits(obs['mask'],obs['shape']))
+            obs.update(detection_box=[int(x.min()),int(y.min()),int(x.max()),int(y.max())],primary=True)
+            a,b,c=getattr(fr,'gp',(0.,0.,0.))
+            if lo[2]-(a*anchor[0]+b*anchor[1]+c)<.35:obs['ground_plane']=[a,b,c]
+            seed_annotation(o,obs)
     return o
 
 
@@ -127,15 +134,19 @@ def bounds(points, view):
     return np.r_[lo,hi]
 
 
+def fit_box(view):
+    return view.get('annotation_box') or (view.get('detection_box') if view.get('primary') else None)
+
+
 def box_error(points, view):
-    predicted=bounds(points,view);target=np.asarray(view['annotation_box'],float)
+    predicted=bounds(points,view);target=np.asarray(fit_box(view),float)
     if predicted is None:return np.full(4,10.)
     return (predicted-target)/np.tile(np.maximum(target[2:]-target[:2],2.),2)
 
 
 def seed_annotation(o, view):
     """Use drawn image extent for size/placement; depth determines metres, not the silhouette."""
-    kind=props.norm_type(o['type']);box=np.asarray(view['annotation_box']);K=np.asarray(view['K']);R=np.asarray(view['R']);C=np.asarray(view['C'])
+    kind=props.norm_type(o['type']);box=np.asarray(fit_box(view));K=np.asarray(view['K']);R=np.asarray(view['R']);C=np.asarray(view['C'])
     span=box[2:]-box[:2];z=float(view['depth']);dims=np.asarray(o['size'],float).copy()
     if view.get('ground_plane') and box[3]<view['shape'][0]*.97:
         a,b,c=view['ground_plane'];normal=np.array([-a,-b,1.])
@@ -231,7 +242,7 @@ def ground_error(q, view):
 
 
 @stage('prototype_fitting')
-def fit(o, max_evaluations=45):
+def fit(o, max_evaluations=45, _recovery=True):
     """Optimize x/y/z, width/height/depth and yaw against all linked visible observations."""
     if not o.get('_observations') or o.get('type') in ('mesh','patch'):return o
     kind=props.norm_type(o['type']);obs=[_prepare(s) for s in o['_observations'][:5]]
@@ -259,7 +270,7 @@ def fit(o, max_evaluations=45):
             if not view['partial']:
                 residuals.append((np.median(uv,axis=0)-np.median(view['target'],axis=0))/view['span']*math.sqrt(weight))
             residuals.append(np.array([(np.percentile(z,15)-view['depth'])/view['depth_sigma']])*(.6 if view.get('primary') else .15)*math.sqrt(weight))
-            if view.get('annotation_box'):residuals.append(box_error(world,view)*3)
+            if fit_box(view):residuals.append(box_error(world,view)*3)
             if view.get('ground_contact'):
                 residuals.append(np.array([ground_error(q,view)/max(.1,np.exp(q[4])*.1)*2]))
             residuals.append(np.maximum(.02-z,0)*2)
@@ -292,7 +303,7 @@ def fit(o, max_evaluations=45):
             world=_transform(points,q);_,depths=_uv(world,view)
             depth_error=abs(np.percentile(depths,15)-view['depth'])/view['depth_sigma']
             value=1-m['iou']+.5*min(3.,center)+.12*min(3.,m['size_error_fraction'])+.08*min(5.,depth_error)
-            if view.get('annotation_box'):
+            if fit_box(view):
                 actual_dims=np.exp(q[3:6]);actual_parts=_parts(kind,actual_dims)
                 actual_points=np.concatenate([v for name,v,_ in actual_parts if not view.get('parts') or name in view['parts']])
                 actual_world=_transform(actual_points/actual_dims[[0,2,1]],q)
@@ -313,7 +324,7 @@ def fit(o, max_evaluations=45):
                          options={'maxfev':350,'xtol':.002,'ftol':.002})
         if silhouette_objective(refined.x)<silhouette_objective(best):best=refined.x
     if annotated and not o.get('size_locked'):
-        primary_error=max(np.abs(box_error(_transform(points,best),view)).max() for view,points in zip(obs,sets) if view.get('annotation_box'))
+        primary_error=max(np.abs(box_error(_transform(points,best),view)).max() for view,points in zip(obs,sets) if fit_box(view))
         if primary_error>.04:best=q0.copy()
     score=float(np.mean(residual(best)**2))
     o.update(pos=best[:3].tolist(),size=np.exp(best[3:6]).tolist(),yaw=float(np.degrees(best[6])),abs_z=True)
@@ -323,10 +334,30 @@ def fit(o, max_evaluations=45):
     o.pop('face',None)
     o['_fit']={'version':VERSION,'before':initial,'after':score,'observations':len(obs),
                'silhouette_before':initial_silhouette,'silhouette_after':silhouette_objective(best),
-               'annotation_anchored':annotated,
+               'annotation_anchored':any(v.get('annotation_box') for v in obs),
+               'detection_anchored':any(v.get('detection_box') for v in obs),
                'verification_only_frames':[v['frame'] for v in obs if v.get('fit_weight')==0],
                'partial':any(v['partial'] for v in obs),'parameters':['x','y','z','width','height','depth','yaw']}
+    if _recovery and o.get('_observations') and o['_observations'][0].get('detection_box'):
+        recover_shrub(o,max_evaluations)
     return o
+
+
+@stage('vegetation_recovery')
+def recover_shrub(o,max_evaluations=25):
+    """Bounded local-model recovery: compare shrub prototypes against reliable masks without user edits."""
+    if o.get('type') not in ('bush','hedge') or (o.get('_src') or {}).get('cls')=='drawn':return
+    views=[v for v in o['_observations'] if v.get('primary') or v.get('fit_weight',.12)>0]
+    def quality(obj):return float(np.average([metrics(raster(obj,v),v)['iou'] for v in views],weights=[1. if v.get('primary') else .12 for v in views]))
+    before=quality(o)
+    if before>=.55:return
+    alternative='hedge' if o['type']=='bush' else 'bush';original=o['type']
+    trial=copy.deepcopy(o);trial.update(type=alternative,prototype=alternative)
+    seed_annotation(trial,trial['_observations'][0]);fit(trial,min(25,max_evaluations),_recovery=False)
+    after=quality(trial)
+    if after>before+.04:o.clear();o.update(trial)
+    o['_fit']['automatic_recovery']={'initial_type':original,'selected_type':o['type'],'attempts':1,
+                                    'iou_before':before,'iou_after':after if o['type']==alternative else before}
 
 
 def vet_observation(o, view):
@@ -396,7 +427,8 @@ def match(objects, candidate, images=None):
     center=np.array([np.median(x),np.median(y)]);span=max(6.,float(max(np.ptp(x),np.ptp(y))))
     best=None;score=.8
     for previous in objects:
-        if previous.get('type')!=candidate.get('type') or not previous.get('_observations'):continue
+        if not previous.get('_observations'):continue
+        if previous.get('type')!=candidate.get('type') and {previous.get('type'),candidate.get('type')}-{'bush','hedge'}:continue
         same_frame=any(v['frame']==obs['frame'] for v in previous['_observations'])
         if same_frame and candidate['type'] not in ('table','desk','counter'):continue
         old=previous['_observations'][0]
@@ -489,7 +521,10 @@ def triangulate(polygon):
 def link(previous,candidate):
     for view in candidate['_observations']:
         old=next((v for v in previous['_observations'] if v['frame']==view['frame']),None)
-        if old is None:previous['_observations'].append(view);continue
+        if old is None:
+            if view.get('detection_box'):
+                view=dict(view,primary=False);vet_observation(previous,view)
+            previous['_observations'].append(view);continue
         mask=unbits(old['mask'],old['shape'])|unbits(view['mask'],view['shape'])
         excluded=unbits(old['occluder'],old['shape'])&~mask
         old.update(mask=bits(mask),occluder=bits(excluded))
@@ -537,19 +572,29 @@ def metrics(predicted, view):
             'partial':view['partial']}
 
 
-def annotation_metrics(points, view):
-    if not view.get('annotation_box'):return {}
-    actual=bounds(points,view);target=np.asarray(view['annotation_box']);span=np.maximum(target[2:]-target[:2],2.)
-    if actual is None:return {'annotation_edge_error':10.,'annotation_center_error_px':1e5,'annotation_size_error_fraction':10.}
-    return {'annotation_edge_error':float(np.max(np.abs(actual-target)/np.tile(span,2))),
-            'annotation_center_error_px':float(np.linalg.norm((actual[:2]+actual[2:]-target[:2]-target[2:])/2)*view['source_scale']),
-            'annotation_size_error_fraction':float(np.max(np.abs(actual[2:]-actual[:2]-span)/span)),
+def source_metrics(points, view):
+    target_box=fit_box(view)
+    if not target_box:return {}
+    prefix='annotation' if view.get('annotation_box') else 'detection'
+    actual=bounds(points,view);target=np.asarray(target_box);span=np.maximum(target[2:]-target[:2],2.)
+    if actual is None:return {prefix+'_edge_error':10.,prefix+'_center_error_px':1e5,prefix+'_size_error_fraction':10.}
+    return {prefix+'_edge_error':float(np.max(np.abs(actual-target)/np.tile(span,2))),
+            prefix+'_center_error_px':float(np.linalg.norm((actual[:2]+actual[2:]-target[:2]-target[2:])/2)*view['source_scale']),
+            prefix+'_size_error_fraction':float(np.max(np.abs(actual[2:]-actual[:2]-span)/span)),
             'projected_box_px':(actual*view['source_scale']).tolist()}
+
+
+def annotation_metrics(points, view):
+    return source_metrics(points,view) if view.get('annotation_box') else {}
+
+
+def placement_error(view):
+    return max(view.get('annotation_edge_error',0),view.get('detection_edge_error',0))
 
 
 def passes(views):
     return all(v['iou']>=.35 and v['size_error_fraction']<=.6 and v['center_error_px']<=24 and
-               v.get('annotation_edge_error',0)<=.12 for v in views)
+               placement_error(v)<=.12 for v in views)
 
 
 @stage('silhouette_verification')
@@ -561,7 +606,7 @@ def audit_objects(objects, work, suffix=''):
         views=[]
         for v in o['_observations']:
             points=np.concatenate([p for name,p,_ in _parts(props.norm_type(o['type']),dims) if not v.get('parts') or name in v['parts']])
-            views.append(dict(metrics(raster(o,v),v),**annotation_metrics(_transform(points/dims[[0,2,1]],q),v)))
+            views.append(dict(metrics(raster(o,v),v),**source_metrics(_transform(points/dims[[0,2,1]],q),v)))
         passed=passes(views)
         row={'object':o.get('name'),'type':o['type'],'passed':passed,'views':views,'fit':o['_fit']}
         o['_fit']['validation_passed']=passed;rows.append(row)
@@ -604,5 +649,5 @@ def mesh_metrics(group):
                 poly=np.clip(np.rint(uv[face]),-10000,10000).astype(np.int32)
                 cv2.fillPoly(predicted,[poly],1)
         predicted[unbits(view['occluder'],view['shape'])]=0
-        views.append(dict(metrics(predicted>0,view),**annotation_metrics(points,view)))
+        views.append(dict(metrics(predicted>0,view),**source_metrics(points,view)))
     return views

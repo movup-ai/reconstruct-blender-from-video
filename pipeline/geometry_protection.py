@@ -107,15 +107,15 @@ def protect(data, bundles, max_shift=3.):
             ray_scaled=[dict(m,v=(C+(np.asarray(m['v'])-C)*factor).tolist(),_occlusion_scale=factor) for m in group]
             if measure(ray_scaled)[0]==0:
                 candidates.append((ray_scaled,{'action':'depth and scale aligned along source rays','factor':factor}))
-        from object_fit import mesh_metrics
+        from object_fit import mesh_metrics,placement_error
         original_alignment=mesh_metrics(group)
         candidates=[candidate for candidate in candidates if not any(
-            b.get('annotation_edge_error',0)>max(.04,a.get('annotation_edge_error',0)+.01)
+            placement_error(b)>max(.04,placement_error(a)+.01)
             for a,b in zip(original_alignment,mesh_metrics(candidate[0])))]
         if candidates:
             def alignment(candidate):
                 views=mesh_metrics(candidate[0])
-                return sum(1-v['iou']+v['center_error_px']/100+v['size_error_fraction']+10*v.get('annotation_edge_error',0) for v in views)
+                return sum(1-v['iou']+v['center_error_px']/100+v['size_error_fraction']+10*placement_error(v) for v in views)
             corrected,action=min(candidates,key=alignment)
             for before,new in zip(group,corrected):replacements[id(before)]=new
             actions.append(dict(action,object=name,frames=frames))

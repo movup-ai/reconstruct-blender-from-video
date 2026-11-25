@@ -905,7 +905,7 @@ def set_inputs(work, drawn):
         with open(path, "rb") as source:
             for block in iter(lambda: source.read(1024*1024), b""):
                 evidence.update(block)
-    return {"geometry_version": 5, "lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
+    return {"geometry_version": 6, "lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
             "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea, "metric_evidence": evidence.hexdigest()}
 
 

@@ -322,6 +322,7 @@ def _build_one(o, n, meshes, cam, frame0, dx, tag, zg, gz):
             p = p.copy(); p[2] += min(0.0, float(gz(cx_, cy_).min()) - gz.at(p[0], p[1]))
         col = o.get("colour")
         seed = n * 7919 + sum(ord(ch_) for ch_ in str(o.get("name", ""))) + int(o.get("seed", 0))
+        if o.get('_fit'):seed=0  # Use the same prototype geometry that was fitted and verified.
         for pname, V, F, shade in props.place(props.build(kind, w, h, d, seed), (p[0], p[1]), yaw, p[2]):
             if col in ("bg", "fg", "near", "far_i", "lamp", "special"):   # LZHD meaning colours: the whole object
                 c_ = o.get("colour_" + shade) or col
