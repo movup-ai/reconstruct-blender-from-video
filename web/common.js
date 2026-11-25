@@ -36,12 +36,22 @@ function fmtDur(s) { s = Math.max(0, Math.round(s)); if (s < 60) return s + ' s'
   return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; }
 // how long the work on a video took (computer time, not waiting): took = {done, open, last} from /api/clips, st = its status.
 // running: this job so far · prepared: how long preparing took · finished: all its jobs, from Start to the zip
+function computerSeconds(t) {
+  if (!t) return null;
+  if (Number.isFinite(t.machine)) return t.machine;
+  // Older running servers expose only per-run totals. Sum the latest steps
+  // until the server restarts with the cumulative ledger field.
+  const steps = Object.values(t.steps || {}).map(s => s.ran).filter(Number.isFinite);
+  if (steps.length) return steps.reduce((total, seconds) => total + seconds, 0);
+  const runs = [t.done?.machine, t.open?.machine].filter(Number.isFinite);
+  return runs.length ? runs.reduce((total, seconds) => total + seconds, 0) : null;
+}
 function tookText(t, st) {
   if (!t) return null;
   const L = t.last, what = L && L.stage === 'all' ? 'finishing' : 'preparing';
   if (L && L.state === 'running') return { text: `${what} ${fmtDur(L.ran)}`, tip: `This job has been ${what} for ${fmtDur(L.ran)}.` };
-  if (t.done && (!st || st.done)) return { text: 'done in ' + fmtDur(t.done.machine), fin: true,
-    tip: `The computer worked ${fmtDur(t.done.machine)} to make this package. From Start to the zip took ${fmtDur(t.done.wall)}, with the queue and your review.` };
+  if (t.done && (!st || st.done)) return { text: 'done in ' + fmtDur(computerSeconds(t)), fin: true,
+    tip: `Total recorded processing time since reset: ${fmtDur(computerSeconds(t))}. Queue waits and your review time are excluded.` };
   if (L && L.stage === 'fit' && L.state === 'done' && (!st || st.fit)) return { text: 'prepared in ' + fmtDur(L.ran), tip: `Preparing took ${fmtDur(L.ran)}.` };
   return null;
 }

@@ -90,17 +90,17 @@ function clipActions(c) {
 }
 function renderTable(list, clips, prog) {
   const rows = clips.map(c => {
-    const short = c.name.replace(/^[^_]+_/, ''), t = c.took || {}, tot = t.done ? t.done.machine : (t.open ? t.open.machine : null);
+    const short = c.name.replace(/^[^_]+_/, ''), tot = computerSeconds(c.took);
     const actions = clipActions(c);
     return `<tr><td class="pname"><a href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt=""><span><b title="${esc(c.name)}">${esc(short)}</b>
         <span class="small muted">${c.package ? esc(c.package) : 'no delivery name'}</span></span></a></td>
       <td data-k="Status">${chip(c.status)}</td>
       <td data-k="Prepare">${stepCell(c, 'prepare', prog[c.id])}</td>
       <td data-k="Finish">${stepCell(c, 'finish', prog[c.id])}</td>
-      <td data-k="Computer time" class="r nowrap" title="${t.done ? `From Start to the zip: ${fmtDur(t.done.wall)} with the queue and your review` : ''}">${tot != null ? fmtDur(tot) : '–'}</td>
+      <td data-k="Computer time" class="r nowrap" title="Total recorded processing time since reset, including repeated jobs; excludes queue waits and review time">${tot != null ? fmtDur(tot) : '–'}</td>
       <td data-k="Actions"><div class="table-actions">${actions.queue}${actions.remove}</div></td></tr>`; }).join('');
   list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th><th>Status</th><th>Prepare</th><th>Finish</th>
-    <th class="r" title="How long the computer worked on the clip (all its jobs), not counting waiting">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <th class="r" title="Total recorded processing time since reset (all jobs), excluding queue waits and review time">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function progressSummary(cs, q) {
   const box = $('progsum');

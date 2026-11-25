@@ -116,6 +116,7 @@ class TestJobStore(unittest.TestCase):
         row("fit", "done", 100, 400)                  # prepare: 300 s
         row("all", "done", 1000, 1200)                # review in between, then Finish: 200 s
         t = self.s.timing(now=5000)["a"]
+        self.assertEqual(t['machine'],500)
         self.assertEqual(t["done"], {"start": 100, "end": 1200, "wall": 1100, "machine": 500})
         self.assertIsNone(t["open"])
         row("fit", "running", 2000, None)             # prepared again after the package: a new run, still going
@@ -123,6 +124,26 @@ class TestJobStore(unittest.TestCase):
         self.assertEqual(t["done"]["wall"], 1100, "the last finished run stays")
         self.assertEqual(t["open"], {"start": 2000, "so_far": 600, "machine": 600})
         self.assertEqual(t["last"], {"stage": "fit", "state": "running", "ran": 600}, "the card shows this job's own time")
+        self.assertEqual(t['machine'],1100,'Computer time includes the previous package and current job')
+
+    def test_computer_time_accumulates_multiple_finishes_until_reset(self):
+        def row(stage,state,start,end):
+            self.s.db.execute("INSERT INTO jobs(clip,stage,state,priority,started,ended,user) VALUES ('clip',?,?,0,?,?, 'u')",
+                              (stage,state,start,end))
+        row('fit','done',100,580)             # Prepare: 8 minutes
+        row('all','done',900,1020)            # First Finish: 2 minutes
+        row('all','done',2000,2180)           # Second Finish: 3 minutes
+        timing=self.s.timing(now=3000)['clip']
+        self.assertEqual(timing['done']['machine'],180,'Per-run history still describes the last Finish')
+        self.assertEqual(timing['machine'],780,'Cumulative total is 8 + 2 + 3 minutes')
+        self.assertEqual(timing['steps']['prepare']['ran'],480)
+        self.assertEqual(timing['steps']['finish']['ran'],180)
+        row('background','running',2900,None)
+        self.assertEqual(self.s.timing(now=3000)['clip']['machine'],880)
+        self.assertEqual(self.s.timing(now=3010)['clip']['machine'],890)
+        self.s.cancel_for_reset('u',{'clip'})
+        self.s.clear_clip('clip','u')
+        self.assertNotIn('clip',self.s.timing(now=3010))
 
     def test_dedupe_priority_recover(self):
         self.assertIsNotNone(self.s.enqueue("a", "fit", user="u"))
