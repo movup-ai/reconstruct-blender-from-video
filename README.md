@@ -12,6 +12,12 @@ checkpoint locations are documented in [SAM 3 tracking](docs/SAM3_TRACKING.md) a
 Use one concurrent job on the RTX 4070. TensorRT joint engines are cached in `models/trt_cache`.
 The clip editor has a **Held-object timeline** for named props, pickups, releases, transfers and visibility.
 Prop edits reuse fitted people and cameras; only changed scene layers and requested outputs are rebuilt.
+On a prepared clip's detail page, draw and name scene objects, then use **Detect background only** in
+**Objects in the set**. It saves only object annotations, segments the drawn boxes (or uses drawn outlines),
+updates their models and shows a background preview. Saved people, movement and camera remain unchanged.
+Use **Finish** afterward to update the rendered video and delivery package.
+Prepare/background jobs and Finish jobs have separate slots; the defaults allow one of each concurrently.
+Model inference shares one GPU lease, released before Blender so rendering can overlap the next preparation.
 Trees, bushes, palms and potted plants use recognizable measured prototypes. Object boxes and optional
 dimensions constrain their size, and source-visible people are protected from conflicting background geometry.
 See [props, prototypes and selective rebuilding](docs/PROPS_AND_REBUILDS.md).
@@ -118,7 +124,8 @@ Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.
 **Settings → Autopilot → Full auto** does steps 2–4 on its own after Start, without a review. If a DeepSeek key is saved, DeepSeek checks the
 people and the set first. You can still open any clip, change it and finish again.
 
-The start page also has: *Clips at once* (parallel jobs), *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.
+Settings has separate *Prepare / background jobs* and *Finish jobs* limits. Start with one of each on the RTX 4070.
+The start page also has *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.
 
 ## AI suggestions (DeepSeek, optional)
 

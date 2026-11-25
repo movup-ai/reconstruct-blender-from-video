@@ -41,6 +41,34 @@ The verifier compares background depth with source-visible human pixels and the 
 
 ## What runs after an edit
 
+On the video detail page, use **Objects in the set → Detect background only** after drawing and naming objects.
+This button saves object annotations without saving pending people, camera or joint edits. It runs a dedicated
+`background` job: SAM 3 segments the drawn boxes, explicit outlines are used directly, and the existing prototype
+builder updates those objects. Existing unannotated background objects remain unless deleted or replaced by the
+annotations. Cached metric depth is reused at matching frames; MoGe supplies depth for other annotated frames.
+It does not run tracking, RTMPose, SAM 3D Body, lens estimation, camera solving or human fitting.
+
+The updated scene is checked against an exact copy of the saved people/camera data; a change restores the original
+scene and fails the job. `env_check.jpg` is shown under **Background preview**. `report_background.json` and
+`profile_background.json` record the result and annotation/build timings. **Finish** subsequently renders and
+packages the scene. A background revision marks any older delivery as changed. Pending movement edits remain
+pending and can still require a normal Re-check or Finish refit.
+
+Prepare/background and Finish use separate queue limits (`parallel` and `finish_parallel`, both default 1).
+Different clips can prepare and finish concurrently. The same clip is serialized across both lanes. App pipeline
+jobs acquire a shared process-level inference lease before running models and release it before Blender; an
+uncached Finish waits for inference while a cached Finish can proceed directly to rendering. Pause stops new
+jobs in both lanes while letting running jobs finish. Background jobs do not trigger AI/autopilot chaining.
+
+Office validation used one drawn chair box: the first SAM request/background build took 27.9 seconds, cached
+updates took 7.6–7.7 seconds, and the subsequent Finish took 24.9 seconds. All 137 frames of people and camera data
+were identical before and after. The Finish check rejected any attempted human inference or background detection
+and completed Blender rendering/packaging successfully. Browser validation exercised the detail-page button,
+progress, completed preview and separate job settings. These checks validate the independent workflow; existing
+object-fitting and geometry quality warnings remain available for inspection.
+The complete automated suite passed 241 tests, including queue overlap, same-clip serialization, cross-process
+inference locking, background rollback and Finish reuse after a background update.
+
 | Edit | Rebuilt work |
 | --- | --- |
 | Prop name, shape, size, hand, owner, events or box keys | Prop transforms/geometry and verification |

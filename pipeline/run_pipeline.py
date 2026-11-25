@@ -21,6 +21,7 @@ from fit_people import fit_all
 from rig import Rig, JOINTS
 import package as pkg
 import quality
+import gpu_lease
 from profiling import stage, profile_clip
 
 fit_all = stage("people_fit")(fit_all)
@@ -337,6 +338,7 @@ def carry_over(work, name, c, chars, N, sky):
     return sky
 
 @profile_clip
+@gpu_lease.job
 def run_clip(video, c, args):
     name = getattr(args, "name", None) or clip_name(video, c)
     work = os.path.join(c["work_root"], name); c["_work"] = work
@@ -376,6 +378,8 @@ def run_clip(video, c, args):
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render an edited scene (no new fitting)
         return render_only(name, video, work, c, args, t0)
+    if args.stage == 'background':
+        return background_only(name, video, work, c, args, t0)
     # Compare semantic inputs before loading video frames or any inference models.
     import dependencies
     dependency_config = dict(c)
@@ -384,6 +388,7 @@ def run_clip(video, c, args):
                                   review=c['_review'], overrides={'hints':hints})
     if state.get('fit') == current['fit'] and os.path.isfile(os.path.join(work, 'scene_data.json')):
         return rebuild_edits(name, video, work, c, args, t0, state, current)
+    gpu_lease.acquire()
     # Evidence belongs to this fit's cameras and shots. Never reuse a previous fit's files.
     for evidence_path in glob.glob(os.path.join(work, "metric_evidence*.npz")):
         os.remove(evidence_path)
@@ -743,6 +748,7 @@ def held_detect(name, video, work, c):
     except (OSError, ValueError):
         fresh = False
     if not fresh:
+        gpu_lease.acquire()
         log("  held objects: looking for carried objects (Grounding DINO + CLIP, on the NVIDIA card) ...")
         r = subprocess.run([sys.executable, os.path.join(HERE, "held_objects.py"), name, "--detect-only"], cwd=AGENT)
         if r.returncode != 0 or not os.path.exists(hj):
@@ -837,6 +843,55 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
     return rep
 
 
+def background_only(name, video, work, c, args, t0):
+    """Apply drawn scene annotations using the existing fit; never enter human/camera inference."""
+    import copy
+    import dependencies
+    required = ['scene_data.json', 'camera.json', 'clip_info.json']
+    if any(not os.path.isfile(os.path.join(work, fn)) for fn in required):
+        raise RuntimeError('Prepare the clip first before detecting background objects.')
+    dp = os.path.join(work, 'scene_data.json'); original = jload(dp)
+    if os.path.normcase(os.path.abspath(jload(os.path.join(work,'clip_info.json'))['video'])) != os.path.normcase(os.path.abspath(video)):
+        raise RuntimeError('The saved scene belongs to another video. Prepare this clip first.')
+    previous = dependencies.read(os.path.join(work,'build_state.json'), {}) or {}
+    inputs_before=dependencies.inputs(video,c,work,marks_dir(video,c),os.path.join(output_dir(),name))
+    frozen = {k:copy.deepcopy(original[k]) for k in ('chars','cam','zoom') if k in original}
+    old_flag = os.environ.get('BA_FREEZE_PEOPLE')
+    try:
+        os.environ['BA_FREEZE_PEOPLE'] = '1'
+        gpu_lease.acquire()
+        log('  background only: detecting annotated objects; people and camera are frozen')
+        commands = [sys.executable, os.path.join(HERE,'env_auto.py'), name, '--annotations-only']
+        stage('background_annotations')(subprocess.run)(commands, cwd=AGENT, check=True)
+        env_path = os.path.join(output_dir(), name, 'env_auto.json')
+        stage('background_build')(subprocess.run)([sys.executable, os.path.join(HERE,'build_env.py'), name, '--env', env_path], cwd=AGENT, check=True)
+        data = jload(dp)
+        if any(data.get(k) != v for k,v in frozen.items()):
+            raise RuntimeError('Background build changed saved people or camera; original scene restored.')
+        # Keep hand props attached to exactly the same saved animation; no automatic prop inference.
+        held_place(name,work,video,c)
+        data=jload(dp)
+        if any(data.get(k) != v for k,v in frozen.items()):
+            raise RuntimeError('Background build changed saved people or camera; original scene restored.')
+        current=inputs_before
+        # Background work must never claim that pending human edits have been fitted.
+        current['fit']=previous.get('fit')
+        jsave(os.path.join(work,'build_state.json'),current)
+        jsave(os.path.join(work,'background_revision.json'),{'at':time.time_ns()})
+        rep={'clip':name,'video':video,'status':'ok','reused_people':True,'reused_camera':True,
+             'rebuilt_environment':True,'annotations_only':True,'seconds':round(time.time()-t0,1),
+             'scene_verification':data.get('scene_verification',{})}
+        jsave(os.path.join(work,'report_background.json'),rep)
+        log('  background ready: people and camera unchanged; Finish updates the delivery')
+        return rep
+    except BaseException:
+        jsave(dp,original)
+        raise
+    finally:
+        if old_flag is None: os.environ.pop('BA_FREEZE_PEOPLE',None)
+        else: os.environ['BA_FREEZE_PEOPLE']=old_flag
+
+
 SET_MODELS = [os.path.join(AGENT, "models", "moge2", "model.pt"), os.path.join(AGENT, "third_party", "MoGe", "moge")]
 
 
@@ -911,6 +966,7 @@ def make_set(name, video, work, c, stage, hand_set):
         if fresh:
             log("  set: the automatic set from Prepare (%s)" % env_p)
         else:
+            gpu_lease.acquire()
             log("  set: measuring the scene (MoGe-2 depth + SAM 3 pieces + Mask2Former names, on the NVIDIA card) ...")
             t1 = time.time()
             if os.path.exists(env_p):                          # never fall back on an older measurement
@@ -957,6 +1013,7 @@ def make_set(name, video, work, c, stage, hand_set):
 
 @stage("blender")
 def blender_render(c, work, dp, N, extra=("render",)):
+    gpu_lease.release()
     be = blender_exe(c)
     if not be:
         raise RuntimeError("Blender not found - set the Blender path in Settings (config.json)")
@@ -1098,7 +1155,7 @@ def collect(inputs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="*")
-    ap.add_argument("--stage", default="all", choices=["fit", "blend", "all", "render"])
+    ap.add_argument("--stage", default="all", choices=["fit", "background", "blend", "all", "render"])
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")

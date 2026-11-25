@@ -34,6 +34,10 @@ def profile_clip(function):
         profile = {"clip": name, "stage": args.stage, "stages": {}, "status": "failed"}
         profile["models"] = {"pose": "rtmpose", "camera": config.get("camera_backend", "flow"),
                              "tracker": "sam3", "human": "sam3d_body"}
+        if args.stage == 'background':
+            profile['models'] = {'scene_segmenter':'sam3 box prompts or user outline',
+                                 'geometry':'saved metric depth or MoGe-2', 'objects':'annotated prototypes',
+                                 'people':'reused', 'camera':'reused'}
         token = _active.set(profile)
         started = time.perf_counter()
         try:

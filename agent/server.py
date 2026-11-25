@@ -157,7 +157,8 @@ class Workspace:
                         "since": round(time.time() - (j["started"] or time.time())), "progress": pr.get("pct"), "step": pr.get("step")})
         return {"running": len(run), "queued": mine.get("queued", 0), "failed": mine.get("failed", 0),
                 "others": {"running": others, "queued": every.get("queued", 0) - mine.get("queued", 0)},
-                "parallel": self.app.c["parallel"], "autopilot": self.app.c["autopilot"], "now": run,
+                "parallel": self.app.c["parallel"], "finish_parallel": self.app.c.get('finish_parallel',1),
+                "autopilot": self.app.c["autopilot"], "now": run,
                 "paused": self.runner.is_paused(self.user)}
 
     def reset(self, cls, dry=False):
@@ -248,6 +249,11 @@ class Workspace:
                 out["blocks"] = [os.path.basename(p) for p in sorted(glob.glob(os.path.join(f["work"], "blocks*.jpg")))]
         rv = read_json(f["review"])
         out["review"] = rv
+        background_preview = os.path.join(f['work'],'env_check.jpg')
+        out['background'] = {'ready':all(os.path.isfile(os.path.join(f['work'],fn)) for fn in
+                                      ('scene_data.json','camera.json','clip_info.json')),
+                             'preview':os.path.getmtime(background_preview) if os.path.isfile(background_preview) else None,
+                             'report':read_json(os.path.join(f['work'],'report_background.json'))}
         out["suggested"] = review.suggested(c, cl) if pose else None
         out["ai"] = {k: v for k, v in (read_json(f["ai"], {}) or {}).items() if k != "raw"} or None
         out["env_ai"] = (read_json(os.path.join(f["marks"], "env_ai.json"), {}) or {}).get("shots")
@@ -315,6 +321,12 @@ class Workspace:
             return "busy"
         return "queued" if self.enqueue(cl, "all", force=True) else "busy"
 
+    def background(self, cl):
+        work = folders(self.c, cl)['work']
+        if any(not os.path.isfile(os.path.join(work,fn)) for fn in ('scene_data.json','camera.json','clip_info.json')):
+            raise HttpError(409, 'Prepare the clip first; background detection reuses its saved people and camera.')
+        return self.enqueue(cl,'background',force=True)
+
     def finish_reviewed(self):
         out = {"queued": 0, "unchanged": 0, "busy": 0, "no_name": 0}
         for cl, st in self.status_all():
@@ -359,6 +371,16 @@ def job_progress(c, cl, job):
             txt = fh.read()
     except OSError:
         return {"pct": 0, "step": "starting"}
+    if 'waiting for model inference slot' in txt and 'model inference slot acquired' not in txt.rsplit('waiting for model inference slot',1)[-1]:
+        return {'pct':1,'step':'waiting for the model inference slot; rendering can continue'}
+    if job['stage']=='background':
+        pct,step=5,'loading saved scene'
+        for key,p,s in [('annotated object segmentation:',40,'segmenting drawn objects'),
+                        ('annotated background ready:',75,'building background prototypes'),
+                        ('scene verification:',90,'checking background placement'),
+                        ('background ready:',100,'background preview ready')]:
+            if key in txt:pct,step=p,s
+        return {'pct':pct,'step':step}
     if job["stage"] == "ai":
         return {"pct": 50 if "environment" not in txt else 85, "step": "DeepSeek is looking at the clip"}
     pct, step = 1, "starting"
@@ -964,6 +986,8 @@ def make_handler(app):
                     return self.file(p or os.path.join(f["work"], "plate%s.jpg" % parts[3]), "image/jpeg")
                 if kind == "preview":
                     return self.file(f["preview"], "image/jpeg")
+                if kind == 'background':
+                    return self.file(os.path.join(f['work'],'env_check.jpg'),'image/jpeg')
                 if kind == "clipthumb":
                     return self.file(media.clip_thumb(c, cl), "image/jpeg")
                 if kind == "thumb" and len(parts) == 4:
@@ -1173,18 +1197,20 @@ def make_handler(app):
                                            "handoff": hand and {k: hand[k] for k in ("clips", "confirmed", "all_confirmed")}})
                 if action == "run":
                     stage = (q.get("stage") or ["fit"])[0]
+                    if stage not in ('fit','background','ai','all'):
+                        raise HttpError(400,'unknown job stage')
                     if stage == "ai" and not app.ai_ready():
                         raise HttpError(409, "the local AI is not available (Ollama not running or model missing)")
                     if stage == "all" and not (read_json(f["review"]) or {}).get("confirmed"):
                         raise HttpError(409, "confirm the clip first")
-                    jid = ws.enqueue(cl, stage, force=True)
+                    jid = ws.background(cl) if stage=='background' else ws.enqueue(cl, stage, force=True)
                     if stage == "fit":
                         set_held(cl.id, False, ws.c)                       # explicit Prepare puts the clip back in line
                     app.runner.resume(ws.user)                           # the person asked for it: their queue runs
                     return self.send(200, {"ok": True, "queued": bool(jid)})
                 if action == "objects":
                     n = save_objects(ws.c, cl, self.body_json())
-                    jid = ws.enqueue(cl, "fit", force=True) if (q.get("rebuild") or ["1"])[0] == "1" else None
+                    jid = ws.background(cl) if (q.get("rebuild") or ["1"])[0] == "1" else None
                     if jid:
                         app.runner.resume(ws.user)
                     return self.send(200, {"ok": True, "objects": n, "queued": bool(jid)})

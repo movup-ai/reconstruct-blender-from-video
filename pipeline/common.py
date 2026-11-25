@@ -98,6 +98,7 @@ def cfg():
         with open(CFG_PATH, "w", encoding="utf-8") as fh:
             json.dump(c, fh, ensure_ascii=False, indent=2)
     c = normalize_backends(c)
+    if os.environ.get('BA_FREEZE_PEOPLE') == '1': c['_freeze_people'] = True
     sb = os.environ.get("BA_SANDBOX")                  # test runs: everything written goes under this folder
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")

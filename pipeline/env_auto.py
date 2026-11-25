@@ -45,26 +45,32 @@ def setup():
 
 
 class Models:
-    def __init__(self, points_per_side=32, device=None, config=None):
+    def __init__(self, points_per_side=32, device=None, config=None, annotations_only=False):
         setup()
         import torch
         from common import torch_device
         device = torch_device()                              # the NVIDIA card only
         self.torch, self.dev = torch, device
-        from moge.model.v2 import MoGeModel
-        self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, "moge2", "model.pt")).to(device).eval()
+        self.annotations_only = annotations_only
+        self.moge = None
+        if not annotations_only:
+            from moge.model.v2 import MoGeModel
+            self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, "moge2", "model.pt")).to(device).eval()
         self.pps = points_per_side
         self.config = dict(config or cfg())
         self.scene_cache = None
         self.seg = None                                      # what each piece is: Mask2Former ADE20K (semseg.py)
         try:
             import semseg
-            if semseg.available():
+            if not annotations_only and semseg.available():
                 self.seg = semseg.Segmenter(device)
         except Exception as e:
             print("segmentation model not used (%s) - pieces are named by CLIP" % str(e)[:200])
 
     def moge_run(self, rgb, fov_x=None):
+        if self.moge is None:
+            from moge.model.v2 import MoGeModel
+            self.moge = MoGeModel.from_pretrained(os.path.join(MODELS, 'moge2', 'model.pt')).eval()
         self.moge.to(self.dev)
         t = self.torch.tensor(rgb, dtype=self.torch.float32, device=self.dev).permute(2, 0, 1) / 255.0
         with self.torch.inference_mode():
@@ -73,7 +79,7 @@ class Models:
 
     def _release_scene_gpu(self):
         # SAM 3 runs in a different Python/CUDA runtime. Release resident geometry and semantic weights first.
-        self.moge.to("cpu")
+        if self.moge is not None: self.moge.to("cpu")
         if self.seg is not None:
             self.seg.model.to("cpu")
         self.torch.cuda.empty_cache()
@@ -84,6 +90,7 @@ class Models:
                        cache_dir=self.scene_cache, before_inference=self._release_scene_gpu, **options)
 
     def sam_auto(self, rgb, n=None, iou_t=.7, stab_t=.86, nms_t=.6, min_area=.002):
+        if getattr(self, 'annotations_only', False): return []
         masks = self._sam_scene(rgb, automatic=True, points=n or self.pps,
                                 iou=iou_t, stability=stab_t, nms=nms_t, min_area=min_area)['masks']
         return [{"segmentation": m, "area": int(m.sum())} for m in masks]
@@ -1404,6 +1411,7 @@ def main():
     ap.add_argument("--skip-done", action="store_true", help="skip clips that already have env_auto.json")
     ap.add_argument("--out", default=None, help="json to write (one clip only; default output\\<clip>\\env_auto.json)")
     ap.add_argument("--no-mid", action="store_true")
+    ap.add_argument('--annotations-only', action='store_true', help='Update drawn objects using saved cameras and people; preserve other background objects')
     ap.add_argument("--free-fov", action="store_true", help="also measure MoGe's own field of view on each shot's first "
                     "frame (a second MoGe run; the lens step already measures it)")
     ap.add_argument("--points", type=int, default=None, help="SAM points per side (default: config.json sam_points, 32)")
@@ -1429,11 +1437,11 @@ def main():
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
     t_load = time.time()
     pts = a.points or int(c.get("sam_points", 32))
-    models = Models(pts, config=c)
+    models = Models(pts, config=c, annotations_only=a.annotations_only)
     print("SAM: %dx%d points" % (pts, pts))
     import namer as NM
-    models.namer = NM.Namer(models.dev) if (models.seg is None and NM.available()) else None   # only without Mask2Former
-    print("object names: %s" % ("Mask2Former ADE20K (models/mask2former_ade)" if models.seg is not None else
+    models.namer = NM.Namer(models.dev) if (not a.annotations_only and models.seg is None and NM.available()) else None
+    print("object names: %s" % ("user annotations (no semantic model)" if a.annotations_only else "Mask2Former ADE20K (models/mask2former_ade)" if models.seg is not None else
                                 ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)")))
     print("models loaded on %s in %.1f s" % (models.dev, time.time() - t_load))
     bad = []
@@ -1441,7 +1449,9 @@ def main():
         try:
             for tries in range(4):                               # the GPU is shared: on out-of-memory wait and retry
                 try:
-                    run_clip(n, models, a, c); break
+                    if a.annotations_only: run_annotations(n, models, c)
+                    else: run_clip(n, models, a, c)
+                    break
                 except models.torch.OutOfMemoryError:
                     if tries == 3:
                         raise
@@ -1510,6 +1520,79 @@ def sample_set_frames(data, start, end, c, first_only=False, pose=None, picture=
             break
         selected.add(frame)
     return sorted(selected)
+
+
+def run_annotations(name, models, c):
+    """Measure only drawn objects, preserving the existing unannotated set and human fit."""
+    import copy
+    from run_pipeline import marks_dir
+    from scene_verify import load_evidence
+    from sam3_scene import prefetch
+    work=os.path.join(c['work_root'],name)
+    data=jload(os.path.join(work,'scene_data.json'));ci=jload(os.path.join(work,'clip_info.json'))
+    marks=marks_dir(ci['video'],c);pose=jload(os.path.join(marks,'pose.json'))
+    user_path=os.path.join(marks,'env_ai.json')
+    annotations=jload(user_path) if os.path.isfile(user_path) else {}
+    env_path=os.path.join(output_dir(),name,'env_auto.json')
+    prior=jload(env_path) if os.path.isfile(env_path) else {}
+    env=copy.deepcopy(prior)
+    shots=data.get('shots') or [{'shot':1,'frames':[0,data['frames']-1]}]
+    drawn=drawn_frames(annotations,shots)
+    frames=read_frames_at(ci['video'],[f for tags in drawn.values() for f in tags.values()])
+    models.scene_cache=os.path.join(work,'sam3_scene_cache')
+    requests=[]
+    for sid,tags in drawn.items():
+        for tag,f in tags.items():
+            picture=frames[f][ci['y0']:ci['y0']+ci['Hpic']]
+            k=min(1.,1024./picture.shape[1])
+            if k<1:picture=cv2.resize(picture,(round(picture.shape[1]*k),round(picture.shape[0]*k)),interpolation=cv2.INTER_AREA)
+            rgb=cv2.cvtColor(picture,cv2.COLOR_BGR2RGB)
+            for obj in annotations['shots'][tag].get('objects',[]):
+                if obj.get('bbox') and not obj.get('outline'):
+                    requests.append({'rgb':rgb,'automatic':False,'boxes':[[int(round(v*k)) for v in obj['bbox']]]})
+    count=prefetch(requests,c,models.scene_cache,models._release_scene_gpu)
+    print('  annotated object segmentation: %d uncached box requests'%count,flush=True)
+    bundles,_=load_evidence(data,work);shared={}
+    for bundle in bundles:
+        for i,f in enumerate(bundle['frames']):
+            shared[int(f)]={key:bundle[key][i] for key in ('depth','K','valid','labels')}
+            shared[int(f)]['names']=bundle['names']
+    masks=os.path.join(marks,'sam3_masks.npz')
+    if pose.get('tracker_backend')=='sam3' and os.path.isfile(masks):
+        from sam3_tracking import read_masks
+        pose['_sam3_bundle']=read_masks(masks)
+    rv_path=os.path.join(marks,'review.json');rv=jload(rv_path) if os.path.isfile(rv_path) else {}
+    pose['_prop_timeline']=rv.get('prop_timeline',[]) if rv.get('prop_mode')!='off' else []
+    for shot in shots:
+        sid=shot['shot'];dx=200.*(sid-1)
+        previous=(prior.get('shots') or {}).get(str(sid),{}) if prior.get('shots') else (prior if sid==1 else {})
+        scene=copy.deepcopy(previous) or {'ground':{'size':30,'colour':'ground'},'objects':[]}
+        keep=[o for o in scene.get('objects',[]) if (o.get('_src') or {}).get('cls')!='drawn']
+        new=[]
+        for tag,f in sorted(drawn.get(sid,{}).items()):
+            lens=data['lens']*float((data.get('zoom') or [1.]*data['frames'])[f])
+            fov=2*math.degrees(math.atan(float(data.get('sensor',36.))/(2*lens)))
+            fr=analyse(models,frames[f][ci['y0']:ci['y0']+ci['Hpic']],f,pose,ci,fov,shared=shared.get(f))
+            R,C=cam_mats(data['cam'][f]);C=C-np.array([dx,0.,0.])
+            scale=1. if fr.shared_metric else (shot.get('ground',{}).get('sam3d_body') or {}).get('meters_per_unit',1.)
+            to_world(fr,R@D,C,float(scale))
+            new+=user_objects(annotations,tag,fr,C,f,first=len(new),indoor=True,fit=False,models=models)
+        deleted=[o for sh in annotations.get('shots',{}).values() for o in sh.get('dropped',[])]
+        keep=[o for o in keep if not any((o.get('_src') or {}).get('frame')==d.get('frame') and
+              px_iou((o.get('_src') or {}).get('px',[0,0,0,0]),d['bbox'])>.5 for d in deleted)]
+        keep=[o for o in keep if not any((o.get('_src') or {}).get('frame')==u.get('frame') and
+              px_iou((o.get('_src') or {}).get('px',[0,0,0,0]),u['bbox'])>.3 for u in new)]
+        if any(o.get('_level') for o in new):
+            by_level(new,people_points(data,range(shot['frames'][0],shot['frames'][1]+1,3),dx))
+        for o in new:
+            for key in ('_level','_C','_reach','_az'):o.pop(key,None)
+        scene['objects']=keep+new
+        if len(shots)==1:env=scene
+        else:env.setdefault('shots',{})[str(sid)]=scene
+    env['annotation_build']={'frames':sorted(frames),'objects':sum(len(sh.get('objects',[])) for sh in annotations.get('shots',{}).values())}
+    os.makedirs(os.path.dirname(env_path),exist_ok=True)
+    with open(env_path,'w',encoding='utf-8') as target:target.write(dumps_env(env))
+    print('  annotated background ready: %d source frames; no person or camera inference'%len(frames),flush=True)
 
 
 def run_clip(name, models, a, c):

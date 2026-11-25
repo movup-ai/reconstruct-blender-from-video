@@ -20,7 +20,8 @@ APP_DEFAULTS = {
     "port": 8765,
     "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app (members log in by name)
     "session_days": 30,               # a login lasts this long on one browser
-    "parallel": 1,                    # SAM 3 and body inference share the GPU
+    "parallel": 1,                    # Prepare/background slots; model inference shares one GPU lease
+    "finish_parallel": 1,             # separate rendering/packaging slots
     "autopilot": "off",               # off | prepare | full   (full = prepare, AI fill, auto-confirm, render)
     "timeout_fit_min": 40,
     "timeout_ai_min": 20,
@@ -40,7 +41,7 @@ APP_DEFAULTS = {
 SECRETS = ("deepseek_key", "anthropic_key")   # saved in config.json, never sent back to the browser
 SET_BUILDERS = ("auto", "claude")       # who builds the background set: the local models, or Claude (needs a key)
 SET_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")
-EDITABLE = {"parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_model": str, "deepseek_key": str,
+EDITABLE = {"parallel": int, "finish_parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_model": str, "deepseek_key": str,
             "ai_send_images": bool, "max_attempts": int, "set_detail": str,
             "set_builder": str, "set_model": str, "set_rounds": int, "anthropic_key": str,
             "source_root": str, "submit_root": str, "work_root": str, "blender_exe": str, "person_height": float, "lens_mm": float}
@@ -85,8 +86,8 @@ def save(updates):
             v = EDITABLE[k](v) if EDITABLE[k] is not bool else (v in (True, "true", "1", 1, "on"))
         except (TypeError, ValueError):
             raise ValueError("bad value for %s: %r" % (k, v))
-        if k == "parallel" and not 1 <= v <= 8:
-            raise ValueError("parallel must be 1-8")
+        if k in ("parallel", "finish_parallel") and not 1 <= v <= 8:
+            raise ValueError("%s must be 1-8" % k)
         if k == "camera_backend" and v not in ("flow", "da3"):
             raise ValueError("camera_backend must be flow or da3")
         if k == 'sam3d_stride' and not 1<=v<=16:

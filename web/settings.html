@@ -20,9 +20,12 @@
         <b>Off</b> prepares only the videos there at that moment;
         <b>Prepare only</b> also prepares videos added later, then each waits for your review;
         <b>Full auto</b> also marks every clip reviewed and finishes it <span class="warn">without your review</span>.</div>
-      <label class="k" for="parallel">Clips at once</label>
+      <label class="k" for="parallel">Prepare / background jobs</label>
       <div><select id="parallel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
       <div class="help" id="parhelp"></div>
+      <label class="k" for="finish_parallel">Finish jobs</label>
+      <div><select id="finish_parallel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
+      <div class="help">Prepare and Finish have separate slots: 1 of each can run together. Model inference shares one GPU slot; rendering can overlap preparation. Two jobs for the same clip always run in order.</div>
       <label class="k">Set style</label>
       <div><span class="seg" id="set_detail"><button data-v="clean">Clean</button><button data-v="detailed">Detailed</button></span></div>
       <div class="help">Clean: buildings as whole facades, simple masses for trees and cars, easy to read (recommended). Detailed: every depth block, closer to the picture but busy.</div>
@@ -149,9 +152,9 @@ async function load() {
   S = await api('/api/settings');
   $('srcpath').textContent = S.source_root || 'not chosen yet';
   $('opensrc').style.display = S.local && S.source_root ? '' : 'none'; $('openlogs').style.display = S.local ? '' : 'none';
-  $('parhelp').textContent = S.nvidia ? 'This PC has an NVIDIA card: 2–3 at once is usually fine. Lower it if the PC gets slow or the card runs out of memory.'
+  $('parhelp').textContent = S.nvidia ? 'Start with 1 Prepare/background slot and 1 Finish slot. Model inference runs one job at a time on the NVIDIA card.'
     : 'No working NVIDIA card was found. The models run on the NVIDIA card only: run Setup.bat, then start the app again.';
-  segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
+  segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('finish_parallel').value = S.finish_parallel || 1; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
   for (const key of ['camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
   for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
   $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
@@ -172,7 +175,8 @@ async function load() {
 async function set(obj, msg) { try { await post('/api/settings', obj); toast(msg || 'Saved'); load(); } catch (e) { load(); } }
 segInit($('autopilot'), async v => { if (v === 'full' && !(await ask('After Start, every clip is marked reviewed and finished without waiting for you to check people, joints and objects.', 'Turn on Full auto', { title: 'Turn on Full auto?' }))) { load(); return; } set({ autopilot: v }, 'Autopilot: ' + v); });
 segInit($('set_detail'), v => set({ set_detail: v }, 'Set style: ' + v + ' (used for the next builds)'));
-$('parallel').onchange = e => set({ parallel: +e.target.value }, 'Clips at once: ' + e.target.value);
+$('parallel').onchange = e => set({ parallel: +e.target.value }, 'Prepare/background slots: ' + e.target.value);
+$('finish_parallel').onchange = e => set({ finish_parallel: +e.target.value }, 'Finish slots: ' + e.target.value);
 $('max_attempts').onchange = e => set({ max_attempts: +e.target.value });
 $('ai_enabled').onchange = e => set({ ai_enabled: e.target.checked }, 'AI suggestions ' + (e.target.checked ? 'on' : 'off'));
 $('ai_send_images').onchange = e => set({ ai_send_images: e.target.checked });

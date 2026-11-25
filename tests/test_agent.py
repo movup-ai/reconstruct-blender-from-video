@@ -557,6 +557,24 @@ class TestApi(unittest.TestCase):
             self.app.runner.pause()
             self.post("/api/cancel_queued")
 
+    def test_background_action_requires_saved_fit_and_uses_its_own_stage(self):
+        cl=self.ws.lib.clips[0];f=clipsmod.folders(self.ws.c,cl)
+        self.assertEqual(self.post('/api/clip/%s/run?stage=background'%self.cid)[0],409)
+        os.makedirs(f['work'],exist_ok=True)
+        try:
+            for fn in ('scene_data.json','camera.json','clip_info.json'):
+                with open(os.path.join(f['work'],fn),'w') as stream:json.dump({},stream)
+            code,result=self.post('/api/clip/%s/run?stage=background'%self.cid)
+            self.assertEqual(code,200);self.assertTrue(result['queued'])
+            self.assertEqual(self.app.store.latest_for(self.cid)['stage'],'background')
+            info=json.loads(self.get('/api/clip/%s'%self.cid)[1])
+            self.assertTrue(info['background']['ready'])
+            self.assertEqual(info['status']['label'],'waiting for background')
+            self.assertEqual(self.post('/api/clip/%s/run?stage=invalid'%self.cid)[0],400)
+        finally:
+            self.app.runner.pause(self.ws.user);self.app.store.cancel_queued(self.cid)
+            shutil.rmtree(f['work'],ignore_errors=True)
+
     def test_prepare_from_details_clears_taken_out_state(self):
         path = "/api/clip/%s" % self.cid
         self.assertEqual(self.post(path + "/hold")[0], 200)

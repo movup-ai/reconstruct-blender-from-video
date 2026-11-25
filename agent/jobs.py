@@ -18,8 +18,8 @@ from .clips import folders, status, read_json, fingerprint, record_finish
 from . import review
 
 log = logging.getLogger("agent.jobs")
-STAGES = ("fit", "ai", "all")
-PRIORITY = {"all": 0, "fit": 2, "ai": 3}                   # renders of confirmed clips first, AI last
+STAGES = ("fit", "background", "ai", "all")
+PRIORITY = {"all": 0, "background": 1, "fit": 2, "ai": 3}
 
 
 class JobStore:
@@ -54,24 +54,30 @@ class JobStore:
         if stage not in STAGES:
             raise ValueError("bad stage %r" % stage)
         with self.lock:
-            busy = self.db.execute("SELECT id, stage FROM jobs WHERE clip=? AND state IN ('queued','running')", (clip,)).fetchone()
+            busy = self.db.execute("SELECT id, stage FROM jobs WHERE clip=? AND state IN ('queued','running')", (clip,)).fetchall()
             if busy:
-                if not force or busy["stage"] == stage:
-                    return None
-                self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE id=? AND state='queued'", (time.time(), busy["id"]))
+                if not force or any(row['stage']==stage for row in busy): return None
+                self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE clip=? AND state='queued'", (time.time(),clip))
             cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, user) VALUES (?,?,?,?,?,?)",
                                   (clip, stage, "queued", PRIORITY[stage], time.time(), user))
             return cur.lastrowid
 
-    def take(self, users=None):
+    def take(self, users=None, prepare_limit=None, finish_limit=None):
         """the next job to run; users: only jobs of these members (the ones who pressed Start), None: any job"""
         if users is not None and not users:
             return None
         with self.lock:
             ai_busy = self.db.execute("SELECT 1 FROM jobs WHERE state='running' AND stage='ai'").fetchone()
+            lanes = ""
+            if prepare_limit is not None:
+                count = self.db.execute("SELECT COUNT(*) FROM jobs WHERE state='running' AND stage!='all'").fetchone()[0]
+                if count >= prepare_limit: lanes += " AND stage='all'"
+            if finish_limit is not None:
+                count = self.db.execute("SELECT COUNT(*) FROM jobs WHERE state='running' AND stage='all'").fetchone()[0]
+                if count >= finish_limit: lanes += " AND stage!='all'"
             # one job per clip at a time: a job queued behind its clip's running one (a forced Finish during Prepare) waits
             mine = " AND user IN (%s)" % ",".join("?" * len(users)) if users is not None else ""
-            q = ("SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") + mine +
+            q = ("SELECT * FROM jobs WHERE state='queued'" + (" AND stage!='ai'" if ai_busy else "") + mine + lanes +
                  " AND clip NOT IN (SELECT clip FROM jobs WHERE state='running') ORDER BY priority, id LIMIT 1")
             row = self.db.execute(q, tuple(sorted(users)) if users is not None else ()).fetchone()   # one AI job at a time
             if not row:
@@ -127,7 +133,7 @@ class JobStore:
             t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "steps": {}, "_s": None, "_m": 0.0})
             t["last"] = {"stage": r["stage"], "state": r["state"], "ran": round(max(0.0, (r["ended"] or now) - r["started"]))}
             if r["state"] != "cancelled":
-                step = "prepare" if r["stage"] == "fit" else ("finish" if r["stage"] in ("all", "render", "blend") else None)
+                step = "prepare" if r["stage"] == "fit" else ("background" if r['stage']=='background' else ("finish" if r["stage"] in ("all", "render", "blend") else None))
                 if step:
                     t["steps"][step] = {"state": r["state"], "ran": t["last"]["ran"], "ended": r["ended"]}
             if t["_s"] is None:
@@ -171,7 +177,7 @@ def kill_tree(proc):
 class Runner:
     """worker pool; the number of busy workers follows the 'parallel' setting live.  One queue for every member (one
     NVIDIA card); each member starts and pauses their own jobs."""
-    MAX_WORKERS = 8
+    MAX_WORKERS = 16
 
     def __init__(self, app):
         self.app = app
@@ -225,11 +231,12 @@ class Runner:
     def _worker(self):
         while not self.stop.is_set():
             with self.cond:
-                while not self.stop.is_set() and (not self.active or self.busy >= self.app.c["parallel"]):
+                while not self.stop.is_set() and not self.active:
                     self.cond.wait(5)
                 if self.stop.is_set():
                     return
-                job = self.store.take(set(self.active))
+                job = self.store.take(set(self.active), prepare_limit=self.app.c['parallel'],
+                                      finish_limit=self.app.c.get('finish_parallel', 1))
                 if job is None:
                     self.cond.wait(3)
                     continue
@@ -271,9 +278,10 @@ class Runner:
             return
         os.makedirs(f["work"], exist_ok=True)
         logp = os.path.join(f["work"], "job_%s.log" % job["stage"])
-        timeout = 60 * c.get({"fit": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
+        timeout = 60 * c.get({"fit": "timeout_fit_min", "background": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
         # the job works in this member's folders (common.member_cfg reads these)
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_USER=ws.user, BA_SOURCE=c["source_root"])
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_USER=ws.user, BA_SOURCE=c["source_root"],
+                   BA_GPU_LOCK=os.path.join(config.DATA, 'model_inference.lock'))
         cmd = self._cmd(job, cl)
         fp = fingerprint(c, cl) if job["stage"] == "all" else None     # what this Finish is made from
         log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])

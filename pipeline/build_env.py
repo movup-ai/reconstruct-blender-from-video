@@ -758,6 +758,7 @@ def main():
         mine = [b for b in surfs if tag is None or tag in b["name"]]
         a0, a1 = s["frames"]
         for kind, ch in data["chars"].items():
+            if c.get('_freeze_people'): continue
             if "root_z_fit" not in ch:                       # the fit's own heights, kept so rebuilding never compounds
                 ch["root_z_fit"] = [r[2] for r in ch["root"]]
             fr = list(range(a0, min(a1 + 1, len(ch["root"]))))

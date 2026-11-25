@@ -53,7 +53,8 @@
     <h2><span class="num">3</span>Objects in the set</h2>
     <p class="hint">Choose a tool and draw on the background to add an object. Use Select to move or resize an existing selection, and <kbd>Delete</kbd> to remove it. Dashed outlines are what Prepare found. With type <i>other</i> the
       description decides how it is built. Trees become pine prototypes, bushes become short rounded shrubs, and named furniture uses recognizable models. Use the held-object timeline below for carried objects.
-      <b>Re-check</b> builds the set again with your changes, and Finish uses them.</p>
+      Draw a box or outline, name the object, then press <b>Detect background only</b>. It saves these object annotations and updates their background models using the saved people and camera. Finish updates the delivery.</p>
+    <div class="row"><button type="button" id="background-only" class="primary" disabled>Detect background only</button><span class="small muted" id="background-state">Prepare the clip first.</span></div>
     <div id="object-tools" class="seg object-tools" role="group" aria-label="Object drawing tools">
       <button type="button" data-v="select">Select</button>
       <button type="button" data-v="pen" title="Trace an outline freehand">Pen</button>
@@ -63,6 +64,7 @@
     </div>
     <div id="objshots"><div class="empty">Loading…</div></div>
     <div id="geometry-actions" class="small muted"></div>
+    <details id="background-result" hidden><summary>Background preview</summary><img id="background-preview" class="prev" alt="Updated background placement and fitted objects"></details>
   </section>
 
 
@@ -214,6 +216,15 @@ async function saveObjects() {                       // objects are kept with ev
   if (!OBJ || !ODIRTY) return;
   await post(`/api/clip/${CID}/objects?rebuild=0`, objectsBody()); ODIRTY = false;
 }
+$('background-only').onclick = async () => {
+  const button = $('background-only'); button.disabled = true;
+  try {
+    await saveObjects();
+    const r = await post(`/api/clip/${CID}/run?stage=background`);
+    toast(r.queued ? 'Detecting annotated background objects. Saved people and camera are preserved.' : 'A background job is already queued.');
+    await refresh();
+  } catch (e) { toast(e.message, true); button.disabled = false; }
+};
 async function saveAll(confirmed) { await saveMarks(); await saveObjects(); const r = await sendReview(confirmed); dirty = false; return r; }
 $('save').onclick = async () => {
   const m = await saveMarks(); await saveObjects(); await sendReview(false); dirty = false;
@@ -531,7 +542,7 @@ function banner() {
   const b = $('banner'), j = INFO.job, s = INFO.status;
   if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
     b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${STAGE[j.stage]}). The queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>. You can review meanwhile.` :
-      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
+      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', background: 'Updating annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
@@ -582,6 +593,14 @@ async function load(first) {
   banner();
   const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
   $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
+  $('background-only').disabled = busy || !INFO.background?.ready;
+  $('background-state').textContent = !INFO.background?.ready ? 'Prepare the clip first.' : busy ? 'Waiting for this clip’s current job.' :
+    INFO.background.report ? `Last background update: ${INFO.background.report.seconds}s. People and camera reused.` : 'Updates drawn objects; keeps the saved movement and camera.';
+  $('background-result').hidden = !INFO.background?.preview;
+  if (INFO.background?.preview && $('background-preview').dataset.version !== String(INFO.background.preview)) {
+    $('background-preview').dataset.version = String(INFO.background.preview);
+    $('background-preview').src = `/media/background/${CID}.jpg?v=${INFO.background.preview}`;
+  }
   $('finish').title = !INFO.package ? 'Asks for the film\'s English title first (the zip needs a delivery name), then finishes' :
     busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
   $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The client requires this name for the zip: the film's English title and this video's number">Delivery name <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No delivery name yet</span>';
@@ -597,7 +616,7 @@ async function load(first) {
   const state = INFO.job ? INFO.job.state + INFO.job.id : '';
   if (lastState && /queued|running/.test(lastState) && INFO.job && !/queued|running/.test(INFO.job.state)) {
     toast(INFO.job.state === 'done' ? 'Finished' : 'Failed: ' + (INFO.job.error || ''), INFO.job.state !== 'done');
-    if (INFO.job.stage !== 'all' && !dirty) { fillForm(INFO.review || INFO.suggested); }
+    if (!['all','background'].includes(INFO.job.stage) && !dirty) { fillForm(INFO.review || INFO.suggested); }
     if (INFO.job.stage !== 'all' && !ODIRTY) loadObjects();
   }
   lastState = state;

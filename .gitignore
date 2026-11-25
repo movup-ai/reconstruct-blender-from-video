@@ -97,6 +97,7 @@ data/users/
 data/unzipped.json
 # Permanent package assignments are local app data; back up separately.
 data/package_names.json
+data/model_inference.lock
 
 # ---------------------------------------------------------------
 # Half-written files (atomic saves, video unzip, downloads)

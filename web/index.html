@@ -110,11 +110,11 @@ function progressSummary(cs, q) {
   const prepared = cs.filter(c => c.status.fit).length, finished = cs.filter(c => c.status.done).length;
   const toPrep = cs.filter(c => !c.status.fit && !c.status.held).length;
   const toFin = cs.filter(c => c.status.fit && c.status.confirmed && !c.status.done).length;
-  const left = (toPrep * (aP || 0) + toFin * (aF || 0)) / Math.max(1, q.parallel || 1);
+  const left = Math.max(toPrep * (aP || 0) / Math.max(1, q.parallel || 1), toFin * (aF || 0) / Math.max(1, q.finish_parallel || 1));
   box.style.display = '';
   box.innerHTML = `<span><b>${prepared}</b>/${cs.length} prepared${aP != null ? ` · ${fmtDur(aP)} each on average` : ''}</span>
     <span><b>${finished}</b>/${cs.length} finished${aF != null ? ` · ${fmtDur(aF)} each on average` : ''}</span>
-    ${(toPrep || toFin) && (aP || aF) ? `<span title="Clips not prepared × the average Prepare, plus reviewed clips × the average Finish, ${q.parallel || 1} at a time">About <b>${fmtDur(left)}</b> of work left (${toPrep} to prepare, ${toFin} to finish)</span>` : ''}`;
+    ${(toPrep || toFin) && (aP || aF) ? `<span title="Separate Prepare and Finish slots; model inference shares the GPU and may add waiting time">About <b>${fmtDur(left)}</b> of work left (${toPrep} to prepare, ${toFin} to finish)</span>` : ''}`;
 }
 
 function render() {

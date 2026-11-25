@@ -15,6 +15,7 @@
   color-scheme:light;
 }
 * { box-sizing:border-box; }
+#finishqueue[hidden], #background-result[hidden] { display:none !important; }
 body { margin:0; background:var(--plaster); color:var(--ink);
        font:15px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,"Microsoft YaHei UI","Microsoft YaHei",sans-serif;
        font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased; }

@@ -286,6 +286,7 @@ def fingerprint(c, cl):
     fixes = (read_json(chk[-1], {}) or {}) if chk else {}          # the joint editor stamps every save: not a change
     h.update(json.dumps({k: v for k, v in fixes.items() if k != "saved"}, sort_keys=True).encode("utf-8"))
     parts = [os.path.join(d, n) for d in (f["marks"], out) for n in ("env_ai.json", "hints.json", "env_claude.json", "desc.txt")]
+    parts.append(os.path.join(f['work'],'background_revision.json'))
     for p in parts:
         h.update(("%s|" % (_digest(p) if p else None)).encode("utf-8"))
     try:
@@ -301,7 +302,7 @@ def fingerprint(c, cl):
                  "tracker_backend", "sam3_checkpoint", "sam3_python", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
                  "sam_points", "sam3_image_batch", "sam3_image_max_masks",
                  "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_python", "sam3d_stride", "sam3d_surface_side")}
-    h.update(json.dumps({"pipeline_version": 9, **settings}, sort_keys=True).encode("utf-8"))
+    h.update(json.dumps({"pipeline_version": 10, **settings}, sort_keys=True).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -389,7 +390,7 @@ LABELS = {  # label -> group used by the start page
     "not prepared": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
     "waiting for AI": "busy", "ready for review": "ready", "reviewed": "conf", "auto-confirmed": "conf",
     "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail",
-    "taken out": "new"}
+    "waiting for background": "busy", "detecting background": "busy", "taken out": "new"}
 
 
 def status(c, cl, job=None):
@@ -415,6 +416,7 @@ def status(c, cl, job=None):
     s["ai_failed"] = state == "failed" and stage == "ai"
     if state in ("queued", "running"):
         label = {("fit", "queued"): "waiting to prepare", ("fit", "running"): "preparing",
+                 ('background','queued'):'waiting for background', ('background','running'):'detecting background',
                  ("ai", "queued"): "waiting for AI", ("ai", "running"): "AI checking",
                  ("all", "queued"): "waiting to finish", ("all", "running"): "finishing"}[(stage, state)]
     elif state == "failed" and stage != "ai":           # a failed AI suggestion does not block the clip
