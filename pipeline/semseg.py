@@ -21,7 +21,7 @@ ROLE = {
     "wall": "wall", "windowpane": "wall", "blind": "wall", "painting": "wall", "poster": "wall", "bulletin board": "wall",
     "mirror": "wall", "door": "wall", "screen door": "wall", "signboard": "wall", "clock": "wall", "sconce": "wall",
     "building": "building", "house": "building", "skyscraper": "building", "tower": "building", "hovel": "building",
-    "mountain": "far", "hill": "far", "rock": "rock", "tree": "tree", "palm": "tree",
+    "mountain": "far", "hill": "far", "rock": "rock", "tree": "tree", "palm": "tree", "forest": "tree",
     "plant": "relief", "flower": "relief", "curtain": "relief", "sculpture": "relief", "vase": "relief", "pot": "relief",
     "apparel": "relief", "towel": "relief", "blanket": "relief", "cushion": "relief", "pillow": "relief", "animal": "relief",
     "basket": "relief", "plaything": "relief", "food": "relief", "flag": "relief", "fountain": "relief",

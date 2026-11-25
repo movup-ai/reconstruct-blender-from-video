@@ -840,7 +840,13 @@ def make_object(R, C, indoor, fr, fpix, name):
         src["label"] = list(R["label"])                          # what CLIP sees (namer.py), for the review page
     from prototypes import vegetation_kind, measured_object
     prototype = vegetation_kind((R.get('label') or ('',))[0], indoor)
-    if prototype is None and cls == 'vegetation': prototype = 'bush' if z95-z5 < 2 else 'pine'
+    if cls == 'vegetation' and prototype in (None, 'pine'):
+        height = z95 - z5
+        low, high = np.percentile(P[:, :2], [5, 95], axis=0)
+        if height >= 2 and (high - low).max() >= 2.5 * height:
+            prototype = 'forest'
+        elif prototype is None:
+            prototype = 'bush' if height < 2 else 'pine'
     if prototype:
         return measured_object(prototype, P, name, src)
     pt = R.get("ptype")

@@ -58,7 +58,7 @@ def inputs(video, c, work, marks, out, review=None, overrides=None):
                   'weights': [stamp(c.get(k, DEFAULT_CFG.get(k))) for k in
                               ('sam3_checkpoint', 'sam3d_checkpoint', 'sam3d_mhr')]})
     env = rv.get('environment', {})
-    environment = digest({'version': 2, 'fit': fit, 'objects': read(marks / 'env_ai.json'),
+    environment = digest({'version': 3, 'fit': fit, 'objects': read(marks / 'env_ai.json'),
                           'hand_set': read(out / 'env_claude.json'),
                           'settings': {k: c.get(k, DEFAULT_CFG.get(k)) for k in
                                        ('set_builder', 'set_detail', 'set_adaptive_frames', 'set_max_frames',

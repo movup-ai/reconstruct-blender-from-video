@@ -18,7 +18,7 @@ TYPES = {
     "stove": ((0.6, 0.9, 0.6), "floor"), "tv": ((1.1, 0.65, 0.08), "wall"), "lamp": ((0.4, 1.6, 0.4), "floor"),
     "lamp_post": ((0.3, 4.0, 0.3), "floor"), "car": ((4.4, 1.45, 1.8), "floor"), "van": ((5.2, 2.2, 2.0), "floor"),
     "truck": ((7.0, 3.0, 2.5), "floor"), "bus": ((11.0, 3.1, 2.5), "floor"), "bicycle": ((1.7, 1.0, 0.5), "floor"),
-    "tree": ((4.0, 7.0, 4.0), "floor"), "pine": ((2.5, 8.0, 2.5), "floor"), "bush": ((1.5, 1.0, 1.2), "floor"), "plant_pot": ((0.5, 1.0, 0.5), "floor"),
+    "tree": ((4.0, 7.0, 4.0), "floor"), "pine": ((2.5, 8.0, 2.5), "floor"), "forest": ((20., 8., 8.), "floor"), "bush": ((1.5, 1.0, 1.2), "floor"), "plant_pot": ((0.5, 1.0, 0.5), "floor"),
     "fence": ((3.0, 1.2, 0.08), "floor"), "wall": ((3.0, 2.5, 0.25), "floor"), "railing": ((3.0, 1.0, 0.08), "floor"),
     "stairs": ((1.2, 1.5, 2.5), "floor"), "bench": ((1.6, 0.85, 0.5), "floor"), "bin": ((0.5, 0.9, 0.5), "floor"),
     "box": ((0.6, 0.5, 0.6), "floor"), "barrel": ((0.6, 0.9, 0.6), "floor"), "sign": ((0.8, 2.4, 0.08), "floor"),
@@ -322,21 +322,25 @@ def build(kind, w, h, d, seed=0):
     elif kind == "bicycle":
         add("wheel_f", wheel_x(W - 0.35, 0, 0.34, 0.05), "dark"); add("wheel_b", wheel_x(-W + 0.35, 0, 0.34, 0.05), "dark")
         add("frame", box(-W + 0.35, W - 0.35, -0.02, 0.02, 0.45, 0.5), "dark"); add("seat", box(-0.25, -0.05, -0.08, 0.08, h - 0.05, h))
-    elif kind == "tree":                                           # trunk + a layered, faceted canopy (block style)
-        tr = max(0.12, w * 0.05)
-        zc = h * 0.42                                                # canopy bottom
-        add("trunk", cyl(0, 0, tr, 0, zc + h * 0.12, 6, tr * 0.7), "dark")
-        for i in range(2):                                           # two branch stubs into the canopy
-            a = rng.uniform(0, 2 * math.pi)
-            add("branch%d" % i, bar((0, 0, zc - h * 0.04), (math.cos(a) * W * 0.45, math.sin(a) * D * 0.45, zc + h * 0.12), tr * 1.1, tr * 1.1, 0.6), "dark")
-        ch = h - zc
-        for i, (fz, fr, fh) in enumerate(((0.30, 1.0, 0.36), (0.62, 0.78, 0.30), (0.86, 0.48, 0.18))):   # three tiers
-            ox, oy = rng.uniform(-0.08, 0.08, 2)
-            add("crown%d" % i, puff(ox * w, oy * d, zc + ch * fz, W * fr, D * fr, ch * fh, rng=rng))
-        if w > 2.5:                                                  # side clumps on big trees
-            for i in range(2):
-                a = rng.uniform(0, 2 * math.pi)
-                add("clump%d" % i, puff(math.cos(a) * W * 0.6, math.sin(a) * D * 0.6, zc + ch * 0.35, W * 0.45, D * 0.45, ch * 0.22, rng=rng))
+    elif kind in ("tree", "pine", "forest"):
+        rows = min(3, max(1, math.ceil(d / max(h * .65, .01)))) if kind == "forest" else 1
+        columns = min(14, max(2, math.ceil(w / max(h * .45, .01)))) if kind == "forest" else 1
+        for row in range(rows):
+            for column in range(columns):
+                x = (column + .5 - columns / 2) * w / columns
+                y = (row + .5 - rows / 2) * d / rows
+                height = h if row == column == 0 else h * rng.uniform(.65, .95)
+                prefix = f"tree{row}_{column}_" if kind == "forest" else ""
+                parts = [("trunk", .1, 0., .23)]
+                parts += [(f"tier{i}", radius, bottom, top) for i, (radius, bottom, top) in
+                          enumerate(((1., .15, .53), (.82, .34, .72), (.62, .55, 1.)))]
+                for part, radius, bottom, top in parts:
+                    v, faces = cyl(0, 0, radius, height * bottom, height * top, 8)
+                    if part != "trunk":
+                        v = v[:8] + [(0., 0., height * top)]
+                        faces = [(i, (i + 1) % 8, 8) for i in range(8)] + [faces[-2]]
+                    add(prefix + part, ([(x + vx * W / columns, y + vy * D / rows, vz)
+                                         for vx, vy, vz in v], faces))
     elif kind == "palm":
         add("trunk", cyl(0, 0, max(.03, w*.04), 0, h*.83, 8), "dark")
         for i in range(8):
@@ -345,13 +349,6 @@ def build(kind, w, h, d, seed=0):
             origin = np.array([0.,0.,h*.86])
             vertices = [origin, origin+u*.55+v+[0,0,h*.14], origin+u, origin+u*.55-v+[0,0,h*.14]]
             add("leaves%d" % i, ([p.tolist() for p in vertices], [[0,1,2,3]]))
-    elif kind == "pine":                                             # trunk + stacked tiers (low-poly fir)
-        add("trunk", cyl(0, 0, max(0.1, w * 0.05), 0, h * 0.25, 6), "dark")
-        tiers = 3 if h < 5 else 4
-        for i in range(tiers):
-            z0 = h * (0.15 + 0.7 * i / tiers); z1 = min(h, z0 + h * (0.42 if i < tiers - 1 else 0.85 - 0.7 * i / tiers + 0.15))
-            r = W * (1.0 - 0.72 * i / tiers)
-            add("tier%d" % i, cyl(0, 0, r, z0, z1, 7, 0.0))
     elif kind == "bush":                                             # a mound of rounded faceted clumps
         # one rounded body (the mass of leaves) with smaller rounded clumps along its top outline and front:
         # reads as a shrub / foliage, not as a pile of stones

@@ -8,6 +8,7 @@ def vegetation_kind(label, indoor=False):
     if re.search(r'\b(potted|house|pot)\b', text): return 'plant_pot'
     words = set(re.findall(r'[a-z]+', text))
     def has(*terms): return any(t in words or t+'s' in words for t in terms)
+    if has('forest', 'woodland', 'grove', 'woods'): return 'forest'
     if has('palm'): return 'palm'
     if has('bush', 'shrub', 'bushes'): return 'bush'
     if has('hedge', 'hedgerow'): return 'hedge'

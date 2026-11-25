@@ -190,6 +190,17 @@ class ProtectionTests(unittest.TestCase):
             '_src':{'px':[10,10,20,30],'frame':0}}
         self.assertTrue(build({'ground':{'size':0},'objects':[ob]},cam))
 
+    def test_forest_uses_bounded_tiered_conifers(self):
+        import props
+        from describe import parse
+        self.assertEqual(parse('forest in the background')['kind'], 'forest')
+        self.assertEqual(props.build('tree', 2, 5, 2), props.build('pine', 2, 5, 2))
+        parts = props.build('forest', 20, 8, 8)
+        self.assertGreater(sum(name.endswith('_trunk') for name, *_ in parts), 2)
+        vertices = np.concatenate([verts for _, verts, _, _ in parts])
+        self.assertTrue((np.abs(vertices[:, :2]) <= [10.00001, 4.00001]).all())
+        self.assertEqual(vertices[:, 2].max(), 8)
+
     def test_explicit_static_dimensions_survive_box_placement(self):
         from build_env import build, Cam
         data,_=fixture(1)
