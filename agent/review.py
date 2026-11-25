@@ -81,6 +81,8 @@ def validate(d):
     mode = d.get('prop_mode', 'manual' if out['prop_timeline'] else 'auto')
     if mode not in ('auto', 'manual', 'off'): raise ValueError('Unknown prop mode')
     out['prop_mode'] = mode
+    from limb_depth import validate as validate_depth
+    out['limb_depth'] = validate_depth(d.get('limb_depth', []), set(out['people']))
     owners = set(out['people'])
     for obj in out['prop_timeline']:
         for event in obj['events']:

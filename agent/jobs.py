@@ -19,8 +19,8 @@ from .clips import folders, status, read_json, fingerprint, record_finish
 from . import review
 
 log = logging.getLogger("agent.jobs")
-STAGES = ("fit", "background", "ai", "all")
-PRIORITY = {"all": 0, "background": 1, "fit": 2, "ai": 3}
+STAGES = ("fit", "background", "depth", "ai", "all")
+PRIORITY = {"all": 0, "background": 1, "depth": 1, "fit": 2, "ai": 3}
 
 
 class JobStore:
@@ -404,7 +404,7 @@ class Runner:
             return
         os.makedirs(f["work"], exist_ok=True)
         logp = os.path.join(f["work"], "job_%s.log" % job["stage"])
-        timeout = 60 * c.get({"fit": "timeout_fit_min", "background": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
+        timeout = 60 * c.get({"fit": "timeout_fit_min", "background": "timeout_fit_min", "depth": "timeout_fit_min", "ai": "timeout_ai_min", "all": "timeout_render_min"}[job["stage"]], 60)
         # the job works in this member's folders (common.member_cfg reads these)
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_USER=ws.user, BA_SOURCE=c["source_root"],
                    BA_GPU_LOCK=os.path.join(config.DATA, 'model_inference.lock'))

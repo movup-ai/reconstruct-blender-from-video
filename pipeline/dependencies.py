@@ -71,6 +71,7 @@ def inputs(video, c, work, marks, out, review=None, overrides=None):
                                         'protect_people', 'scene_verify', 'scene_repair', 'set_colours')},
                           'review': {k: v for k, v in env.items() if k != 'props'}})
     return {'fit': fit, 'environment': environment,
+            'limb_depth': digest(rv.get('limb_depth', [])),
             'props': digest({'timeline': rv.get('prop_timeline', []), 'legacy': env.get('props', []),
                              'mode': rv.get('prop_mode', 'manual' if rv.get('prop_timeline') else 'auto'),
                              'auto': c.get('held_objects', True), 'hint': hints.get('held_objects')})}

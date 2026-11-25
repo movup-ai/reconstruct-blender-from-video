@@ -73,6 +73,7 @@
 
 
   <section class="step" id="s-props"><h2><span class="num">4</span>Held-object timeline</h2><div id="prop-timeline"></div></section>
+  <section class="step"><h2>Limb depth timeline</h2><div id="limb-depth"></div></section>
   <details class="step" id="s-more">
     <summary>More <span>(camera, set, held objects, description: filled in automatically, change only if wrong)</span></summary>
   <div class="sub" id="s-camera">
@@ -130,6 +131,7 @@
   <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
 <script src="/static/common.js"></script>
 <script src="/static/prop_timeline.js"></script>
+<script src="/static/limb_depth.js"></script>
 <script>
 nav('clips');
 const CID = location.pathname.split('/').pop();
@@ -139,6 +141,13 @@ const EXTRA_COLS = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'];
 const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'], ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
 let INFO = null, lastState = null, dirty = false;
 const msg = t => $('msg').textContent = t;
+const depthEditor = new LimbDepthEditor($('limb-depth'), $('src'), () => dirty = true, async () => {
+  try {
+    await sendReview(false); dirty = false;
+    const r = await post(`/api/clip/${CID}/run?stage=depth`);
+    toast(r.queued ? 'Depth correction queued. Cached tracking and bodies are reused.' : 'This clip is already being processed.'); refresh();
+  } catch (e) { toast(e.message || 'Could not apply depth corrections.'); }
+});
 const propEditor = new PropTimelineEditor($('prop-timeline'), $('src'), () => dirty = true);
 
 function quality(px) {                                // how well the 3D person lines up with the video
@@ -192,6 +201,7 @@ function propRow(p = {}) {
 function fillForm(rv) {
   fillPeople(rv);
   propEditor.load(rv, INFO);
+  depthEditor.load(rv, INFO);
   segSet($('camtype'), rv?.camera?.type || 'static');
   $('lens').value = rv?.camera?.lens || INFO.defaults.lens; $('camnote').value = rv?.camera?.note || '';
   const env = rv?.environment || {};
@@ -205,7 +215,7 @@ function collect(confirmed) {
     height: +d.querySelector('.h').value, name: d.querySelector('.nm').value.trim() });
   const props = [...$('props').tBodies[0].rows].map(tr => ({ name: tr.querySelector('.pn').value.trim(), kind: tr.querySelector('.pk').value,
     frames: tr.querySelector('.pf').value.trim(), note: tr.querySelector('.pw').value.trim() })).filter(p => p.name);
-  return { confirmed, people, ...propEditor.value(), camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
+  return { confirmed, people, ...propEditor.value(), ...depthEditor.value(), camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
            environment: { depth_set: $('env_depth').checked, set_colours: $('env_colour').value, use_ai: $('env_useai').checked, props }, notes: $('notes').value };
 }
 function saveMarks() {
@@ -638,7 +648,7 @@ function banner() {
   const b = $('banner'), j = INFO.job, s = INFO.status;
   if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
     b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${STAGE[j.stage]}). The queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>. You can review meanwhile.` :
-      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', background: 'Rendering annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
+      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', depth: 'Applying limb depth corrections using the saved scene.', background: 'Rendering annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (j && j.state === 'stopped') { b.className = 'banner note';
     b.textContent = 'Processing cancelled. Completed files and caches are kept. Re-check or Finish starts a new job.'; }
@@ -684,6 +694,7 @@ async function load(first) {
     if (INFO.flagged) $('s-marks').open = true;
     loadObjects();
   }
+  depthEditor.report(INFO);
   const sh = (INFO.camera && INFO.camera.shots) || [];
   $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${s.shot}: frames ${s.frames[0]}–${s.frames[1]} · turns ${(+s.max_rotation_deg).toFixed(1)}°${s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : ''}</span>`).join('') : '<span>Not measured yet</span>';
   checks();

@@ -260,6 +260,7 @@ class Workspace:
             sd = read_json(f["scene"])
             if sd:
                 out['prop_warnings'] = sd.get('prop_timeline_warnings', [])
+                out['limb_depth_report'] = sd.get('limb_depth_report')
                 out['geometry_protection'] = sd.get('geometry_protection', [])
                 kinds = {}
                 for m in sd.get("meshes", []):
@@ -1215,6 +1216,8 @@ def make_handler(app):
                     from prop_timeline import validate as validate_timeline
                     pose = read_json(f['pose'], {}) or {}
                     d['prop_timeline'] = validate_timeline(d['prop_timeline'], pose.get('frames'))
+                    from limb_depth import validate as validate_depth
+                    d['limb_depth'] = validate_depth(d['limb_depth'], set(d['people']), pose.get('frames'))
                     d.setdefault("clip", cl.name); d.setdefault("video", cl.video)
                     review.write(f["review"], d)
                     if d["notes"].strip():                    # the description goes into meta.jsonl
@@ -1236,8 +1239,10 @@ def make_handler(app):
                                            "handoff": hand and {k: hand[k] for k in ("clips", "confirmed", "all_confirmed")}})
                 if action == "run":
                     stage = (q.get("stage") or ["fit"])[0]
-                    if stage not in ('fit','background','ai','all'):
+                    if stage not in ('fit','background','depth','ai','all'):
                         raise HttpError(400,'unknown job stage')
+                    if stage == 'depth' and not os.path.isfile(f['scene']):
+                        raise HttpError(409, 'Prepare this clip before applying limb depth corrections.')
                     if stage == "ai" and not app.ai_ready():
                         raise HttpError(409, "the local AI is not available (Ollama not running or model missing)")
                     if stage == "all" and not (read_json(f["review"]) or {}).get("confirmed"):

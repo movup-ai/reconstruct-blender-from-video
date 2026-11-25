@@ -385,6 +385,8 @@ def run_clip(video, c, args):
         return render_only(name, video, work, c, args, t0)
     if args.stage == 'background':
         return background_only(name, video, work, c, args, t0)
+    if args.stage == 'depth':
+        return depth_only(name, video, work, c, args, t0)
     # Compare semantic inputs before loading video frames or any inference models.
     import dependencies
     dependency_config = dict(c)
@@ -686,6 +688,8 @@ def run_clip(video, c, args):
         jsave(os.path.join(work, 'source_exposure.json'), data['source_exposure'])
     if hints.get('light'):
         data['light'] = hints['light']
+    import limb_depth
+    limb_depth.apply(data, c.get('_review', {}).get('limb_depth', []))
     jsave(os.path.join(work, 'fitted_scene.json'), data)
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     chars = chars_all
@@ -824,6 +828,33 @@ def held_place(name, work, video, c):
     return made
 
 
+def depth_only(name, video, work, c, args, t0):
+    """Explicit correction path: never falls back to inference, even with stale caches."""
+    import dependencies
+    import limb_depth
+    dp = os.path.join(work, 'scene_data.json')
+    if not os.path.isfile(dp):
+        raise RuntimeError('Prepare the clip first; limb depth edits require a saved scene.')
+    data = jload(dp)
+    rows = c.get('_review', {}).get('limb_depth', [])
+    result = limb_depth.apply(data, rows)
+    jsave(dp, data)
+    held_place(name, work, video, c)  # cached attachments follow the corrected hands
+    data = jload(dp)
+    ci = dependencies.read(os.path.join(work, 'clip_info.json'), {}) or {}
+    limb_depth.preview(data, video, os.path.join(work, 'preview.jpg'), ci.get('y0', 0))
+    rep = dependencies.read(os.path.join(work, 'report.json'), {}) or {}
+    rep.update(limb_depth=result, seconds=round(time.time()-t0, 1), reused_people=True)
+    jsave(os.path.join(work, 'report.json'), rep)
+    state_path = os.path.join(work, 'build_state.json')
+    state = dependencies.read(state_path, {}) or {}
+    state['limb_depth'] = dependencies.digest(rows)
+    jsave(state_path, state)  # Other pending review edits remain pending for Finish.
+    log('  limb depth ready: %d frames, %d unresolved; inference skipped' %
+        (result['solved_frames'], len(result['unresolved'])))
+    return rep
+
+
 def rebuild_edits(name, video, work, c, args, t0, previous, current):
     """Reuse people/cameras/evidence; only build affected scene layers and requested outputs."""
     import dependencies
@@ -831,6 +862,7 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
     rep = dependencies.read(os.path.join(work, 'report.json'), {}) or {}
     data = jload(dp)
     env_changed = previous.get('environment') != current['environment']
+    depth_changed = previous.get('limb_depth') != current.get('limb_depth')
     props_changed = env_changed or previous.get('props') != current['props']
     log('  cached people and cameras: unchanged; background=%s, props=%s' % (env_changed, props_changed))
     if env_changed:
@@ -840,6 +872,16 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
         # Old scenes can be migrated once without refitting their people.
         hand = hand_set_path(video, name, c) is not None and not getattr(args, 'auto_set', False)
         rep['set'] = make_set(name, video, work, c, args.stage, hand)
+    if depth_changed or env_changed:
+        import limb_depth
+        data = jload(dp)
+        rep['limb_depth'] = limb_depth.apply(data, c.get('_review', {}).get('limb_depth', []))
+        jsave(dp, data)
+        # Regenerate the cached fitting preview, without loading video inference models.
+        ci = dependencies.read(os.path.join(work, 'clip_info.json'), {}) or {}
+        limb_depth.preview(data, video, os.path.join(work, 'preview.jpg'), ci.get('y0', 0))
+    if depth_changed and not props_changed:
+        rep['held_objects'] = held_place(name, work, video, c)
     if props_changed:
         rv = c.get('_review', {})
         if rv.get('prop_mode', 'manual' if rv.get('prop_timeline') else 'auto') == 'auto':
@@ -1186,7 +1228,7 @@ def collect(inputs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="*")
-    ap.add_argument("--stage", default="all", choices=["fit", "background", "blend", "all", "render"])
+    ap.add_argument("--stage", default="all", choices=["fit", "background", "depth", "blend", "all", "render"])
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")
