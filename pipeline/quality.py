@@ -192,28 +192,46 @@ def alignment_audit(data, pose, y0=0):
         track=tracks.get(ch.get('track_id'))
         if track is None: continue
         rig=Rig(ch['height'],ch.get('style','sample')); errors=[]; bad=0; missing=0
+        first,last=ch.get('source_range',[0,data['frames']-1])
+        bad_frames=[]; region_errors={'head':[],'torso':[],'arms':[],'legs':[]}
         for f,keys in track.get('frames',{}).items():
             f=int(f)
-            if f>=data['frames']: continue
+            if f>=data['frames'] or f<first or f>last: continue
             from body_constraints import image_keys
             k=image_keys(keys,cam.W,cam.H,y0); sure=k[:,2]>.5
             if sure.sum()<4: continue
             if f>=len(ch['root']) or not ch.get('visible',[True]*data['frames'])[f]:
-                missing+=1; bad+=1; errors.append(float('inf')); continue
+                missing+=1; bad+=1; errors.append(float('inf')); bad_frames.append(f); continue
             r=ch['root'][f]
             points=rig.coco_points(rig.fk(r[:3],r[3],{j:ch['rot'][j][f] for j in JOINTS},ch['pelvis_z'][f]))
             uv,z=cam.project(points,f)
             error=float(np.median(np.linalg.norm(uv[sure]-(k[sure,:2]-[0,y0]),axis=1)))
             span=max(40.,float(np.ptp(k[k[:,2]>.3,1])))
-            bad+=int(not np.isfinite(error) or (z[sure]<=.05).any() or error>max(32.,.15*span))
+            failed_frame=not np.isfinite(error) or (z[sure]<=.05).any() or error>max(32.,.15*span)
+            bad+=int(failed_frame)
+            if failed_frame: bad_frames.append(f)
+            distances=np.linalg.norm(uv-(k[:,:2]-[0,y0]),axis=1)
+            for region,indices in {'head':range(5),'torso':(5,6,11,12),'arms':(7,8,9,10),'legs':(13,14,15,16)}.items():
+                region_errors[region].extend(float(distances[j]) for j in indices if sure[j])
             errors.append(error)
         if len(errors)<4: continue
         failed=bad/len(errors)>.3
         finite=[e for e in errors if np.isfinite(e)]
         rows.append({'char':name,'track':ch['track_id'],'checked_frames':len(errors),
                      'bad_frames':bad,'missing_frames':missing,'median_error_px':float(np.median(finite)) if finite else None,
+                     'bad_source_frames':bad_frames,
+                     'region_median_px':{k:float(np.median(v)) if v else None for k,v in region_errors.items()},
                      'passed':not failed})
-    return {'passed':all(r['passed'] for r in rows),'people':rows,'checked':bool(rows)}
+    present={str(ch.get('track_id')) for ch in data.get('chars',{}).values()}
+    required=data.get('required_track_ids',[])
+    if not data.get('chars') and not required:
+        required=[t['id'] for t in tracks.values() if len(t.get('frames',{}))>=4]
+    for track_id in required:
+        if str(track_id) not in present:
+            rows.append({'char':'track %s'%track_id,'track':track_id,'checked_frames':0,
+                         'passed':False,'reason':'required actor was not reconstructed'})
+    return {'passed':all(r['passed'] for r in rows),'people':rows,'checked':bool(rows),
+            'scope':'Automated visible-joint projection checks; source frames are zero-based. Visual review is still required.'}
 
 
 def require_alignment(result):

@@ -169,8 +169,17 @@ def role_of(info, V, people, cam, frames):
 def apply(data, log=print):
     """recolour a scene to the card (in place) -> {role: count of objects}"""
     pal = data.setdefault("palette", {})
+    l3 = data.get('previs_standard') == 'l3' or any(ch.get('style') == 'l3' for ch in data.get('chars', {}).values())
+    source_colors = dict(pal)
     pal.update({k: v for k, v in CARD.items()})
     pal["marker"] = MARKER
+    if l3:
+        import json
+        from pathlib import Path
+        colors = json.loads((Path(__file__).resolve().parents[1] / 'assets/l3/semantic-palette.json').read_text(encoding='utf-8'))['srgb_0_255']
+        for name, key in {'RED':'red','BLUE':'blue','GREEN':'green','YELLOW':'yellow','BROWN':'fg',
+                          'GRAY':'bg','PINK':'far_i','ORANGE':'near','WHITE':'lamp','PURPLE':'special'}.items():
+            pal[key] = colors[name]
     extra = list(EXTRA)                                           # 5th person on: stable colours, never a set colour
     used = {ch.get("colour") for ch in (data.get("chars") or {}).values()}
     for kind in sorted(data.get("chars") or {}, key=lambda k: int(k[1:]) if k[1:].isdigit() else 99):
@@ -197,7 +206,15 @@ def apply(data, log=print):
             V = np.vstack([np.asarray(meshes[i]["v"], float) for i in idx])
             role = role_of(m0, V, people, cam, frames)
         for i in idx:
-            meshes[i]["colour"] = role
+            mesh = meshes[i]
+            if l3 and data.get('background_policy', 'video') in ('source','video') and role == 'bg':
+                original = mesh.setdefault('source_rgb', source_colors.get(mesh.get('colour'), pal['bg']))
+                key = 'source_bg_' + ''.join('%02x' % int(np.clip(v, 0, 255)) for v in original[:3])
+                pal[key] = list(original[:3])
+                mesh['colour'] = key
+            else:
+                mesh['colour'] = role
+            mesh['semantic_role'] = role
         count[role] = count.get(role, 0) + 1
     props = data.get("props") or []
     for key, idx in _groups(props).items():

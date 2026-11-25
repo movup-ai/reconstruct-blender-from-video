@@ -131,6 +131,9 @@ def rig(kind, height):
     s = height / 1.75
     S = lambda *a: tuple(x * s for x in a)
     col = DATA["chars"][kind]["colour"]
+    if DATA['chars'][kind].get('style') == 'l3':
+        from l3_blender import descriptor
+        return [(n, par, S(*o)) for n, par, o in descriptor()['joints']], []
     if DATA["chars"][kind].get("style") == "master":
         # official human_master.blend: joints from assets/human_master.json; the meshes are the rig's own pieces,
         # appended and driven in build_blender (add_master), so no geometry here
@@ -357,6 +360,9 @@ def build_blender():
     for old in ([os.path.join(WORK_DIR, "render_done.txt")] if "render" in ARGS else []) + [BLEND_PATH, BLEND_PATH + "1"]:
         try: os.remove(old)
         except OSError: pass
+    if not any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
+        try: os.remove(os.path.join(WORK_DIR,'l3_geometry.json'))
+        except FileNotFoundError: pass
     try: bpy.context.preferences.filepaths.save_version = 0      # no 1.blend1 backup inside the submission folder
     except Exception: pass
     for ob in list(bpy.data.objects):
@@ -364,7 +370,8 @@ def build_blender():
     scn.render.resolution_x = int(round(DATA["res"][0] * RENDER_SCALE))          # 3840 wide (client sample)
     scn.render.resolution_y = int(round(DATA["res"][1] * RENDER_SCALE))
     scn.render.resolution_percentage = 100
-    scn.render.fps = DATA["fps"]
+    scn.render.fps = int(round(DATA["fps"]))
+    scn.render.fps_base = scn.render.fps / float(DATA['fps'])
     scn.frame_start, scn.frame_end = 1, DATA["frames"]
     scn.render.engine = "BLENDER_WORKBENCH"
     sh = scn.display.shading
@@ -384,7 +391,7 @@ def build_blender():
         scn.world = bpy.data.worlds.new("World")
     scn.world.color = tuple(c / (2.0 ** EXPOSURE) for c in SKY[:3])
 
-    LZHD = DATA.get("spec") == "lzhd1"           # LZHD V1.0 (2026-11-15): Eevee, palette = base colour, light per clip
+    LZHD = DATA.get("spec") == "lzhd1" or any(c.get('style') == 'l3' for c in DATA.get('chars', {}).values())
     mats = {}
     for k, c in COLORS.items():
         m = bpy.data.materials.get("WM_" + k) or bpy.data.materials.new("WM_" + k)
@@ -405,6 +412,13 @@ def build_blender():
         mats[k] = m
     if LZHD:
         lzhd_lighting(bpy, scn)
+    base_exposure = float(scn.view_settings.exposure)
+    exposure_stops = (DATA.get('source_exposure') or {}).get('stops', [])
+    if exposure_stops and len(exposure_stops) != DATA['frames']:
+        raise ValueError('Source exposure curve does not match the scene frame count')
+    for frame, stops in enumerate(exposure_stops, 1):
+        scn.view_settings.exposure = base_exposure + float(stops)
+        scn.view_settings.keyframe_insert('exposure', frame=frame)
 
     def coll(name):
         c = bpy.data.collections.get(name) or bpy.data.collections.new(name)
@@ -442,7 +456,11 @@ def build_blender():
         for name, parent, off in J:
             e = bpy.data.objects.new(kind + "_" + name, None); e.empty_display_size = 0.06; e.empty_display_type = "SPHERE"
             cc.objects.link(e); e.parent = E[parent]; e.location = off; E[name] = e
-        if cdat.get("style") == "master":
+        actor_meshes = None
+        if cdat.get('style') == 'l3':
+            from l3_blender import append_actor
+            actor_meshes = [append_actor(bpy, kind, E, cc, mats[cdat['colour']], cdat['height'])]
+        elif cdat.get("style") == "master":
             add_master(kind, E, cc, mats, cdat["colour"], cdat["height"])
         for i, part in enumerate(P):
             j, (v, f), colour, smooth = part[:4]
@@ -457,7 +475,7 @@ def build_blender():
                 e.keyframe_insert("rotation_euler", frame=fr + 1)
         vis = cdat.get("visible")
         if vis and not all(vis):                       # hidden before the person enters / after they leave
-            geos = [o for o in cc.objects if o.type == "MESH" and o.name.startswith(kind + "_")]   # one person in several shots shares a collection
+            geos = actor_meshes or [o for o in cc.objects if o.type == "MESH" and o.name.startswith(kind + "_")]   # one person in several shots shares a collection
             prev = None
             for fr, v in enumerate(vis):
                 if v != prev:
@@ -488,6 +506,17 @@ def build_blender():
     if zooms:
         print("camera zoom: lens %.1f -> %.1f mm" % (DATA["lens"] * min(zoom), DATA["lens"] * max(zoom)))
     scn.frame_set(1)
+    if any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
+        from l3_blender import validate_actors
+        validation = validate_actors(bpy, DATA)
+        with open(os.path.join(WORK_DIR,'l3_geometry.json'),'w',encoding='utf-8') as report:
+            json.dump(validation,report,indent=2)
+    scn.use_preview_range = False
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == 'VIEW_3D':
+                area.spaces.active.region_3d.view_perspective = 'CAMERA'
+                area.spaces.active.lock_camera = False
 
     os.makedirs(os.path.join(WORK_DIR, "render"), exist_ok=True)
     os.makedirs(os.path.dirname(BLEND_PATH), exist_ok=True)
@@ -509,6 +538,8 @@ def build_blender():
         print("scene.json", sp)
     except Exception as e:                                  # the package step reports a missing scene.json
         import traceback; traceback.print_exc()
+        if any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
+            raise
     scn.render.filepath = rel_out
     if "still" in ARGS:                                   # one preview frame for the AI edit page
         fr = int(ARGS[ARGS.index("still") + 1])

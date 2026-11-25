@@ -268,7 +268,8 @@ class Workspace:
         out["regions"] = regs
         comparisons=glob.glob(os.path.join(f['submit'],'comparison','*.mp4'))
         out["outputs"] = {"comparison": bool(comparisons), 'comparison_version':max((os.stat(p).st_mtime_ns for p in comparisons),default=None), "zip": os.path.exists(f["zip"]),
-                          "zip_path": f["zip"]}
+                          "zip_path": f["zip"],
+                          'frame_review':os.path.isfile(os.path.join(f['submit'],'model_3d','reconstruction','review','index.html'))}
         if job:
             lp = job.get("log") or os.path.join(f["work"], "job_%s.log" % job["stage"])
             txt = ""
@@ -698,7 +699,7 @@ def download_name(fn):
 
 def char_file(c):
     """the character definition the fit and Blender use for config character_style"""
-    return {"base21": "base_character_v21.json", "sample": "sample_character.json"}.get(c.get("character_style", "master"), "human_master.json")
+    return {"l3": "l3/character.json", "base21": "base_character_v21.json", "sample": "sample_character.json"}.get(c.get("character_style", "master"), "human_master.json")
 
 
 def submissions(c):
@@ -980,6 +981,13 @@ def make_handler(app):
                 return self.file(media.clip_thumb(c, ws.lib.removed_by_id[parts[-1].split(".")[0]]), "image/jpeg")
             if parts[0] == "media" and len(parts) >= 3:
                 kind = parts[1]; cl = ws.clip(parts[2].split(".")[0]); f = folders(c, cl)
+                if kind == 'review':
+                    root=os.path.join(f['submit'],'model_3d','reconstruction','review')
+                    if len(parts)==4 and parts[3] in ('index.html','review.json'):
+                        return self.file(os.path.join(root,parts[3]))
+                    if len(parts)==5 and parts[3] in ('source','model') and re.fullmatch(r'\d{6}\.jpg',parts[4]):
+                        return self.file(os.path.join(root,parts[3],parts[4]),'image/jpeg')
+                    raise HttpError(404,'not found')
                 if kind == "video":
                     return self.file(cl.video, "video/mp4")
                 if kind == "plate" and len(parts) == 4 and re.match(r"^_[\w]+$", parts[3]):

@@ -51,6 +51,16 @@ def export(bpy, path, blend_name, data=None):
     for m in bpy.data.materials:
         if m.users:
             out["materials"][m.name] = {"diffuse_color": _vec(m.diffuse_color), "roughness": _r(m.roughness)}
+            if m.use_nodes:
+                emission = next((n for n in m.node_tree.nodes if n.type == 'EMISSION'), None)
+                if emission:
+                    out['materials'][m.name]['emission'] = {'color': _vec(emission.inputs['Color'].default_value),
+                                                           'strength': _r(emission.inputs['Strength'].default_value)}
+    if scn.world and scn.world.use_nodes:
+        background = next((n for n in scn.world.node_tree.nodes if n.type == 'BACKGROUND'), None)
+        if background:
+            out['scene']['render']['world_background'] = {'color': _vec(background.inputs['Color'].default_value),
+                                                         'strength': _r(background.inputs['Strength'].default_value)}
 
     def walk(c, parent):
         out["collections"][c.name] = {"parent": parent, "objects": [o.name for o in c.objects]}
@@ -96,7 +106,8 @@ def export(bpy, path, blend_name, data=None):
                 for lay in act.layers:
                     for st in lay.strips:
                         for cb in st.channelbags:
-                            fcs += list(cb.fcurves)
+                            if cb.slot_handle == ad.action_slot_handle:
+                                fcs += list(cb.fcurves)
             for fc in fcs:
                 keys = [[_r(k.co[0], 3), _r(k.co[1], 6), k.interpolation] for k in fc.keyframe_points]
                 chans.setdefault(fc.data_path, {})[str(fc.array_index)] = keys
@@ -104,8 +115,40 @@ def export(bpy, path, blend_name, data=None):
                 out["animation"][o.name] = chans
 
     if data:                                                 # what each object is: characters, camera, shots
+        # scene.json uses rigid blocks parented to the fitted joints. A raw
+        # skinned mesh without its armature constraints would rebuild as a statue.
+        for kind, character in data.get('chars', {}).items():
+            if character.get('style') != 'l3':
+                continue
+            from l3_blender import descriptor
+            mesh = next(o for o in scn.objects if o.type == 'MESH' and o.name.startswith(kind+'_') and o.get('model_standard') == 'L3-2026-11-18')
+            record = next(o for o in out['objects'] if o['name'] == mesh.name)
+            out['objects'].remove(record)
+            channels = out['animation'].pop(mesh.name, {})
+            for joint, part in descriptor()['parts'].items():
+                name = kind+'_'+joint+'_geo_l3'
+                scale = character['height']/1.75
+                rec = dict(record, name=name, parent=kind+'_'+joint,
+                           location=[0.,0.,0.], rotation_euler=[0.,0.,0.], rotation_mode='XYZ', scale=[1.,1.,1.],
+                           matrix_parent_inverse=[[1.,0.,0.,0.],[0.,1.,0.,0.],[0.,0.,1.,0.],[0.,0.,0.,1.]])
+                marks = set(part['marker_faces'])
+                rec['mesh'] = dict(record['mesh'], name=name,
+                                   vertices=[[_r(x*scale,7) for x in v] for v in part['v']], faces=part['f'],
+                                   face_material=[int(i in marks) for i in range(len(part['f']))], smooth=part['smooth'])
+                out['objects'].append(rec)
+                out['animation'][name] = {k:v for k,v in channels.items() if k in ('hide_render','hide_viewport')}
+                for collection in out['collections'].values():
+                    if mesh.name in collection['objects']:
+                        collection['objects'].append(name)
+            for collection in out['collections'].values():
+                if mesh.name in collection['objects']:
+                    collection['objects'].remove(mesh.name)
+        stops = (data.get('source_exposure') or {}).get('stops', [])
+        if stops:
+            base = scn.view_settings.exposure - stops[0]
+            out['scene']['render']['exposure_per_frame'] = [_r(base+s) for s in stops]
         for kind, c in (data.get("chars") or {}).items():
-            objs = [o.name for o in scn.objects if o.name.startswith(kind + "_")]
+            objs = [o['name'] for o in out['objects'] if o['name'].startswith(kind + "_")]
             out["characters"].append({
                 "id": kind, "label": c.get("label"), "colour": c.get("colour"), "height_m": c.get("height"),
                 "style": c.get("style"), "root": kind + "_root",
@@ -114,6 +157,9 @@ def export(bpy, path, blend_name, data=None):
                 "rig": "empties hierarchy: <id>_root (location + yaw keys) -> <id>_pelvis (height key) -> joints (XYZ euler keys); "
                        "each mesh block is parented to its joint; the white eye / chest bands are faces with material WM_marker",
                 "visible": c.get("visible")})
+            if c.get('style') == 'l3':
+                from l3_blender import descriptor
+                out['characters'][-1]['joints'] = [kind+'_'+joint for joint,_,_ in descriptor()['joints']]
         out["camera"] = {"object": scn.camera.name if scn.camera else None, "lens_mm": data.get("lens"),
                          "sensor_width_mm": data.get("sensor"),
                          "shots": [{"shot": s.get("shot"), "frames": [s["frames"][0] + 1, s["frames"][1] + 1]}

@@ -18,10 +18,10 @@ import colour_card
 
 
 def spec_palette(data):
-    """the colour card (colour_card.py, docs/COLOUR_CARD.md) and the official human_master characters"""
+    """Apply semantic colors while preserving the geometry used to fit this scene."""
     colour_card.apply(data, log=None)
-    for ch in data.get("chars", {}).values():
-        ch["style"] = "master"
+    # Geometry and fitted joint definitions are a pair. Never swap only the
+    # render style on an already fitted scene (it changes projected proportions).
 
 
 def main():

@@ -288,10 +288,11 @@ class DependencyTests(unittest.TestCase):
             from body_constraints import VERSION as BODY_VERSION
             for ch in data['chars'].values(): ch['body_constraints']={'version':BODY_VERSION}
             jsave(os.path.join(work,'scene_data.json'),data)
-            DEP.adopt_existing(video,{},work,marks,out)
+            settings={'character_style':'sample','previs_standard':'legacy'}
+            DEP.adopt_existing(video,settings,work,marks,out)
             state=jload(os.path.join(work,'build_state.json'))
             self.assertIsNone(state['environment'])
-            self.assertEqual(state['fit'],DEP.inputs(video,{},work,marks,out)['fit'])
+            self.assertEqual(state['fit'],DEP.inputs(video,settings,work,marks,out)['fit'])
 
     def test_review_lens_and_hints_have_same_cache_key_in_server_and_worker(self):
         with tempfile.TemporaryDirectory() as tmp:

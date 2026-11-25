@@ -29,7 +29,7 @@
     <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
     <div id="prevbox"><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the models found: <b class="bad">red dots</b> are the detected joints, the coloured skeleton is each 3D person, thin lines are the set.</p></div>
   </div>
-  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p></div>
+  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p><a id="frame-review" class="btn" target="_blank" rel="noopener" hidden>Review source and 3D frame by frame</a></div>
 
   <section class="tocheck" id="s-check" style="display:none" aria-labelledby="chk-h">
     <h2 id="chk-h">Things to check</h2>
@@ -194,7 +194,7 @@ function fillForm(rv) {
   segSet($('camtype'), rv?.camera?.type || 'static');
   $('lens').value = rv?.camera?.lens || INFO.defaults.lens; $('camnote').value = rv?.camera?.note || '';
   const env = rv?.environment || {};
-  $('env_depth').checked = env.depth_set !== false; $('env_colour').value = env.set_colours || 'grey'; $('env_useai').checked = env.use_ai !== false;
+  $('env_depth').checked = env.depth_set !== false; $('env_colour').value = env.set_colours || 'video'; $('env_useai').checked = env.use_ai !== false;
   $('props').tBodies[0].innerHTML = ''; (env.props || []).forEach(propRow);
   $('notes').value = rv?.notes || '';
 }
@@ -689,6 +689,8 @@ async function load(first) {
     $('outcap').textContent = 'The finished comparison video: the source on top, the white model below.' +
       (INFO.status.changed ? ' An earlier render is playing. Press Finish to include the latest saved edits.' : '');
   }
+  $('frame-review').hidden = !INFO.outputs.frame_review;
+  $('frame-review').href = `/media/review/${CID}/index.html`;
   if (INFO.job) { $('jobbox').style.display = INFO.job.state === 'failed' ? '' : 'none';   // the raw log only matters when a job failed $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();

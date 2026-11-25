@@ -33,11 +33,11 @@ def unpack(q, rig):
     return (q[0], q[1], 0.0), q[2], rot, q[3]
 
 def bounds(rig):
-    top = {"sample": 0.94, "base21": float(rig.J[0][2][2] / rig.s), "master": float(rig.J[0][2][2] / rig.s)}.get(rig.style, 0.93)
+    top = float(rig.J[0][2][2] / rig.s)
     # master: deep squats bring the pelvis down to ~0.3 m
-    lo = [-1e5, -1e5, -1e5, (0.18 if rig.style == "master" else 0.50) * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
+    lo = [-1e5, -1e5, -1e5, (0.18 if rig.style in ('master','l3') else 0.50) * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
     for j, _, l, h, _ in ANG:
-        if rig.style == "master" and j.startswith("knee_"):
+        if rig.style in ('master','l3') and j.startswith("knee_"):
             l = -165.0                                   # master: full squats (feet flat, heels under the hips)
         lo.append(l); hi.append(h)
     return np.array(lo, float), np.array(hi, float)
@@ -894,6 +894,7 @@ def fit_all(world, y0, people, N, c):
         order.sort(key=lambda p: rank.get(rv.get(str(p), {}).get("role", "extra"), 4))
     n_extra = 0
     todo = order[: c["max_people"] if not rv else len(order)]
+    c.setdefault('_required_tracks', set()).update(pid for pid in todo if len(people[pid][0]) >= 4)
     lifts, body_info = {}, {}
     body = c.get('_sam3d_body')
     if body is not None:
@@ -915,7 +916,10 @@ def fit_all(world, y0, people, N, c):
         model_height = sam3d_body.height_of(body['p%s_placed'%pid]) if body is not None and 'p%s_placed'%pid in body else None
         info=body_info.get(pid,{})
         trustworthy_height=not (info.get('full_body_fraction',1)<.5 and info.get('placement_confidence',1)<.5)
-        height = float(r.get("height") or (model_height if trustworthy_height else None) or c["person_height"])
+        actor_heights = c.setdefault('_actor_heights', {})
+        height = float(r.get("height") or actor_heights.get(str(pid)) or
+                       (model_height if trustworthy_height else None) or c["person_height"])
+        actor_heights[str(pid)] = height
         log("    person %s: %d frames%s" % (pid, len(fs), ("  role " + r["role"]) if r.get("role") else ""))
         style = (c.get("_hints") or {}).get("character_style") or c.get("character_style", "sample")
         hint = {"foot_contact": c.get("foot_contact", True),
@@ -945,6 +949,15 @@ def fit_all(world, y0, people, N, c):
             arm_confidence[~np.isin(np.arange(N),fs)]=0
         keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)),
                             confidence=arm_confidence,fps=c.get('_fps',30.))
+        if style == 'l3' and c.get('temporal_refinement', True) and not any(
+                hint.get(k) for k in ('pose','keys','keys_more','ignore_kps','use_kps','hand_dist','hand_distance')):
+            import temporal_refine
+            Bq, refinement = temporal_refine.arms(rig, Bq, fs, K, world, y0, c.get('_fps',30.))
+            for frame, parameters in enumerate(Bq):
+                _, _, rotations, _ = unpack(parameters, rig)
+                for joint in ('shoulder_L','elbow_L','shoulder_R','elbow_R'):
+                    keys['rot'][joint][frame] = [round(float(v),2) for v in rotations[joint]]
+            keys['temporal_refinement'] = refinement
         if c.get('_persistent_tracks'):
             observed = set(fs)
             keys['visible'] = [f in observed for f in range(N)]

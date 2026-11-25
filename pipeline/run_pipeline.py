@@ -340,6 +340,11 @@ def carry_over(work, name, c, chars, N, sky):
 @profile_clip
 @gpu_lease.job
 def run_clip(video, c, args):
+    # Actor IDs are local to a clip. Share scale across its shots, never across
+    # unrelated videos processed by the same command.
+    c['_actor_heights'] = {}
+    c['_required_tracks'] = set()
+    c.pop('_set_grey', None)
     name = getattr(args, "name", None) or clip_name(video, c)
     work = os.path.join(c["work_root"], name); c["_work"] = work
     os.makedirs(work, exist_ok=True)
@@ -410,7 +415,7 @@ def run_clip(video, c, args):
     N = len(frames); Hfull, W = frames[0].shape[:2]
     _, y0, _, Hp = pose["picture_area"]
     env = (review or {}).get("environment", {})
-    if env.get("set_colours", c.get("set_colours", "grey")) == "grey":   # client style (both samples): light grey set
+    if env.get("set_colours", c.get("set_colours", "source")) == "grey":
         c["_set_grey"] = True
     shots = find_shots(frames, y0, Hp) if c.get("camera_estimator", "new") == "new" else split_shots(frames, y0, Hp)
     log("  shots: %s" % ", ".join("%d-%d" % (a, b - 1) for a, b in shots))
@@ -645,7 +650,9 @@ def run_clip(video, c, args):
         for kind, ch in chars.items():
             for r in ch["root"]:
                 r[0] = round(r[0] + dx, 4)
-            chars_all[(tag.strip("_") + "_" if tag else "") + kind] = widen(ch, s0, s1, N)
+            widened = widen(ch, s0, s1, N)
+            widened['source_range'] = [s0, s1-1]
+            chars_all[(tag.strip("_") + "_" if tag else "") + kind] = widened
         for p in prep:
             p["shot"] = si + 1
         prep_all += prep
@@ -665,11 +672,20 @@ def run_clip(video, c, args):
                                                "parallax_px": max(s["parallax_px"] for s in shot_rep)})
     stack_previews(tiles, os.path.join(work, "preview.jpg"))
     data = {"name": name, "package_name": pkg.package_name(name, c), "submit_dir": os.path.join(c["submit_root"], name), "work_dir": work,
-            "res": [W, Hp], "fps": int(round(fps)), "frames": N, "render_scale": float(c.get("out_width", 3840)) / W,
+            "res": [W, Hp], "fps": float(fps), "frames": N, "render_scale": float(c.get("out_width", 3840)) / W,
             "lens": c["lens_mm"], "sensor": 36.0, "cam": cam_all, "zoom": zoom_all,
             "palette": palette, "sky": sky or [228, 229, 232], "exposure": 1.2, "gain": {"_video": c.get("video_gain", 2.2), "_ground": c.get("ground_gain", 3.2)},
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
     data['human_backend'] = 'sam3d_body'
+    data['required_track_ids'] = sorted(c.get('_required_tracks', set()), key=str)
+    data['previs_standard'] = c.get('previs_standard', 'l3')
+    data['background_policy'] = env.get('set_colours', c.get('set_colours', 'source'))
+    if c.get('source_exposure', True):
+        import source_exposure
+        data['source_exposure'] = source_exposure.measure(frames, shots, pose, y0, Hp)
+        jsave(os.path.join(work, 'source_exposure.json'), data['source_exposure'])
+    if hints.get('light'):
+        data['light'] = hints['light']
     jsave(os.path.join(work, 'fitted_scene.json'), data)
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     chars = chars_all
@@ -719,7 +735,8 @@ def run_clip(video, c, args):
         blender_render(c, work, dp, N)
     if args.stage == "all":
         rep.update(make_zip(name, video, work, c))
-    rep["seconds"] = round(time.time() - t0, 1); rep["status"] = "ok"
+    rep["seconds"] = round(time.time() - t0, 1)
+    rep["status"] = "ok" if alignment['passed'] else 'needs_review'
     jsave(os.path.join(work, "report.json"), rep)
     jsave(os.path.join(work, 'build_state.json'), processed_inputs)
     log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
@@ -1024,7 +1041,11 @@ def blender_render(c, work, dp, N, extra=("render",)):
             raise RuntimeError('Scene %s does not match this render workspace; refresh its output paths before rendering.'%key)
     try:                                                   # every video follows the colour card (docs/COLOUR_CARD.md)
         import colour_card
-        d_ = jload(dp); colour_card.apply(d_, log=log); jsave(dp, d_)
+        d_ = jload(dp)
+        d_['background_policy'] = (c.get('_review') or {}).get('environment',{}).get('set_colours',c.get('set_colours','source'))
+        if (c.get('_hints') or {}).get('light'):
+            d_['light'] = c['_hints']['light']
+        colour_card.apply(d_, log=log); jsave(dp, d_)
     except Exception as e:
         log("  colour card not applied (%s)" % str(e)[:200])
     log("  blender build + render (%d frames) ..." % N)
@@ -1084,6 +1105,8 @@ def retime_pulldown(data, video, c):
         data["cam"] = rs(data["cam"])
     if data.get("zoom"):
         data["zoom"] = rs(data["zoom"])
+    if data.get('source_exposure'):
+        data['source_exposure']['stops'] = rs(data['source_exposure']['stops'])
     for p in data.get("props", []):
         if p.get("keys"):
             p["keys"] = rs(p["keys"])

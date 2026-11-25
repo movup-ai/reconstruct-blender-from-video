@@ -8,12 +8,15 @@ rest transforms, visibility and every keyframe from scene.json, sets the frame r
 settings and active camera, and saves to the given NEW file (it never overwrites the master project).
 Needs only Blender (tested with the version in scene.json "exporter"); no add-ons, no network."""
 import json, sys
+from pathlib import Path
 import bpy
 
 argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 if len(argv) < 2:
     raise SystemExit("usage: blender -b --factory-startup -P reconstruct.py -- scene.json out.blend")
 src, dst = argv[0], argv[1]
+if Path(dst).exists() or Path(src).resolve() == Path(dst).resolve():
+    raise FileExistsError('Choose a new output project; existing files are preserved.')
 with open(src, encoding="utf-8") as fh:
     S = json.load(fh)
 if S.get("schema") != "ba_whitemodel_scene":
@@ -42,11 +45,33 @@ if r.get("world_color"):
     if scn.world is None:
         scn.world = bpy.data.worlds.new("World")
     scn.world.color = r["world_color"][:3]
+if r.get('world_background'):
+    scn.world.use_nodes = True
+    bg = next(n for n in scn.world.node_tree.nodes if n.type == 'BACKGROUND')
+    bg.inputs['Color'].default_value = r['world_background']['color']
+    bg.inputs['Strength'].default_value = r['world_background']['strength']
+for frame, value in enumerate(r.get('exposure_per_frame', []), scn.frame_start):
+    scn.view_settings.exposure = value
+    scn.view_settings.keyframe_insert('exposure', frame=frame)
 
 mats = {}
 for name, m in S["materials"].items():
     mm = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     mm.diffuse_color = m["diffuse_color"]; mm.roughness = m.get("roughness", 1.0)
+    mm.use_nodes = True
+    if m.get('emission'):
+        mm.node_tree.nodes.clear()
+        output = mm.node_tree.nodes.new('ShaderNodeOutputMaterial')
+        emission = mm.node_tree.nodes.new('ShaderNodeEmission')
+        emission.inputs['Color'].default_value = m['emission']['color']
+        emission.inputs['Strength'].default_value = m['emission']['strength']
+        mm.node_tree.links.new(emission.outputs['Emission'],output.inputs['Surface'])
+    else:
+        bs = next(n for n in mm.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+        bs.inputs['Base Color'].default_value = mm.diffuse_color
+        bs.inputs['Roughness'].default_value = mm.roughness
+        if 'Specular IOR Level' in bs.inputs:
+            bs.inputs['Specular IOR Level'].default_value = 0.
     mats[name] = mm
 
 colls = {}
@@ -109,7 +134,8 @@ def fcurves(ob):
     try:
         return list(act.fcurves)
     except AttributeError:                       # Blender 4.4+: layered actions
-        return [fc for lay in act.layers for st in lay.strips for cb in st.channelbags for fc in cb.fcurves]
+        return [fc for lay in act.layers for st in lay.strips for cb in st.channelbags
+                if cb.slot_handle == ob.animation_data.action_slot_handle for fc in cb.fcurves]
 
 for name, chans in S["animation"].items():
     ob = objs.get(name)
@@ -133,6 +159,9 @@ for name, chans in S["animation"].items():
 
 if sc.get("camera") and sc["camera"] in objs:
     scn.camera = objs[sc["camera"]]
+    for frame, lens in enumerate(S.get('camera',{}).get('lens_mm_per_frame',[]), scn.frame_start):
+        scn.camera.data.lens = lens
+        scn.camera.data.keyframe_insert('lens', frame=frame)
 scn.frame_set(scn.frame_start)
 bpy.ops.wm.save_as_mainfile(filepath=dst)
 print("rebuilt", len(objs), "objects ->", dst)

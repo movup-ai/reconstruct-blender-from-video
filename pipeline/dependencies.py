@@ -6,13 +6,14 @@ from pathlib import Path
 
 from common import DEFAULT_CFG, jload, jsave
 
-VERSION = 3  # cropped endpoints and temporal continuation; old fits must not be reused
+VERSION = 4  # supplied L3 geometry, stable actor scale and source-color backgrounds
 FIT_KEYS = ('lens_mm', 'person_height', 'character_style', 'pose_mode', 'pose_engine', 'camera_backend',
             'da3_model', 'da3_meters_per_unit', 'da3_max_views', 'foot_contact', 'metric_scene',
             'sam3_checkpoint', 'sam3_mask_side', 'sam3_probability', 'sam3_max_objects',
             'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_stride', 'sam3d_surface_side', 'fit_step',
             'smooth_frames', 'pose3d_weight', 'pose3d_sigma', 'metric_max_views', 'metric_resolution',
-            'max_people', 'camera_estimator', 'lens_auto', 'motion_prior')
+            'max_people', 'camera_estimator', 'lens_auto', 'motion_prior', 'previs_standard',
+            'temporal_refinement', 'source_exposure')
 
 
 def digest(value):
@@ -51,10 +52,14 @@ def inputs(video, c, work, marks, out, review=None, overrides=None):
     if rv.get('camera',{}).get('lens'): c['lens_mm'] = float(rv['camera']['lens'])
     fit_hints = {k: v for k, v in hints.items() if k not in
                  ('scene_justifications', 'held_objects', 'light', 'exposure', 'palette', 'vegetation_prototypes')}
+    from rig import ASSET_FILES
+    style = hints.get('character_style') or c.get('character_style', DEFAULT_CFG['character_style'])
+    asset = Path(__file__).resolve().parents[1] / 'assets' / ASSET_FILES[style] if style in ASSET_FILES else None
     fit = digest({'version': VERSION, 'video': stamp(video), 'pose': overrides.get('pose', read(marks / 'pose.json')),
                   'masks': stamp(marks / 'sam3_masks.npz'), 'checked': checked,
                   'people': rv.get('people', {}), 'camera': rv.get('camera', {}), 'hints': fit_hints,
                   'settings': {k: c.get(k, DEFAULT_CFG.get(k)) for k in FIT_KEYS},
+                  'rig_definition': stamp(asset),
                   'weights': [stamp(c.get(k, DEFAULT_CFG.get(k))) for k in
                               ('sam3_checkpoint', 'sam3d_checkpoint', 'sam3d_mhr')]})
     env = rv.get('environment', {})
@@ -63,7 +68,7 @@ def inputs(video, c, work, marks, out, review=None, overrides=None):
                           'settings': {k: c.get(k, DEFAULT_CFG.get(k)) for k in
                                        ('set_builder', 'set_detail', 'set_adaptive_frames', 'set_max_frames',
                                         'sam_points', 'sam3_image_max_masks', 'sam3_vegetation_prompts', 'vegetation_prototypes',
-                                        'protect_people', 'scene_verify', 'scene_repair')},
+                                        'protect_people', 'scene_verify', 'scene_repair', 'set_colours')},
                           'review': {k: v for k, v in env.items() if k != 'props'}})
     return {'fit': fit, 'environment': environment,
             'props': digest({'timeline': rv.get('prop_timeline', []), 'legacy': env.get('props', []),
@@ -89,6 +94,10 @@ def adopt_existing(video, c, work, marks, out):
     from body_constraints import VERSION as BODY_VERSION
     if any(ch.get('body_constraints',{}).get('version') != BODY_VERSION for ch in scene.get('chars',{}).values()):
         return  # these scenes used incompatible floor/hip assumptions; refit them once
+    hints = read(Path(marks)/'hints.json',{}) or {}
+    style = hints.get('character_style') or c.get('character_style',DEFAULT_CFG['character_style'])
+    if any(ch.get('style') != style for ch in scene.get('chars',{}).values()):
+        return  # a render-style swap cannot reuse a fit made with another skeleton
     state = inputs(video, c, work, marks, out)
     state['environment'] = None  # rebuild old geometry with the new protection/prototype rules once
     jsave(str(path), state)

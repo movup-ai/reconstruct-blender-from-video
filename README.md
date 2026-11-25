@@ -3,6 +3,10 @@
 Local white-model production app. It turns the film clips in the `SOURCE` folder into the client's submission
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
 Person reconstruction uses **SAM 3 tracking → RTMPose masked joints → SAM 3D Body → editable Blender rigs**.
+New preparations use the supplied **L3 character standard**, fixed white markings, continuous arm refinement,
+source-color backgrounds, and conservative source-exposure matching. Finished packages include a frame review
+page with overlay and playback controls. Existing clips need one Re-check to adopt the new skeleton.
+See [L3 integration, testing, and known limits](docs/L3_PREVIS.md).
 SAM 3 also segments scene objects using the same local `models/sam3/sam3.pt` checkpoint. Its image and video
 workers and the body worker run sequentially in the isolated Python 3.12 CUDA environment. RTMPose uses
 TensorRT or CUDA, and the scene depth model uses CUDA (`onnxruntime-gpu`). MoGe-2, Mask2Former, Grounding DINO

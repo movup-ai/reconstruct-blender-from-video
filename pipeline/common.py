@@ -14,7 +14,12 @@ DEFAULT_CFG = {
     "work_root": os.path.join(AGENT, "Work_auto"),
     "lens_mm": 34.9,                         # 35 mm-equivalent focal length used for every clip (clip 1 solved to 34.9)
     "person_height": 1.72,
-    "character_style": "sample",             # "sample" = client's L3 sample (no neck/hands/feet), "classic" = earlier mannequin
+    "character_style": "l3",                 # supplied L3-2026-11-18 mesh, fixed rigid marks
+    "previs_standard": "l3",                 # migrate legacy defaults; "legacy" preserves older styles
+    "set_colours": "video",
+    "source_exposure": True,
+    "temporal_refinement": True,
+    "frame_review": True,
     "out_width": 3840,                       # white model / comparison width, like the client sample (3840 x source aspect)
     "out_fps": 24,
     "video_bitrate": "30M",
@@ -71,6 +76,8 @@ def normalize_backends(c):
     for key in RETIRED_SETTINGS:
         c.pop(key, None)
     c.update(FIXED_BACKENDS)
+    if c.get('previs_standard', 'l3') == 'l3':
+        c['character_style'] = 'l3'
     return c
 
 

@@ -1,3 +1,5 @@
+> Current L3 preparations use the supplied skill palette and approximate source colors for ordinary backgrounds. The values below describe the legacy palette. See [L3 integration](L3_PREVIS.md).
+
 # Colour card (sRGB)
 
 Every white-model video follows this card. The values live in `pipeline/colour_card.py` (`HEX`), and every render

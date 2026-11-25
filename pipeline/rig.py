@@ -8,7 +8,8 @@ JOINTS = ["pelvis", "spine", "chest", "neck", "head",
           "hip_L", "knee_L", "ankle_L", "hip_R", "knee_R", "ankle_R"]
 
 _ASSETS = {}
-ASSET_FILES = {"base21": "base_character_v21.json",     # v2.1 supplied base model (extract_base_character.py)
+ASSET_FILES = {"l3": "l3/character.json",
+               "base21": "base_character_v21.json",     # v2.1 supplied base model (extract_base_character.py)
                "master": "human_master.json"}           # official human_master.blend (extract_human_master.py)
 def style_asset(style):
     if style not in _ASSETS:
@@ -70,8 +71,16 @@ class Rig:
     def __init__(self, height, style="sample"):
         self.style = style
         self.J, self.s = joint_defs(height, style)
-        self.coco = [(j, np.array(o) * self.s) for j, o in COCO_ON_RIG[style] + BODY_ON_RIG]
-        self.sole = (style_asset(style)["sole"] if style == "master" else (0.063 if style in ("sample", "base21") else 0.065)) * self.s    # ankle joint height when standing
+        face = COCO_ON_RIG.get(style)
+        if style == 'l3':
+            asset = style_asset(style)
+            x, y, z = asset['head_centre']; radius = asset['head_radius']
+            front = asset['eye_band_front']
+            face = [('head', (x, front, z-.03)), ('head', (x-.036, front-.008, z)),
+                    ('head', (x+.036, front-.008, z)), ('head', (x-radius, y, z-.005)),
+                    ('head', (x+radius, y, z-.005))]
+        self.coco = [(j, np.array(o) * self.s) for j, o in face + BODY_ON_RIG]
+        self.sole = (style_asset(style)["sole"] if style in ('master','l3') else (0.063 if style in ("sample", "base21") else 0.065)) * self.s    # ankle joint height when standing
 
     def fk(self, loc, yaw, rot, pelvis_z):
         """world (R, t) of every joint.  rot: {joint: (rx,ry,rz) deg}"""

@@ -1,0 +1,81 @@
+"""Conservative, shot-local exposure changes measured outside tracked people.
+
+This measures coherent background dimming, not absolute light direction or HDR
+calibration. Ambiguous/insufficient background evidence leaves exposure unchanged.
+"""
+import cv2
+import numpy as np
+
+
+def measure(frames, shots, pose, y0, height):
+    if not frames:
+        return {'stops': [], 'shots': [], 'source': 'no frames'}
+    width = frames[0].shape[1]
+    sw, sh = 160, max(48, int(height * 160 / width))
+    samples = []
+    tracks = pose.get('people', [])
+    for f, frame in enumerate(frames):
+        image = cv2.resize(frame[y0:y0+height], (sw, sh)).astype(float) / 255.
+        # Linearize sRGB before taking luminance ratios (input is BGR).
+        linear = np.where(image <= .04045, image / 12.92, ((image + .055) / 1.055) ** 2.4)
+        luminance = linear @ np.array([.0722, .7152, .2126])
+        valid = np.ones((sh, sw), bool)
+        for track in tracks:
+            k = np.asarray(track.get('frames', {}).get(str(f), []), float)
+            if k.shape != (17, 3):
+                continue
+            k = k[k[:, 2] > .15]
+            if len(k) < 2:
+                continue
+            xy = (k[:, :2] - [0, y0]) * [sw / width, sh / height]
+            lo, hi = xy.min(0), xy.max(0)
+            margin = np.maximum([6., 8.], (hi-lo) * [.4, .25])
+            x0, y1 = np.maximum(0, np.floor(lo-margin)).astype(int)
+            x1, y2 = np.minimum([sw, sh], np.ceil(hi+margin)).astype(int)
+            valid[y1:y2, x0:x1] = False
+        row = []
+        for yy in np.array_split(np.arange(sh), 6):
+            for xx in np.array_split(np.arange(sw), 8):
+                mask = valid[np.ix_(yy, xx)]
+                tile = luminance[np.ix_(yy, xx)]
+                row.append(float(np.median(tile[mask])) if mask.mean() >= .8 else np.nan)
+        samples.append(row)
+    return from_tiles(np.asarray(samples), shots)
+
+
+def from_tiles(samples, shots):
+    samples = np.asarray(samples, float)
+    stops = np.zeros(len(samples)); reports = []
+    for first, end in shots:
+        values = samples[first:end]
+        usable = np.isfinite(values).mean(0) >= .7
+        if usable.sum() < 6:
+            reports.append({'frames': [first, end-1], 'applied': False, 'reason': 'insufficient background tiles'})
+            continue
+        values = values[:, usable]
+        baseline = np.nanpercentile(values, 90, axis=0)
+        keep = baseline > .01
+        if keep.sum() < 6:
+            reports.append({'frames': [first, end-1], 'applied': False, 'reason': 'background too dark to calibrate'})
+            continue
+        ratios = np.log2(np.maximum(values[:, keep], .0001) / baseline[keep])
+        curve = np.zeros(len(values)); reliable = np.zeros(len(values), bool)
+        for i, row in enumerate(ratios):
+            finite = row[np.isfinite(row)]
+            if len(finite) < 6:
+                continue
+            median = np.median(finite)
+            # Real exposure changes agree over multiple static-background regions.
+            reliable[i] = np.median(np.abs(finite-median)) <= .3
+            if reliable[i]:
+                curve[i] = np.clip(median, -8., 0.)
+        applied = bool(reliable.mean() >= .7 and np.min(curve) < -.6)
+        if applied:
+            # Unreliable frames keep neutral exposure rather than fabricated darkness.
+            stops[first:end] = curve
+        reports.append({'frames': [first, end-1], 'applied': applied,
+                        'reliable_fraction': round(float(reliable.mean()), 3),
+                        'min_stops': round(float(curve.min()), 3),
+                        'reason': 'coherent background dimming' if applied else 'no reliable substantial exposure change'})
+    return {'stops': stops.round(4).tolist(), 'shots': reports,
+            'source': 'linearized source background tiles excluding tracked people; relative stops per shot'}

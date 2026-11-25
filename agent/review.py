@@ -46,7 +46,7 @@ def suggested(c, cl, confirmed=False, auto=False):
             "people": people,
             "camera": {"type": ai.get("camera") if ai.get("camera") in ("static", "pan", "moving", "handheld") else guess_camera(cam),
                        "lens": c["lens_mm"], "note": ""},
-            "environment": {"ground": True, "depth_set": True, "set_colours": c.get("set_colours", "grey"), "props": ai.get("props", [])},
+            "environment": {"ground": True, "depth_set": True, "set_colours": c.get("set_colours", "video"), "props": ai.get("props", [])},
             "notes": ai.get("description", ""), "source": "ai" if ai else "rules"}
 
 

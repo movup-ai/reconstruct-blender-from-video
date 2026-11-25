@@ -408,7 +408,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
             "scene_json_path": "model_3d/reconstruction/scene.json", "blender_version": bver,
             "frame_start": 1, "frame_end": nout, "frames": nout, "fps": ofps, "fps_base": 1.0,
             "duration": round(nout / float(ofps), 6), "duration_basis": "video stream (frames / fps)",
-            "project_frames": {"frame_start": 1, "frame_end": N, "fps": int(round(fps)), "fps_base": 1.0,
+            "project_frames": {"frame_start": 1, "frame_end": N, "fps": int(round(fps)), "fps_base": int(round(fps))/float(fps),
                                "note": "the .blend timeline follows the source clip frame for frame (%d frames at %g fps)" % (N, fps)},
             "source_video": {"resolution": [W, Hfull], "fps": round(fps, 3), "frames": N, "duration": round(D, 6)},
             "output_video": {"resolution": [CW, CH], "fps": ofps, "frames": nout,
@@ -417,6 +417,13 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
                                        if drops else "none",
                              "audio": "source audio stream copied unchanged into white_model and comparison" if pt_audio(ff, video) else "source has no audio"},
             "checks": {"structure": "check_package.py", "reconstruction": "unverified", "visual_review": "unverified"}}
+    geometry_report=os.path.join(os.path.dirname(render_dir),'l3_geometry.json')
+    if os.path.isfile(geometry_report):
+        shutil.copyfile(geometry_report,os.path.join(rec,'l3_geometry.json'))
+        meta['checks']['rigid_geometry']='see model_3d/reconstruction/l3_geometry.json'
+    if c.get('frame_review',False):
+        from frame_review import build as build_frame_review
+        meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
     with open(os.path.join(sub, "meta", "README.md"), "w", encoding="utf-8") as fh:
@@ -602,8 +609,7 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
             "comparison": "comparison/comparison.mp4", "model_3d": "model_3d/%s.blend" % pkg,
             "scene_json_path": "model_3d/reconstruction/scene.json", "blender_version": blender_version(render_dir),
             "render_engine": "Eevee",
-            "character_model": "human_master.blend (sha256 cbc13dbfce8cb5f5e6c51203ff29126b009f9f15643a4c35750fec6f1864e5ec), "
-                               "uniform model_scale per character",
+            "character_model": "See scene.json characters for the fitted model style; fixed uniform scale per actor",
             "frame_start": 1, "frame_end": N, "frames": N, "fps": fr, "duration": round(D, 6),
             "source_video": si, "white_model_video": wi, "comparison_video": ci2,
             "frame_map": "Source frame N = 3D project frame N = white-model frame N (1..%d)" % N,
@@ -611,6 +617,9 @@ def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", note
             "checks": {"technical_structure": "passed (decoding, frame count, dimensions and fps checked)" if ok else "failed",
                        "reconstruction": "unverified", "visual_review": "unverified", "client_acceptance": "unverified"},
             "notes": notes or []}
+    if c.get('frame_review',False):
+        from frame_review import build as build_frame_review
+        meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
     with open(os.path.join(sub, "meta", "README.md"), "w", encoding="utf-8") as fh:
