@@ -133,6 +133,23 @@ class TimelineTests(unittest.TestCase):
 
 
 class ProtectionTests(unittest.TestCase):
+    def test_fitted_projection_survives_depth_correction(self):
+        import object_fit as O
+        data,world=fixture(1);b=evidence(world);b['person'][0,20:45,25:55]=True
+        verts=np.array([[-1,-1,3],[1,-1,3],[1,1,3],[-1,1,3]])@world.R_cw(0)+world.C_at(0)
+        view={'frame':0,'shape':list(b['depth'][0].shape),'K':b['K'][0].tolist(),
+              'R':b['R'][0].tolist(),'C':b['C'][0].tolist(),'parts':None,'source_scale':1,'partial':False}
+        from scene_verify import rasterize
+        target=np.isfinite(rasterize(verts,[[0,1,2,3]],b['K'][0],b['R'][0],b['C'][0],b['depth'][0].shape))
+        view.update(mask=O.bits(target),occluder=O.bits(np.zeros(target.shape,bool)))
+        mesh={'name':'fit','v':verts.tolist(),'f':[[0,1,2,3]],'_observations':[view]}
+        data['meshes']=[mesh]
+        before=O.mesh_metrics(data['meshes'])[0]['iou']
+        with patch.object(GP,'rendered_people_depth',return_value=np.full(target.shape,np.inf)):
+            actions=GP.protect(data,[b])
+        self.assertIn('source rays',actions[0]['action'])
+        self.assertAlmostEqual(O.mesh_metrics(data['meshes'])[0]['iou'],before,places=6)
+
     def test_source_visible_person_protected_but_real_occlusion_kept(self):
         data,world=fixture(1); b=evidence(world)
         b['person'][0,20:45,25:55]=True
@@ -146,12 +163,13 @@ class ProtectionTests(unittest.TestCase):
         self.assertEqual(GP.protect(data,[b]),[])
         self.assertEqual(data['meshes'][0]['v'],mesh['v'])
 
-    def test_huge_conflict_suppressed_with_recoverable_backup(self):
+    def test_huge_conflict_trims_fragments_and_retains_the_object(self):
         data,world=fixture(1); b=evidence(world); b['depth'][:]=20; b['person'][0,10:50,10:70]=True
         verts=np.array([[-3,-3,2],[3,-3,2],[3,3,2],[-3,3,2]])@world.R_cw(0)+world.C_at(0)
         data['meshes']=[{'name':'bad','v':verts.tolist(),'f':[[0,1,2,3]]}]
-        GP.protect(data,[b]); self.assertEqual(data['meshes'],[])
-        self.assertEqual(data['suppressed_geometry'][0]['meshes'][0]['name'],'bad')
+        GP.protect(data,[b]);self.assertEqual(data['meshes'][0]['name'],'bad')
+        self.assertTrue(data['meshes'][0]['f'])
+        self.assertEqual(data['occlusion_original_geometry'][0]['meshes'][0]['name'],'bad')
 
     def test_observed_depth_tolerance_and_invalid_pixels(self):
         depth=np.full((10,10),5.); person=np.ones((10,10),bool)

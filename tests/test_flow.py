@@ -295,13 +295,13 @@ class TestMeasuredSet(unittest.TestCase):
         import env_auto as EA
         R = {"cls": "object", "z": (0.0, 0.5, 1.2), "rng": 3.0, "area": 0.01, "planar": False, "plane": (np.array([0, 1.0, 0]), None, 0)}
         self.assertEqual(EA.sem_decide(R, "plant", 0.9, True), ("object", None, True), "a plant: its measured shape")
-        self.assertEqual(EA.sem_decide(R, "curtain", 0.7, True)[2], True)
+        self.assertEqual(EA.sem_decide(R, "curtain", 0.7, True),('object','curtain',False))
         self.assertEqual(EA.sem_decide(R, "swivel chair", 0.9, True), ("object", "office_chair", False))
         self.assertEqual(EA.sem_decide(R, "person", 0.9, True)[0], "sky", "a missed person is no set piece")
         self.assertEqual(EA.sem_decide(R, "wall", 0.95, True)[0], "sky", "a scrap of wall the wall piece has")
         self.assertEqual(EA.sem_decide(R, "plant", 0.3, True), ("object", None, False), "unsure: the geometry stays")
         big = dict(R, cls="wall", area=0.2, planar=True, plane=(np.array([0, 1.0, 0]), None, 0))
-        self.assertEqual(EA.sem_decide(big, "cabinet", 0.96, True), ("wall", None, False), "a large wall stays a wall")
+        self.assertEqual(EA.sem_decide(big, "cabinet", 0.96, True), ("object", 'cabinet', False), "confident furniture labels survive planar geometry")
         tree = dict(R, cls="vegetation")
         self.assertEqual(EA.sem_decide(tree, "tree", 0.9, False), ("vegetation", None, False), "outdoors: the tree model")
         self.assertTrue(EA.sem_decide(tree, "tree", 0.9, True)[2], "indoors: its measured shape")

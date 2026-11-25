@@ -9,6 +9,8 @@ import numpy as np
 
 # type -> default size (width, height, depth) in metres and where it usually is
 TYPES = {
+    'ceiling_light': ((1.2,.12,.12),'wall'),
+    'vase': ((.3,.6,.3),'floor'), 'pot': ((.4,.35,.4),'floor'),
     "palm": ((3.0, 6.0, 3.0), "floor"),
     "door": ((0.9, 2.05, 0.12), "wall"), "window": ((1.2, 1.3, 0.12), "wall"), "cabinet": ((0.8, 0.9, 0.6), "floor"),
     "wall_cabinet": ((0.8, 0.7, 0.35), "wall"), "shelf": ((1.2, 0.9, 0.3), "wall"), "bookshelf": ((0.9, 1.9, 0.35), "floor"),
@@ -264,7 +266,7 @@ def build(kind, w, h, d, seed=0):
         for i, (x, y) in enumerate([(-W + lw, -D + lw), (W - lw, -D + lw), (W - lw, D - lw), (-W + lw, D - lw)]):
             add("leg%d" % i, box(x - lw / 2, x + lw / 2, y - lw / 2, y + lw / 2, 0, h - tt), "dark")
     elif kind == "chair":
-        seat = 0.46
+        seat = h * .49
         add("seat", box(-W, W, -D, D, seat - 0.05, seat))
         add("back", box(-W, W, D - 0.05, D, seat, h))
         for i, (x, y) in enumerate([(-W + 0.03, -D + 0.03), (W - 0.03, -D + 0.03), (W - 0.03, D - 0.03), (-W + 0.03, D - 0.03)]):
@@ -295,6 +297,8 @@ def build(kind, w, h, d, seed=0):
         add("head", box(-W, W, D - 0.06, D, 0, h + 0.5), "dark"); add("pillow", box(-W * 0.7, W * 0.7, D - 0.45, D - 0.1, h, h + 0.12), "light")
     elif kind == "tv":
         add("screen", box(-W, W, -D, D, 0, h), "dark")
+    elif kind=='ceiling_light':
+        add('fixture',box(-W,W,-D,D,0,h),'light')
     elif kind in ("lamp", "lamp_post"):
         r = max(0.04, min(w, d) * 0.18)
         add("pole", cyl(0, 0, r, 0, h * 0.88), "dark")
@@ -381,8 +385,11 @@ def build(kind, w, h, d, seed=0):
         for nm, vf, sh in horse_parts(w, h):
             add(nm, vf, sh)
     elif kind == "plant_pot":
-        add("pot", cyl(0, 0, W * 0.6, 0, h * 0.35, 8, W * 0.75), "dark")
-        add("leaves", puff(0, 0, h * 0.68, W, D, h * 0.32, rng=rng))
+        pot_h = min(h * .32, min(w,d) * .65)
+        canopy_h = min(h * .65, (w+d)*.5)
+        add("pot", cyl(0, 0, min(W,D) * .6, 0, pot_h, 8, min(W,D) * .75), "dark")
+        add("stem", cyl(0, 0, min(W,D)*.08, pot_h, h-canopy_h*.5, 8), "dark")
+        add("leaves", puff(0, 0, h-canopy_h*.5, W, D, canopy_h*.5, rng=rng))
     elif kind in ("fence", "railing"):
         n = max(2, int(w / 1.2) + 1)
         for i in range(n):
@@ -393,6 +400,9 @@ def build(kind, w, h, d, seed=0):
         n = max(3, int(round(h / 0.17)))
         for i in range(n):
             add("step%d" % i, box(-W, W, -D + d * i / n, D, h * i / n, h * (i + 1) / n), "main" if i % 2 else "light")
+    elif kind in ('vase','pot'):
+        add('body',cyl(0,0,min(W,D)*(.8 if kind=='vase' else .75),0,h,12,min(W,D)))
+        if kind=='vase':add('rim',cyl(0,0,min(W,D)*.5,h*.85,h,12,min(W,D)*.55),'light')
     elif kind in ("bin", "barrel", "pillar", "kettle", "bottle"):
         add("body", cyl(0, 0, W, 0, h * (0.9 if kind == "bin" else 1.0)))
         if kind == "bin":

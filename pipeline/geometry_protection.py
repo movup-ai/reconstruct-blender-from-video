@@ -50,7 +50,7 @@ def person_conflict(predicted, depth, person, valid=None, rendered=None):
 
 
 def protect(data, bundles, max_shift=3.):
-    """Try a small depth correction; suppress a group if it still hides a source-visible person.
+    """Correct depth first, then trim only unsupported conflicting surface fragments.
 
     Genuine source occlusion is retained: the source person mask includes visible human pixels only.
     Dynamic props are rendered separately and are never treated as background geometry here.
@@ -73,7 +73,7 @@ def protect(data, bundles, max_shift=3.):
     for mesh in data['meshes']:
         if mesh['name'].startswith('ground'): continue
         groups.setdefault(mesh.get('_primitive', mesh['name']), []).append(mesh)
-    actions, removed, replacements = [], set(), {}
+    actions, replacements = [], {}
     for name, group in groups.items():
         def measure(parts):
             total, gaps, wrong_views = 0, [], []
@@ -95,18 +95,93 @@ def protect(data, bundles, max_shift=3.):
         shift = np.asarray(forward) * min(max_shift, max(.2, distance))
         shifted = [dict(m, v=(np.asarray(m['v'], float)+shift).tolist()) for m in group]
         after, _, _ = measure(shifted)
-        if after == 0 and distance <= max_shift:
-            for before, new in zip(group, shifted): replacements[id(before)] = new
-            actions.append({'object': name, 'action': 'moved behind source-visible people', 'translation': shift.tolist(), 'frames': frames})
+        candidates=[]
+        if after==0 and distance<=max_shift:
+            candidates.append((shifted,{'action':'moved behind source-visible people','translation':shift.tolist()}))
+        # Compare joint depth/scale placement with rigid translation using all source masks.
+        # A depth correction must not silently destroy a fitted object's screen alignment.
+        anchor=next(o for o in observations if o[0] in frames)
+        C=anchor[4];z=float(np.median((np.concatenate([np.asarray(m['v']) for m in group])-C)@anchor[3][2]))
+        factor=1+(distance+.2)/max(.2,z)
+        if factor<=2 and not any(m.get('size_locked') for m in group):
+            ray_scaled=[dict(m,v=(C+(np.asarray(m['v'])-C)*factor).tolist(),_occlusion_scale=factor) for m in group]
+            if measure(ray_scaled)[0]==0:
+                candidates.append((ray_scaled,{'action':'depth and scale aligned along source rays','factor':factor}))
+        if candidates:
+            from object_fit import mesh_metrics
+            def alignment(candidate):
+                views=mesh_metrics(candidate[0])
+                return sum(1-v['iou']+v['center_error_px']/100+v['size_error_fraction'] for v in views)
+            corrected,action=min(candidates,key=alignment)
+            for before,new in zip(group,corrected):replacements[id(before)]=new
+            actions.append(dict(action,object=name,frames=frames))
         else:
-            removed.update(id(m) for m in group)
-            saved = {'object': name, 'reason': 'would hide source-visible people', 'frames': frames, 'meshes': group}
-            prior = [x for x in data.get('suppressed_geometry', []) if x['object'] != name]
-            data['suppressed_geometry'] = prior + [saved]
-            actions.append({k: v for k, v in saved.items() if k != 'meshes'})
-    data['meshes'] = [replacements.get(id(m), m) for m in data['meshes'] if id(m) not in removed]
+            corrected=[clip_unsupported_faces(mesh,observations) for mesh in group]
+            if measure(corrected)[0]<score and any(m['f'] for m in corrected):
+                for before,new in zip(group,corrected):replacements[id(before)]=new
+                archive=[a for a in data.get('occlusion_original_geometry',[]) if a['object']!=name]
+                data['occlusion_original_geometry']=archive+[{'object':name,'meshes':group}]
+                actions.append({'object':name,'action':'trimmed unsupported occluding fragments; object retained','frames':frames})
+            else:
+                actions.append({'object':name,'action':'retained for review: depth conflict could not be resolved','frames':frames})
+    data['meshes'] = [replacements.get(id(m), m) for m in data['meshes']]
     data['geometry_protection'] = data.get('geometry_protection', []) + actions
     return actions
+
+
+def clip_unsupported_faces(mesh, observations, levels=6):
+    """Keep visible/supported geometry; remove only fragments in front of observed human pixels.
+
+    Evidence for the object in another view protects a fragment from destructive trimming.
+    Original geometry is retained by protect() for recovery and further fitting.
+    """
+    from object_fit import unbits
+    from scene_verify import triangles
+    supports=[]
+    for view in mesh.get('_observations',[]):
+        supports.append((unbits(view['mask'],view['shape']),np.asarray(view['K']),np.asarray(view['R']),np.asarray(view['C'])))
+    masks=[]
+    for f,depth,K,R,C,person,valid,rendered in observations:
+        target=np.where(np.isfinite(rendered),np.maximum(depth,rendered),depth)
+        area=cv2.dilate((person&valid).astype(np.uint8),np.ones((5,5),np.uint8))>0
+        masks.append((area,target,K,R,C))
+    def sample(points):
+        bad=np.zeros(len(points),bool);supported=np.zeros(len(points),bool)
+        for mask,K,R,C in supports:
+            camera=(points-C)@R.T;z=camera[:,2];uv=camera@K.T
+            xy=np.rint(uv[:,:2]/np.maximum(z[:,None],.02)).astype(int)
+            inside=(z>.02)&(xy[:,0]>=0)&(xy[:,1]>=0)&(xy[:,0]<mask.shape[1])&(xy[:,1]<mask.shape[0])
+            ids=np.flatnonzero(inside);supported[ids]|=mask[xy[ids,1],xy[ids,0]]
+        for mask,target,K,R,C in masks:
+            camera=(points-C)@R.T;z=camera[:,2];uv=camera@K.T
+            xy=np.rint(uv[:,:2]/np.maximum(z[:,None],.02)).astype(int)
+            inside=(z>.02)&(xy[:,0]>=0)&(xy[:,1]>=0)&(xy[:,0]<mask.shape[1])&(xy[:,1]<mask.shape[0])
+            ids=np.flatnonzero(inside)
+            bad[ids]|=mask[xy[ids,1],xy[ids,0]]&(z[ids]<target[xy[ids,1],xy[ids,0]]-.03)
+        return bad&~supported
+    vertices=np.asarray(mesh['v'],float);kept=[]
+    def visit(tri,level):
+        a,b,c=tri;ab=(a+b)/2;bc=(b+c)/2;ca=(c+a)/2
+        probes=np.array([a,b,c,ab,bc,ca,(a+b+c)/3]);bad=sample(probes)
+        if bad.all():return
+        if not bad.any():
+            # A large face can contain a small protected person between its samples.
+            intersects=False
+            for mask,target,K,R,C in masks:
+                cam=(tri-C)@R.T;uv=cam@K.T;uv=uv[:,:2]/np.maximum(cam[:,2,None],.02)
+                lo=np.maximum(0,np.floor(uv.min(0))).astype(int);hi=np.minimum([mask.shape[1]-1,mask.shape[0]-1],np.ceil(uv.max(0))).astype(int)
+                if (hi>=lo).all():
+                    local=mask[lo[1]:hi[1]+1,lo[0]:hi[0]+1]
+                    if local.any() and cam[:,2].min()<np.max(target[lo[1]:hi[1]+1,lo[0]:hi[0]+1][local])-.03:
+                        intersects=True;break
+            if not intersects or level==0:kept.append(tri);return
+        if level==0:return
+        for child in ([a,ab,ca],[ab,b,bc],[ca,bc,c],[ab,bc,ca]):visit(np.asarray(child),level-1)
+    for indices in triangles(mesh['f']):visit(vertices[indices],levels)
+    if not kept:return dict(mesh,f=[])
+    points=np.asarray(kept).reshape(-1,3)
+    unique,inverse=np.unique(np.round(points,7),axis=0,return_inverse=True)
+    return dict(mesh,v=unique.tolist(),f=inverse.reshape(-1,3).tolist(),_occlusion_clipped=True)
 
 
 def match_source_box(group, source, data):

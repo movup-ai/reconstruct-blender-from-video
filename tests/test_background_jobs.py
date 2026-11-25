@@ -148,6 +148,17 @@ class BackgroundPipelineTests(unittest.TestCase):
 
 
 class InferenceLeaseTests(unittest.TestCase):
+    def test_copied_scene_cannot_render_into_a_different_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=os.path.join(tmp,'scene.json')
+            original={'name':'clip','work_dir':os.path.join(tmp,'original'),'submit_dir':os.path.join(tmp,'submit','clip')}
+            jsave(path,original)
+            with patch.object(RP,'blender_exe',return_value='blender'),patch.object(RP.subprocess,'run') as launch:
+                with self.assertRaisesRegex(RuntimeError,'render workspace'):
+                    RP.blender_render({'submit_root':os.path.join(tmp,'submit')},tmp,path,1)
+                launch.assert_not_called()
+            self.assertEqual(jload(path),original)
+
     def test_another_process_waits_until_lease_released(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=os.path.join(tmp,'gpu.lock');marker=os.path.join(tmp,'acquired')

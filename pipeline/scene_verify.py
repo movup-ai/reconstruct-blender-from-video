@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from common import cfg, jload, jsave
-from profiling import stage
+from profiling import stage,verification_profile
 
 
 def triangles(faces):
@@ -364,6 +364,7 @@ def depth_correction(group, bundles):
     return shift*min(1.,2./length)
 
 
+@verification_profile
 @stage("scene_verification")
 def process(data, work, c, hints=None, repair=False):
     """Verify edits, keep only evidence-improving proposals, persist all unresolved issues."""
@@ -439,6 +440,17 @@ def process(data, work, c, hints=None, repair=False):
             repairs += protection
             result = verify(data, work, justification, bundles=bundles)
     result.update(repairs=repairs, human_scale_changes=scale_changes, skipped_stale_evidence=skipped)
+    from object_fit import audit_scene
+    alignment=audit_scene(data,work)
+    for row in alignment['objects']:
+        if row['passed']:continue
+        issue_id=hashlib.sha1(('object_alignment:'+row['object']).encode()).hexdigest()[:12]
+        detail='Prototype silhouette needs review: IoU %.2f, center error %.1f px, size error %.0f%%' % (
+            min(v['iou'] for v in row['views']),max(v['center_error_px'] for v in row['views']),
+            100*max(v['size_error_fraction'] for v in row['views']))
+        result['issues'].append({'id':issue_id,'kind':'object_alignment','object':row['object'],
+                                  'frame':row['views'][0]['frame'],'detail':detail,'status':'unresolved'})
+        result['unresolved'].append(issue_id)
     overview(data, os.path.join(work,"scene_overview.jpg"))
     jsave(os.path.join(work, "scene_verification.json"), result)
     data["scene_verification"] = {"file": "scene_verification.json", "unresolved": len(result["unresolved"]),

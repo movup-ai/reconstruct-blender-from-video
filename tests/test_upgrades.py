@@ -17,9 +17,10 @@ from camera_solve import Camera
 
 
 class SamplingTests(unittest.TestCase):
-    def test_static_camera_keeps_two_views(self):
+    def test_static_camera_checks_first_middle_and_last_views(self):
         data = {"cam": [[0, 0, 1.6, 90, 0, 0]] * 100}
-        self.assertEqual(env_auto.sample_set_frames(data, 0, 99, {}), [0, 49])
+        self.assertEqual(env_auto.sample_set_frames(data, 0, 99, {}), [0, 49, 99])
+        self.assertEqual(env_auto.sample_set_frames(data,0,99,{'set_max_frames':2}),[0,99])
 
     def test_translation_and_zoom_add_bounded_views(self):
         data = {"cam": [[i / 10, 0, 1.6, 90, 0, 0] for i in range(100)]}

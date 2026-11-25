@@ -5,8 +5,43 @@ import json
 import os
 import tempfile
 import time
+from contextlib import contextmanager
 
 _active = contextvars.ContextVar("clip_profile", default=None)
+
+
+def add_seconds(name, seconds, calls=1):
+    profile=_active.get()
+    if profile is None:return
+    row=profile['stages'].setdefault(name,{'calls':0,'seconds':0.})
+    row['seconds']+=float(seconds);row['calls']+=calls
+
+
+def counter(name, count=1):
+    profile=_active.get()
+    if profile is not None:profile.setdefault('counters',{})[name]=profile.get('counters',{}).get(name,0)+count
+
+
+@contextmanager
+def recording(path=None):
+    profile={'stages':{},'scope':'worker; nested timings are not additive'}
+    token=_active.set(profile);started=time.perf_counter()
+    try:yield profile
+    finally:
+        profile['total_seconds']=time.perf_counter()-started;_active.reset(token)
+        if path:
+            os.makedirs(os.path.dirname(path),exist_ok=True)
+            from common import jsave
+            jsave(path,profile)
+
+
+def verification_profile(function):
+    @functools.wraps(function)
+    def measured(data,work,*args,**kwargs):
+        if _active.get() is not None:return function(data,work,*args,**kwargs)
+        with recording(os.path.join(work,'verification_profile.json')):
+            return function(data,work,*args,**kwargs)
+    return measured
 
 
 def stage(name):
@@ -40,12 +75,19 @@ def profile_clip(function):
                                  'people':'reused', 'camera':'reused'}
         token = _active.set(profile)
         started = time.perf_counter()
+        detail_paths={name:os.path.join(work,name) for name in ('environment_profile.json','verification_profile.json')}
+        before={name:os.stat(path).st_mtime_ns if os.path.isfile(path) else None for name,path in detail_paths.items()}
         try:
             result = function(video, config, args)
             profile["status"] = result.get("status", "ok")
             return result
         finally:
             profile["total_seconds"] = time.perf_counter() - started
+            for name,path in detail_paths.items():
+                if os.path.isfile(path) and os.stat(path).st_mtime_ns!=before[name]:
+                    try:
+                        with open(path,encoding='utf-8') as stream:profile.setdefault('details',{})[name]=json.load(stream)
+                    except (OSError,ValueError):pass
             _active.reset(token)
             os.makedirs(work, exist_ok=True)
             fd, temp = tempfile.mkstemp(dir=work, suffix=".json")

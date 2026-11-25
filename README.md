@@ -89,6 +89,10 @@ uv pip install --python downloads\da3-venv\Scripts\python.exe -r requirements-da
 Each pipeline run writes `Work_auto\<clip>\profile_<stage>.json`, including a failed run. It records wall time and
 call count for marks, lens, camera, people fitting, the depth set, carried objects, environment building, Blender,
 and encoding/packaging. These timings include model startup and subprocess work.
+Background jobs also write `environment_profile.json` and `verification_profile.json`: separate model loading,
+SAM inference, classification, joint prototype fitting and verification times, plus cache-hit counts.
+The video detail page shows these under **Background timings**, alongside projected alignment failures.
+See [Background reconstruction](docs/BACKGROUND_RECONSTRUCTION.md) for fitting rules, limits and validation results.
 
 ## Start
 
@@ -224,12 +228,15 @@ Every piece of the background is named by Mask2Former (`models\mask2former_ade`,
 door, curtain, plant, flower, vase, table, desk, chair, sofa, cabinet, shelf, lamp, car, tree...), on the NVIDIA card
 (`pipeline\semseg.py`, about 0.1 s a frame). The name picks how the piece is built:
 - walls, floors, ceilings, buildings: from their measured planes, as before;
-- furniture: the library model of that type (`pipeline\props.py`), sized from the measurement;
-- plants, flowers, curtains, statues, vases, cushions and other irregular things: from their **measured surface**
+- furniture: recognizable library models (`pipeline\props.py`), jointly fitted in position, dimensions and orientation
+  to segmented masks and reliable depth across sampled views. Visible chair backs preserve the complete chair;
+- indoor plants: tapered pots, stems and rounded canopies; outdoor trees: pine prototypes; bushes: rounded shrubs.
+  Vases, pots, curtains, doors and windows use named prototypes;
+- statues, cushions and other unnamed irregular things: from their **measured surface**
   (`pipeline\relief.py`: the depth model's points inside the piece's outline become a solid with its real silhouette).
-  A box drawn on the clip page as a plant, curtain or statue - or one the model says holds such a thing - is built the
-  same way, cut to that thing's pixels. A drawn box that holds furniture becomes that furniture's model.
-A large wall or floor stays a wall or floor whatever is painted or stands on it. Without the model, CLIP names the
+  A drawn box or outline selects the measured object. Known names choose prototypes; unknown irregular things use
+  the measured surface. Explicit user dimensions remain fixed.
+Confident furniture labels can override geometric wall guesses. Without the model, CLIP names the
 pieces and the library shapes are used.
 
 Clips are split at hard cuts, and every shot gets its own camera, ground and set. The ground comes from the solved

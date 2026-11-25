@@ -5,7 +5,8 @@ import numpy as np
 
 def vegetation_kind(label, indoor=False):
     text = str(label or '').lower()
-    if re.search(r'\b(potted|house|pot)\b', text): return 'plant_pot'
+    if re.search(r'\b(potted|houseplant|house plant|plant pot|flowerpot)\b', text): return 'plant_pot'
+    if text.strip()=='pot':return 'pot'
     words = set(re.findall(r'[a-z]+', text))
     def has(*terms): return any(t in words or t+'s' in words for t in terms)
     if has('forest', 'woodland', 'grove', 'woods'): return 'forest'

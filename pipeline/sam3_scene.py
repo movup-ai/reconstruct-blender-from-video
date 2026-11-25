@@ -6,11 +6,13 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 import cv2
 import numpy as np
 
 from common import AGENT, DEFAULT_CFG, jload, jsave
+from profiling import add_seconds,counter
 
 VERSION = 1
 
@@ -100,6 +102,7 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
             return {'masks': masks.astype(bool), 'box_masks': prompted.astype(bool),
                     'peak_vram_mb': float(result['peak_vram_mb'])}
     if cache and os.path.isfile(cache):
+        counter('sam_cache_hits')
         return read(cache)
     if _queue is not None:
         _queue.append((rgb, params, checkpoint, cache))
@@ -115,11 +118,20 @@ def segment(rgb, c, automatic=True, boxes=(), cache_dir=None, before_inference=N
             target.write(encoded.tobytes())
         job, output = os.path.join(tmp, 'job.json'), os.path.join(tmp, 'masks.npz')
         jsave(job, {**params, 'image': image, 'checkpoint': checkpoint})
+        started=time.perf_counter()
         subprocess.run([python, os.path.abspath(__file__), '--worker', job, output], check=True,
                        timeout=max(60, float(c.get('sam3_timeout_min', 40)) * 60),
                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
                        env=dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8'))
         result = read(output)
+        elapsed=time.perf_counter()-started
+        with np.load(output,allow_pickle=False) as a:
+            loading=float(a['model_loading_seconds']) if 'model_loading_seconds' in a else 0.
+            inference=float(a['inference_seconds']) if 'inference_seconds' in a else 0.
+        add_seconds('sam_model_loading',loading)
+        add_seconds('sam_inference',inference)
+        add_seconds('sam_worker_overhead',max(0.,elapsed-loading-inference))
+        counter('sam_uncached_requests')
         if cache:
             # Write only validated results, atomically, so interrupted jobs cannot poison the cache.
             with tempfile.NamedTemporaryFile(dir=cache_dir, suffix='.npz', delete=False) as target:
@@ -151,13 +163,17 @@ def prefetch(requests, c, cache_dir, before_inference=None):
             with open(image, 'wb') as target: target.write(encoded.tobytes())
             jobs.append(dict(params, image=image, checkpoint=checkpoint, output=output))
         job_path = os.path.join(tmp, 'jobs.json'); jsave(job_path, jobs)
+        started=time.perf_counter()
         subprocess.run([c.get('sam3_python') or DEFAULT_CFG['sam3_python'], os.path.abspath(__file__),
                         '--worker', job_path, os.path.join(tmp,'unused.npz')], check=True,
                        timeout=max(60, float(c.get('sam3_timeout_min',40))*60),
                        creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0,
                        env=dict(os.environ,PYTHONUNBUFFERED='1',PYTHONIOENCODING='utf-8'))
+        elapsed=time.perf_counter()-started;loading=0.;inference=0.
         for job, (rgb, params, checkpoint, cache) in zip(jobs, pending):
             with np.load(job['output'], allow_pickle=False) as a:
+                loading+=float(a['model_loading_seconds']) if 'model_loading_seconds' in a else 0.
+                inference+=float(a['inference_seconds']) if 'inference_seconds' in a else 0.
                 result = {k:a[k].copy() for k in ('masks','box_masks','peak_vram_mb')}
                 if result['masks'].ndim!=3 or result['masks'].shape[1:]!=rgb.shape[:2] or result['box_masks'].shape!=(len(params['boxes']),*rgb.shape[:2]):
                     raise ValueError('Invalid batch scene mask dimensions')
@@ -166,6 +182,10 @@ def prefetch(requests, c, cache_dir, before_inference=None):
                 np.savez_compressed(temp, **result); os.replace(temp,cache)
             finally:
                 if os.path.exists(temp): os.remove(temp)
+        add_seconds('sam_model_loading',loading)
+        add_seconds('sam_inference',inference,len(pending))
+        add_seconds('sam_worker_overhead',max(0.,elapsed-loading-inference))
+        counter('sam_uncached_requests',len(pending))
     return len(pending)
 
 
@@ -181,10 +201,13 @@ def worker(job_path, output):
     jobs = jobs if isinstance(jobs,list) else [dict(jobs,output=output)]
     if not jobs: return
     torch.cuda.reset_peak_memory_stats()
+    started=time.perf_counter()
     model = build_sam3_image_model(checkpoint_path=jobs[0]['checkpoint'], load_from_HF=False,
                                    enable_inst_interactivity=True, device='cuda')
     processor = Sam3Processor(model)
-    for job in jobs:
+    torch.cuda.synchronize();loading=time.perf_counter()-started
+    for index,job in enumerate(jobs):
+        job['_model_loading_seconds']=loading if index==0 else 0.
         if job['checkpoint'] != jobs[0]['checkpoint']: raise ValueError('A batch must use one checkpoint')
         worker_image(job, job['output'], model, processor)
 
@@ -194,6 +217,7 @@ def worker_image(job, output, model, processor):
     from PIL import Image
     image = Image.open(job['image']).convert('RGB')
     shape = (image.height, image.width)
+    torch.cuda.synchronize();started=time.perf_counter()
     with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16):
         state = processor.set_image(image)
         selected, quality = [], []
@@ -215,8 +239,10 @@ def worker_image(job, output, model, processor):
             if not len(scores) or not np.isfinite(scores).all():
                 raise RuntimeError('SAM 3 returned no valid mask for an annotated object')
             prompted.append(masks[int(np.argmax(scores))] > 0)
+    torch.cuda.synchronize();elapsed=time.perf_counter()-started
     np.savez_compressed(output, masks=automatic, box_masks=np.asarray(prompted, bool).reshape(-1, *shape),
-                        peak_vram_mb=torch.cuda.max_memory_allocated() / 1024**2)
+                        peak_vram_mb=torch.cuda.max_memory_allocated() / 1024**2,
+                        model_loading_seconds=job.get('_model_loading_seconds',0.),inference_seconds=elapsed)
 
 
 if __name__ == '__main__':

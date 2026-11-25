@@ -21,12 +21,15 @@ Work_auto\\<clip>\\env_auto.jpg: per frame  masks + labels over the film | the s
 The set in env_auto.jpg is drawn with the MoGe camera tilt; build_env's env_check uses the fit's camera, so when the
 printout says the tilt disagrees, put the suggested camera into hints.json and re-run the fit (ENV_AUTHORING.md)."""
 import argparse, json, math, os, sys, time, warnings
+from types import SimpleNamespace
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 warnings.filterwarnings("ignore")
 import numpy as np, cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 from common import cfg, jload, imwrite_u, read_frames_at, output_dir, AGENT
+from profiling import stage, counter
+import object_fit
 
 TP = os.path.join(AGENT, "third_party")
 MODELS = os.path.join(AGENT, "models")
@@ -67,6 +70,7 @@ class Models:
         except Exception as e:
             print("segmentation model not used (%s) - pieces are named by CLIP" % str(e)[:200])
 
+    @stage('geometry_inference')
     def moge_run(self, rgb, fov_x=None):
         if self.moge is None:
             from moge.model.v2 import MoGeModel
@@ -103,11 +107,26 @@ class Models:
             return np.zeros(rgb.shape[:2], bool)
         return self._sam_scene(rgb, boxes=boxes)['box_masks'].any(0)
 
+    @stage('semantic_classification')
     def semantic(self, rgb):
         if self.seg is None:
             return None
+        import hashlib
+        checkpoint=os.path.join(MODELS,'mask2former_ade','model.safetensors')
+        stamp=os.stat(checkpoint).st_mtime_ns
+        digest=hashlib.sha256(str((stamp,rgb.shape)).encode()+rgb.tobytes()).hexdigest()
+        directory=os.path.join(os.path.dirname(self.scene_cache),'semantic_cache') if self.scene_cache else None
+        path=os.path.join(directory,digest+'.npy') if directory else None
+        if path and os.path.isfile(path):
+            counter('semantic_cache_hits')
+            return np.load(path,allow_pickle=False)
+        counter('semantic_uncached_requests')
         self.seg.model.to(self.dev)
-        return self.seg(rgb)
+        result=self.seg(rgb)
+        if path:
+            os.makedirs(directory,exist_ok=True)
+            np.save(path,result,allow_pickle=False)
+        return result
 
 
 # ----------------------------------------------------------------------------------------------- geometry helpers
@@ -273,6 +292,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     img = cv2.resize(bgr, (Wk, Hk), interpolation=cv2.INTER_AREA) if k < 1 else bgr.copy()
     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     fr = Frame(); fr.k, fr.W, fr.H, fr.img, fr.f = k, Wk, Hk, img, f
+    fr.fpix = Wk/(2*math.tan(math.radians(fov_x)/2))
     fr.rgb = rgb                                                 # (the drawn boxes' outlines: SAM with the box as prompt)
     fr.bars = side_bars(img)                                     # black pillarbox bars: not part of the room
     fr.shared_metric = shared is not None
@@ -327,7 +347,7 @@ def analyse(models, bgr, f, pose, ci, fov_x, free_fov=False, shared=None):
     masks = models.sam_auto(rgb)
     fr.t_moge, fr.t_sam = t1 - t0, time.time() - t1
     fr.segm = getattr(models, "seg", None)
-    if shared is not None and fr.segm is not None and list(shared["names"]) == fr.segm.names:
+    if shared is not None and fr.segm is not None and list(shared["names"]) == fr.segm.names and (shared['labels'].shape[1]>=Wk or getattr(models,'use_shared_labels',False)):
         fr.sem = cv2.resize(shared["labels"].astype(np.int16),(Wk,Hk),interpolation=cv2.INTER_NEAREST)
     else:
         fr.sem = models.semantic(rgb)      # class of every pixel (ADE20K)
@@ -370,7 +390,7 @@ def soft_parts(fr, min_area=0.003):
     names = fr.segm.names
     group = {}
     for k, n in enumerate(names):
-        if semseg.role(n) in ("relief", "tree"):
+        if semseg.role(n) in ("relief", "tree") or n in SOFT_GROUPS:
             group.setdefault(SOFT_GROUPS.get(n, n), []).append(k)
     free = fr.valid & ~fr.person & ~fr.bars
     out = []
@@ -383,8 +403,10 @@ def soft_parts(fr, min_area=0.003):
         n, cc, st, _ = cv2.connectedComponentsWithStats(m8, connectivity=8)
         for i in range(1, n):
             if st[i, cv2.CC_STAT_AREA] >= min_area * m.size:
-                piece = (cc == i) & free
+                piece = (cc == i) & free & m
                 name, _ = fr.segm.label(fr.sem, piece)
+                vegetation=[i for i,nm in enumerate(names) if nm in ('plant','flower')]
+                if gname=='plant' and np.isin(fr.sem[piece],vegetation).mean()>.08:name='plant'
                 out.append((piece, name or gname))
     return out
 
@@ -500,6 +522,7 @@ def classify(R, indoor):
     return "object"
 
 
+@stage('object_classification')
 def name_regions(regs, fr, namer, indoor, min_p=0.3, max_area=0.2):
     """CLIP names each piece (namer.py) and corrects what shape and colour got wrong: a green-painted wall is a wall,
     not vegetation; a desk-shaped blob becomes a desk.  Sets R["label"] = (word, probability) and R["ptype"] (props.py)"""
@@ -543,7 +566,7 @@ def sem_decide(R, name, share, indoor):
         return cls, None, False
     r = semseg.role(name)
     big = R["area"] > 0.06 and cls in ("wall", "building", "floor", "terrain", "slope", "ceiling")
-    if big and r not in ("person", "sky", "floor", "ground", "ceiling", "wall", "building", "far"):
+    if big and share < .7 and r not in ("person", "sky", "floor", "ground", "ceiling", "wall", "building", "far"):
         return cls, None, False                                  # a large surface stays one (a bookcase wall is a wall)
     if r == "person":
         return "sky", None, False                                 # a person the pose detector missed: not the set
@@ -580,6 +603,7 @@ def sem_decide(R, name, share, indoor):
     return "object", r, False
 
 
+@stage('object_classification')
 def sem_regions(regs, fr, indoor):
     """name every piece from the segmentation (fr.sem): R["label"] = (class, share), and its class / props type /
     measured shape (R["relief"]) from sem_decide"""
@@ -587,6 +611,8 @@ def sem_regions(regs, fr, indoor):
         if R.get("soft"):                                        # cut out by its class already (soft_parts)
             from prototypes import vegetation_kind
             prototype = vegetation_kind(R['label'][0], indoor)
+            if R['label'][0] in ('vase','pot'):
+                R.update(ptype=R['label'][0],relief=False)
             print('    %s: %s' % (R['label'][0], (prototype+' prototype') if prototype else 'measured shape'))
             continue
         m = R["mask"] & ~fr.person
@@ -838,6 +864,20 @@ def oriented_box(P, C, min_depth_frac=0.0, min_depth=0.0):
 
 
 def make_object(R, C, indoor, fr, fpix, name):
+    result=_make_object(R,C,indoor,fr,fpix,name)
+    if result and not result.get('_terrain') and hasattr(fr,'X') and hasattr(fr,'Rw'):
+        if R['cls']=='wall':
+            planar=object_fit.planar_surface(R,fr,name,result.get('_src',{}),result.get('colour','set'))
+            if planar:return planar
+        box=R.get('bbox_px',[0,0,0,0])
+        if result.get('type')=='lamp' and box[2]-box[0]>2*(box[3]-box[1]) and np.median(R['P'][:,2])>1.7:
+            result['type']='ceiling_light'
+        result.setdefault('_src',{})['confidence']=float((R.get('label') or ('',.0))[1])
+        object_fit.attach(result,fr,R['mask'])
+    return result
+
+
+def _make_object(R, C, indoor, fr, fpix, name):
     """region -> env object dict (or None)"""
     cls = R["cls"]; P = R["P"]; z5, z50, z95 = R["z"]; r = R["rng"]
     tol = 0.15 + 0.025 * r
@@ -847,13 +887,17 @@ def make_object(R, C, indoor, fr, fpix, name):
         src["label"] = list(R["label"])                          # what CLIP sees (namer.py), for the review page
     from prototypes import vegetation_kind, measured_object
     prototype = vegetation_kind((R.get('label') or ('',))[0], indoor)
+    if cls=='vegetation' and prototype is None and getattr(fr,'sem',None) is not None:
+        foliage=[i for i,label in enumerate(fr.segm.names) if label in ('plant','flower','tree','palm','grass')]
+        if np.isin(fr.sem[R['mask']],foliage).mean()<.1:
+            cls='object'  # Green paint or reflections alone do not establish a plant.
     if cls == 'vegetation' and prototype in (None, 'pine'):
         height = z95 - z5
         low, high = np.percentile(P[:, :2], [5, 95], axis=0)
         if height >= 2 and (high - low).max() >= 2.5 * height:
             prototype = 'forest'
         elif prototype is None:
-            prototype = 'bush' if height < 2 else 'pine'
+            prototype = 'plant_pot' if indoor else ('bush' if height < 2 else 'pine')
     if prototype:
         return measured_object(prototype, P, name, src)
     pt = R.get("ptype")
@@ -965,7 +1009,8 @@ def make_object(R, C, indoor, fr, fpix, name):
     cen, W, Dn, ax = oriented_box(P, C, mdf, 0.0)
     u = np.array([ax[0], ax[1], 0.0])
     yaw = round(yaw_front(u, cen, C), 1)
-    if max(W, h) < 0.25 or (not on_floor and R["area"] < 0.02 and cls != "vegetation"):   # specks, small floating bits
+    recognised = bool(pt and (R.get('label') or ('',0))[1] >= .65 and R['area'] >= .002)
+    if not recognised and (max(W, h) < 0.25 or (not on_floor and R["area"] < 0.02 and cls != "vegetation")):
         return None
     if cls == "vegetation" and indoor and pt in (None, "plant_pot", "bush") and h < 2.5:
         return {"name": name, "type": "plant_pot", "pos": rnd([cen[0], cen[1], zb], 2), "size": rnd([W, h, Dn], 2), "yaw": yaw,
@@ -1089,8 +1134,7 @@ def behind_people(o, pts, pad=0.25, most=1.5):
 
 
 def off_people(objs, data, frames, dx=0.0):
-    """drop objects that a fitted person is inside (2+ of shoulders / hips / knees in any measured frame): a mask that
-    took in a person or a big blob in front of them, never a real piece of the set"""
+    """Record broad body intersections for depth verification; preserve real partially visible furniture."""
     try:
         import build_env as BE
         cam = BE.Cam(data)
@@ -1099,10 +1143,8 @@ def off_people(objs, data, frames, dx=0.0):
         print("  people test skipped (%s)" % e); return objs, []
     keep, gone = [], []
     for o in objs:
-        if o["_src"]["cls"] in ("wall", "building") and o["_src"].get("area", 0) >= 0.15:
-            keep.append(behind_people(o, pts)); continue         # a big wall: kept, moved back if people walk in it
         if o["_src"]["cls"] not in ("floor", "terrain", "ceiling") and any(inside(o, P).sum() >= 2 for P in pts):
-            gone.append(o["_src"]["cls"]); continue
+            o['_src']['person_intersection'] = True  # broad volumes are not evidence that furniture is absent
         keep.append(o)
     if gone:
         print("  dropped %d object(s) that people are inside: %s" % (len(gone), ", ".join(gone)))
@@ -1155,6 +1197,10 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
         if not b or len(b) != 4:
             continue
         d = describe.parse(o.get("what"), o.get("type"))
+        if o.get('type') in (None,'other','object','box'):
+            from prototypes import vegetation_kind
+            prototype=vegetation_kind(d.get('label'),indoor)
+            if prototype and d['mode']!='held':d.update(mode='model',kind=prototype)
         if o.get('size') and d['mode'] != 'held': d['mode'] = 'model'
         what = (o.get("what") or o.get("type") or "").strip()
         if d["mode"] == "held":
@@ -1227,6 +1273,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
         if o.get("facing") in ("left", "right", "away"):
             ob["facing"] = o["facing"]
         if o.get('size'): ob.update(size=o['size'], size_locked=True)
+        if not ob.get('_level'):object_fit.attach(ob,fr,m)
         out.append(ob)
     return out
 
@@ -1435,17 +1482,33 @@ def main():
         names = [n for n in names if not os.path.exists(os.path.join(output_dir(), n, "env_auto.json"))]
     if not names:
         print("no clips to do (need Work_auto\\<clip>\\scene_data.json + camera.json)"); return
+    from profiling import recording
+    written=set()
+    try:
+        with recording() as profile:run_jobs(a,c,names,profile,written)
+    finally:
+        from common import jsave
+        for name in names:
+            if name not in written:jsave(os.path.join(c['work_root'],name,'environment_profile.json'),profile)
+
+
+def run_jobs(a,c,names,profile,written):
+    import copy
+    from common import jsave
+    started=time.perf_counter()
     t_load = time.time()
     pts = a.points or int(c.get("sam_points", 32))
-    models = Models(pts, config=c, annotations_only=a.annotations_only)
+    models = stage('model_loading')(Models)(pts, config=c, annotations_only=a.annotations_only)
     print("SAM: %dx%d points" % (pts, pts))
     import namer as NM
-    models.namer = NM.Namer(models.dev) if (not a.annotations_only and models.seg is None and NM.available()) else None
+    models.namer = stage('model_loading')(NM.Namer)(models.dev) if (not a.annotations_only and models.seg is None and NM.available()) else None
     print("object names: %s" % ("user annotations (no semantic model)" if a.annotations_only else "Mask2Former ADE20K (models/mask2former_ade)" if models.seg is not None else
                                 ("CLIP (models/clip)" if models.namer else "from shape and colour only (CLIP not installed)")))
     print("models loaded on %s in %.1f s" % (models.dev, time.time() - t_load))
     bad = []
-    for n in names:
+    for index,n in enumerate(names):
+        before=copy.deepcopy(profile) if index else {'stages':{},'counters':{}}
+        if index:started=time.perf_counter()
         try:
             for tries in range(4):                               # the GPU is shared: on out-of-memory wait and retry
                 try:
@@ -1459,6 +1522,17 @@ def main():
         except Exception as e:                                   # one bad clip never stops a batch
             import traceback; traceback.print_exc()
             print("FAILED %s: %s" % (n, e)); bad.append(n)
+        finally:
+            stages={key:{'seconds':value['seconds']-before['stages'].get(key,{}).get('seconds',0.),
+                         'calls':value['calls']-before['stages'].get(key,{}).get('calls',0)}
+                    for key,value in profile['stages'].items()}
+            for key in ('model_loading','sam_model_loading','sam_inference','object_classification',
+                        'semantic_classification','prototype_fitting','silhouette_verification'):
+                stages.setdefault(key,{'seconds':0.,'calls':0})
+            counts={key:value-before.get('counters',{}).get(key,0) for key,value in profile.get('counters',{}).items()}
+            jsave(os.path.join(c['work_root'],n,'environment_profile.json'),{'stages':stages,'counters':counts,
+                  'total_seconds':time.perf_counter()-started,'scope':'clip worker; shared loading charged once; nested timings are not additive'})
+            written.add(n)
     print("done %d clip(s)%s" % (len(names) - len(bad), (", failed: " + ", ".join(bad)) if bad else ""))
     if bad:
         sys.exit(1)
@@ -1475,12 +1549,13 @@ def lens_fov(work):
 
 def sample_set_frames(data, start, end, c, first_only=False, pose=None, picture=None):
     """Keep the usual views and add views when camera position, rotation or zoom changes."""
-    if first_only or end - start < 24:
+    if first_only or end==start:
         return [start]
-    selected = {start, (start + end) // 2}
+    limit = max(2, int(c.get('set_max_frames',5)))
+    selected = {start,end}
+    if limit>=3:selected.add((start+end)//2)
     if not c.get("set_adaptive_frames", True):
         return sorted(selected)
-    limit = max(2, int(c.get("set_max_frames", 5)))
     candidates = np.unique(np.linspace(start, end, min(33, end - start + 1), dtype=int))
     poses = {int(f): cam_mats(data["cam"][f]) for f in set(candidates) | selected}
     zoom = data.get("zoom") or [1.0] * (end + 1)
@@ -1520,6 +1595,55 @@ def sample_set_frames(data, start, end, c, first_only=False, pose=None, picture=
             break
         selected.add(frame)
     return sorted(selected)
+
+
+@stage('prototype_observation_matching')
+def additional_observations(objects,shot,data,ci,pose,models,shared,frames):
+    """Independently segment the same annotated static object in other calibrated views."""
+    from sam3_scene import prefetch
+    wanted=sorted(set([shot['frames'][0],sum(shot['frames'])//2,shot['frames'][1]]))
+    dx=200.*(shot['shot']-1);requests=[];jobs=[];images={}
+    candidates=[o for o in objects if o.get('_observations')]
+    missing=[f for f in wanted if f not in frames]
+    frames.update(read_frames_at(ci['video'],missing))
+    for f in wanted:
+        if f not in frames:continue
+        picture=frames[f][ci['y0']:ci['y0']+ci['Hpic']];k=min(1.,1024./picture.shape[1])
+        if k<1:picture=cv2.resize(picture,(round(picture.shape[1]*k),round(picture.shape[0]*k)),interpolation=cv2.INTER_AREA)
+        rgb=cv2.cvtColor(picture,cv2.COLOR_BGR2RGB);images[f]=(rgb,k)
+        for o in candidates:
+            if any(v['frame']==f for v in o['_observations']):continue
+            source=o['_observations'][0]
+            box=object_fit.projected_box(o,data,f,dx)
+            if source['frame'] in frames:
+                first=frames[source['frame']][ci['y0']:ci['y0']+ci['Hpic']]
+                moved=object_fit.flow_mask(source,first,picture)
+                ys,xs=np.nonzero(moved)
+                if len(xs)>=16:
+                    ratio=ci['W']/source['shape'][1]
+                    box=[max(0,(xs.min()-2)*ratio),max(0,(ys.min()-2)*ratio),
+                         min(ci['W']-1,(xs.max()+2)*ratio),min(ci['Hpic']-1,(ys.max()+2)*ratio)]
+            if box is None:continue
+            prompt=[int(round(v*k)) for v in box]
+            requests.append({'rgb':rgb,'automatic':False,'boxes':[prompt]});jobs.append((o,f,prompt))
+    prefetch(requests,models.config,models.scene_cache,models._release_scene_gpu)
+    measured={}
+    for o,f,prompt in jobs:
+        if f not in measured:
+            lens=data['lens']*float((data.get('zoom') or [1.]*data['frames'])[f])
+            fov=2*math.degrees(math.atan(float(data.get('sensor',36.))/(2*lens)))
+            fr=analyse(models,frames[f][ci['y0']:ci['y0']+ci['Hpic']],f,pose,ci,fov,shared=shared.get(f))
+            R,C=cam_mats(data['cam'][f]);C=C-[dx,0,0]
+            scale=1. if fr.shared_metric else (shot.get('ground',{}).get('sam3d_body') or {}).get('meters_per_unit',1.)
+            to_world(fr,R@D,C,float(scale));measured[f]=fr
+        fr=measured[f];mask=models.sam_box_mask(fr.rgb,prompt)
+        region_mask=np.zeros((fr.H,fr.W),bool);x0,y0,x1,y1=prompt;region_mask[y0:y1+1,x0:x1+1]=True
+        mask &=region_mask
+        source=o['_observations'][0]
+        observation=object_fit.observation(fr,mask,source['partial'],source.get('parts'))
+        if observation and abs(observation['depth']/source['depth']-1)<.5:
+            o['_observations'].append(observation)
+        else:o.setdefault('_observation_failures',[]).append(f)
 
 
 def run_annotations(name, models, c):
@@ -1576,7 +1700,14 @@ def run_annotations(name, models, c):
             R,C=cam_mats(data['cam'][f]);C=C-np.array([dx,0.,0.])
             scale=1. if fr.shared_metric else (shot.get('ground',{}).get('sam3d_body') or {}).get('meters_per_unit',1.)
             to_world(fr,R@D,C,float(scale))
-            new+=user_objects(annotations,tag,fr,C,f,first=len(new),indoor=True,fit=False,models=models)
+            if f in shared:
+                evidence=shared[f]
+                fr.sem=cv2.resize(evidence['labels'].astype(np.uint8),(fr.W,fr.H),interpolation=cv2.INTER_NEAREST)
+                fr.segm=SimpleNamespace(names=list(evidence['names']))
+            indoor,room_evidence=object_fit.room(fr)
+            scene['room_evidence']=room_evidence
+            new+=user_objects(annotations,tag,fr,C,f,first=len(new),indoor=indoor,fit=False,models=models)
+        additional_observations(new,shot,data,ci,pose,models,shared,frames)
         deleted=[o for sh in annotations.get('shots',{}).values() for o in sh.get('dropped',[])]
         keep=[o for o in keep if not any((o.get('_src') or {}).get('frame')==d.get('frame') and
               px_iou((o.get('_src') or {}).get('px',[0,0,0,0]),d['bbox'])>.5 for d in deleted)]
@@ -1586,7 +1717,9 @@ def run_annotations(name, models, c):
             by_level(new,people_points(data,range(shot['frames'][0],shot['frames'][1]+1,3),dx))
         for o in new:
             for key in ('_level','_C','_reach','_az'):o.pop(key,None)
+            object_fit.fit(o)
         scene['objects']=keep+new
+        object_fit.audit_objects(scene['objects'],work,'_s%d'%sid if len(shots)>1 else '')
         if len(shots)==1:env=scene
         else:env.setdefault('shots',{})[str(sid)]=scene
     env['annotation_build']={'frames':sorted(frames),'objects':sum(len(sh.get('objects',[])) for sh in annotations.get('shots',{}).values())}
@@ -1793,7 +1926,8 @@ def run_clip(name, models, a, c):
                 if indoor is None:                               # indoor / outdoor: sky and far depth
                     skyf = 1.0 - fr.valid[~fr.bars].mean()      # the bars are not sky
                     farq = np.percentile(fr.rng[fr.valid], 90) if fr.valid.any() else 0
-                    indoor = bool(skyf < 0.02 and farq < 18)
+                    indoor,room_evidence = object_fit.room(fr)
+                    rep['room_evidence']=room_evidence
                     rep["indoor"] = indoor; rep["sky_frac"] = round(float(skyf), 3)
                 regs = []
                 for i in range(fr.n_masks):
@@ -1883,7 +2017,11 @@ def run_clip(name, models, a, c):
                     continue
                 if o.get("_terrain"):
                     terr.append(o["P"]); continue
-                if f != a0 and R["cls"] in ("wall", "building"):  # the same wall seen again after a pan: one longer wall
+                linked=object_fit.match(objs,o,{f:fr.img for f,fr in frs.items()})
+                if linked is not None:
+                    object_fit.link(linked,o)
+                    continue
+                if not o.get('_mask_patch') and f != a0 and R["cls"] in ("wall", "building"):
                     merged = False
                     for qi, q in enumerate(objs):
                         Rq = q.get("_R")
@@ -1908,7 +2046,7 @@ def run_clip(name, models, a, c):
                         break
                     if merged:
                         continue
-                dup = [q for q in objs if f != a0 and overlaps(o, q) > 0.35 and
+                dup = [q for q in objs if not o.get('_observations') and f != a0 and overlaps(o, q) > 0.35 and
                        GROUP.get(o["_src"]["cls"], o["_src"]["cls"]) == GROUP.get(q["_src"]["cls"], q["_src"]["cls"])]
                 if dup:
                     wide = R["cls"] in ("wall", "building") and R["area"] >= 0.15 and R["area"] > 2 * sum(q["_src"]["area"] for q in dup)
@@ -1925,7 +2063,7 @@ def run_clip(name, models, a, c):
         objs.sort(key=lambda o: -o["_src"]["area"])
         keep = []
         for o in objs:
-            if any(overlaps(o, q) > 0.8 and o["_src"]["area"] < 0.3 * q["_src"]["area"] and q.get("type") != "patch" for q in keep):
+            if not o.get('_observations') and any(overlaps(o, q) > 0.8 and o["_src"]["area"] < 0.3 * q["_src"]["area"] and q.get("type") != "patch" for q in keep):
                 continue
             keep.append(o)
         keep, rep["dropped_on_people"] = off_people(keep, data, want[sid], dx)
@@ -1958,6 +2096,8 @@ def run_clip(name, models, a, c):
             o.pop("_R", None)
         for i, o in enumerate(keep):
             o["name"] = "%s_%d" % (o["_src"]["cls"], i)
+            object_fit.fit(o)
+        object_fit.audit_objects(keep,work,'_s%d'%sid if len(shots)>1 else '')
         ground = {"size": 30 if indoor else 300, "colour": "ground"}
         if slope:
             ground.update(slope_deg=slope["slope_deg"], slope_dir_deg=slope["slope_dir_deg"], origin=slope["origin"])

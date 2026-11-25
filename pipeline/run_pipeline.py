@@ -905,7 +905,7 @@ def set_inputs(work, drawn):
         with open(path, "rb") as source:
             for block in iter(lambda: source.read(1024*1024), b""):
                 evidence.update(block)
-    return {"geometry_version": 4, "lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
+    return {"geometry_version": 5, "lens": d.get("lens"), "frames": d.get("frames"), "cam": [[round(float(v), 3) for v in cm] for cm in d.get("cam", [])],
             "zoom": [round(float(z), 3) for z in d.get("zoom") or []], "env_ai": ea, "metric_evidence": evidence.hexdigest()}
 
 
@@ -1017,6 +1017,11 @@ def blender_render(c, work, dp, N, extra=("render",)):
     be = blender_exe(c)
     if not be:
         raise RuntimeError("Blender not found - set the Blender path in Settings (config.json)")
+    render_data=jload(dp)
+    expected={'work_dir':work,'submit_dir':os.path.join(c['submit_root'],render_data['name'])}
+    for key,path in expected.items():
+        if os.path.normcase(os.path.abspath(render_data.get(key,'')))!=os.path.normcase(os.path.abspath(path)):
+            raise RuntimeError('Scene %s does not match this render workspace; refresh its output paths before rendering.'%key)
     try:                                                   # every video follows the colour card (docs/COLOUR_CARD.md)
         import colour_card
         d_ = jload(dp); colour_card.apply(d_, log=log); jsave(dp, d_)
