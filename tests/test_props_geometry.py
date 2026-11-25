@@ -255,6 +255,9 @@ class DependencyTests(unittest.TestCase):
     def test_legacy_migration_records_old_review_before_edit(self):
         with tempfile.TemporaryDirectory() as tmp:
             video,work,marks,out,rv=self.setup_case(tmp)
+            data=jload(os.path.join(work,'scene_data.json'))
+            for ch in data['chars'].values(): ch['body_constraints']={'version':2}
+            jsave(os.path.join(work,'scene_data.json'),data)
             DEP.adopt_existing(video,{},work,marks,out)
             state=jload(os.path.join(work,'build_state.json'))
             self.assertIsNone(state['environment'])

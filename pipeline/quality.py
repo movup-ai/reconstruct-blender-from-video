@@ -181,6 +181,45 @@ def measure(data, pose, y0):
     return {"people": people, "flags": flags, "ok": not flags, "limits": LIMITS}
 
 
+def alignment_audit(data, pose, y0=0):
+    """Delivery gate for gross source/rig misalignment, independent of foot or motion guesses."""
+    from build_env import Cam
+    from rig import Rig, JOINTS
+    cam=Cam(data); tracks={p['id']:p for p in (pose or {}).get('people',[])}
+    rows=[]
+    for name,ch in data.get('chars',{}).items():
+        track=tracks.get(ch.get('track_id'))
+        if track is None: continue
+        rig=Rig(ch['height'],ch.get('style','sample')); errors=[]; bad=0; missing=0
+        for f,keys in track.get('frames',{}).items():
+            f=int(f)
+            if f>=data['frames']: continue
+            k=np.asarray(keys,float); sure=k[:,2]>.5
+            if sure.sum()<4: continue
+            if f>=len(ch['root']) or not ch.get('visible',[True]*data['frames'])[f]:
+                missing+=1; bad+=1; errors.append(float('inf')); continue
+            r=ch['root'][f]
+            points=rig.coco_points(rig.fk(r[:3],r[3],{j:ch['rot'][j][f] for j in JOINTS},ch['pelvis_z'][f]))
+            uv,z=cam.project(points,f)
+            error=float(np.median(np.linalg.norm(uv[sure]-(k[sure,:2]-[0,y0]),axis=1)))
+            span=max(40.,float(np.ptp(k[k[:,2]>.3,1])))
+            bad+=int(not np.isfinite(error) or (z[sure]<=.05).any() or error>max(32.,.15*span))
+            errors.append(error)
+        if len(errors)<4: continue
+        failed=bad/len(errors)>.3
+        finite=[e for e in errors if np.isfinite(e)]
+        rows.append({'char':name,'track':ch['track_id'],'checked_frames':len(errors),
+                     'bad_frames':bad,'missing_frames':missing,'median_error_px':float(np.median(finite)) if finite else None,
+                     'passed':not failed})
+    return {'passed':all(r['passed'] for r in rows),'people':rows,'checked':bool(rows)}
+
+
+def require_alignment(result):
+    failed=[r['char'] for r in result['people'] if not r['passed']]
+    if failed:
+        raise RuntimeError('Human alignment failed for %s. Re-check people/camera placement before rendering; see human_alignment.json.' % ', '.join(failed))
+
+
 def show(q, log=print):
     for r in q["people"]:
         log("    %-10s track %-3s %4d frames  fit %s%%  jumps %s /100  feet seen %s  foot gap %s m  pose change %s" % (

@@ -418,6 +418,7 @@ def process(data, work, c, hints=None, repair=False):
             hint = (hints.get("people") or {}).get(str(ch.get("track_id")), {})
             # Explicit choices and mounted people are never superseded by inferred support.
             if any(k in hint for k in ("metric_height", "metric_scale", "support_object", "mount", "keep_height")): continue
+            if ch.get('body_constraints',{}).get('unanchored'): continue
             factor = support_scale(data, ch)
             if factor is None: continue
             trial = dict(data, chars=dict(data["chars"]))

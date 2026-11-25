@@ -327,7 +327,7 @@ def p3_target(lift, f, k, world):
     d = X[i][_P3B] - X[i][_P3A]
     d = d / np.maximum(np.linalg.norm(d, axis=-1, keepdims=True), 1e-9)
     c = np.minimum(cf[i][_P3A], cf[i][_P3B])
-    return d, 0.2 + 0.8 * np.clip(c, 0, 1)
+    return d, np.clip(c, 0, 1)
 
 def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=None, p3=None):
     """hint (hints.json, written by whoever looked at the clip) fixes what the picture cannot show:
@@ -346,6 +346,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
     Hints take priority over body constraints: bones turned by keyed / held joints, legs of seated / hidden people, the hip and
     shoulder lines when a yaw is set, and bones of untrusted marks (use_kps / ignore_kps) get no 3D prior."""
     hint = hint or {}
+    unanchored = bool(hint.get('_body_unanchored'))
     legs = hint.get("legs", "auto")
     # legs / leg_pose may change during the shot: [[first, last, "standing" | "seated" | "hidden"], ...]
     # (frames outside every range: the picture decides, like "auto" without the cut-off check)
@@ -429,6 +430,10 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         return rig.J[0][2][2] + fz_at(f)
     pz_t = pz_target(fs[0]) if fs else rig.J[0][2][2] + fz_at(0)
     hi[3] = max([hi[3]] + [pz_target(f_) + 0.1 for f_ in fs])
+    if unanchored:
+        targets = np.asarray(hint['_body_start'],float)[:,3]
+        lo[3] = min(lo[3],float(targets.min())-height)
+        hi[3] = max(hi[3],float(targets.max())+height)
     RIDE = {("hip_L", 0): 50.0, ("hip_R", 0): 50.0, ("hip_L", 1): 24.0, ("hip_R", 1): -24.0, ("knee_L", 0): -78.0, ("knee_R", 0): -78.0}
     def leg_targets(f):
         """default hip / knee angles of seated (or riding) legs at frame f"""
@@ -566,7 +571,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             st = np.r_[0.12 * dt, 0.12 * dt, 12.0 * dt, 0.05 * dt, np.full(len(ANG), 18.0 * dt)]
         p3t = p3_frame(f, k, kt, yh); Rcw = world.R_cw(f)
         contacts = []
-        if qprev is not None and dt <= 4 and hint.get("foot_contact", True) and not lying and not bent and lg == "free":
+        if not unanchored and qprev is not None and dt <= 4 and hint.get("foot_contact", True) and not lying and not bent and lg == "free":
             previous = fk_b(rig, qprev[None])
             for sd, joint in (("L", 15), ("R", 16)):
                 if any(ANG[index][0] in ("hip_" + sd, "knee_" + sd, "ankle_" + sd) for index, _ in kt):
@@ -597,7 +602,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
                 za, zb = W["ankle_L"][1][:, 2], W["ankle_R"][1][:, 2]
                 low = np.minimum(np.minimum(za, zb), np.minimum(W["head"][1][:, 2], W["chest"][1][:, 2]))
                 r += [col((Q[:, 3] - lie_z) / 0.04), col(np.minimum(0.0, low - 0.05 * rig.s - fz_at(f)) / 0.02)]
-            else:
+            elif not unanchored:
                 za, zb = W["ankle_L"][1][:, 2], W["ankle_R"][1][:, 2]
                 r += [col((np.minimum(za, zb) - rig.sole - fz_at(f)) / 0.03), col(np.minimum(0.0, np.maximum(za, zb) - rig.sole - fz_at(f)) / 0.02),
                       col((Q[:, 3] - rig.J[0][2][2] - fz_at(f)) / (0.6 if bent else 0.25))]
@@ -609,7 +614,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             if D is not None:
                 r.append(col((np.hypot(Q[:, 0] - Cf[0], Q[:, 1] - Cf[1]) - D) / 0.03))
             if hip_target is not None:
-                r.append(((W['hip_L'][1]+W['hip_R'][1])/2-hip_target)/.15)
+                r.append(((W['hip_L'][1]+W['hip_R'][1])/2-hip_target)/float(hint.get('_body_hip_sigma',.15)))
             if head_px:
                 hc = W["head"][1] + W["head"][0][:, :, 2] * (0.145 * rig.s)
                 huv, _ = project_b(world, hc, f)
@@ -664,6 +669,12 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         lt = leg_targets(f)
         for i, (j, a, l, h, _) in enumerate(ANG):
             q[NB + i] = np.clip(lt[i], l, h)
+        if hint.get('_body_start') and not any(k in hint for k in ('distance','mount','floor_z')):
+            start=np.asarray(hint['_body_start'],float)
+            target=np.array([np.interp(f,start[:,0],start[:,i]) for i in (1,2,3)])
+            q[:2]=target[:2]
+            if unanchored: q[3]=target[2]-float(np.mean([o[2] for j,p,o in rig.J if j in ('hip_L','hip_R')]))
+            return q
         D = _key(hint.get("distance"), f)
         if D is not None:                                   # along the ray through the body, D metres away on the floor
             body = [i for i in (11, 12, 5, 6) if k[i, 2] > 0.3] or list(range(17))
@@ -739,7 +750,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
                     if s2.cost < 0.9 * s.cost:
                         s = s2
             rms = np.sqrt(np.mean(s.fun[:34] ** 2))
-            if rms > 2.0 and yaw_hint(f) is None:            # lost (turned around fast / left-right swap): retry other headings
+            if rms > 2.0 and yaw_hint(f) is None and lift is None:
                                                               # (not when the heading is set by hand: no front/back flips)
                 for dy in (90, 180, 270):
                     q = qprev.copy(); q[2] += dy
@@ -755,7 +766,7 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             log("      frame %d  error %.1f px" % (f, err[f]))
     return rig, Q, err
 
-def assemble(rig, Q, N, smooth, span=None):
+def assemble(rig, Q, N, smooth, span=None, confidence=None, fps=30.):
     """every frame: interpolate the fitted frames, smooth, convert to the Blender keys"""
     fk_ = sorted(Q)
     A = np.array([Q[f] for f in fk_])
@@ -766,6 +777,9 @@ def assemble(rig, Q, N, smooth, span=None):
     if smooth > 0 and last - first > 3:
         seg = slice(first, last + 1)
         B[seg] = gaussian_filter1d(B[seg], smooth, axis=0, mode="nearest")
+    if confidence is not None and last-first>3:
+        from body_constraints import stabilize_arms
+        B[first:last+1]=stabilize_arms(B[first:last+1],confidence[first:last+1],ANG,fps)
     lo, hi = bounds(rig)
     lo[3] = min(lo[3], 0.04 * rig.s, float(B[:, 3].min()) - 1e-3)   # kneeling / lying people sit lower
     for i_, (lim_lo, lim_hi) in zip(PELVIS_IDX, ((-110.0, 110.0), (-60.0, 60.0))):
@@ -808,7 +822,7 @@ def cached_fit_track(world, y0, fs, K, height, c, style, hint, lift, p3):
     path = None
     if directory:
         frames = list(range(max(fs)+1))
-        key = digest({'version': 1, 'frames': fs, 'keypoints': K, 'y0': y0, 'height': height,
+        key = digest({'version': 2, 'frames': fs, 'keypoints': K, 'y0': y0, 'height': height,
             'style': style, 'hint': hint, 'lift': lift, 'p3': p3, 'step': c.get('fit_step', 2),
             'camera': [world.cam.K(), [world.C_at(f) for f in frames],
                        [world.R_cw(f) for f in frames], [world.f_at(f) for f in frames]]})
@@ -850,7 +864,7 @@ def fit_all(world, y0, people, N, c):
         order.sort(key=lambda p: rank.get(rv.get(str(p), {}).get("role", "extra"), 4))
     n_extra = 0
     todo = order[: c["max_people"] if not rv else len(order)]
-    lifts = {}                                               # Metric body directions; per-person pose3d hints still control their fitting weight.
+    lifts, body_info = {}, {}
     body = c.get('_sam3d_body')
     if body is not None:
         import sam3d_body
@@ -858,9 +872,10 @@ def fit_all(world, y0, people, N, c):
             prefix = 'p%s'%pid
             if prefix+'_placed' not in body: continue
             fr,xyz = body[prefix+'_f'],body[prefix+'_placed']
-            dense = np.arange(int(fr[0]),int(fr[-1])+1)
-            interpolated = np.stack([np.interp(dense,fr,xyz[:,j,axis]) for j in range(17) for axis in range(3)],axis=1).reshape(-1,17,3)
-            lifts[pid] = (dense,sam3d_body.h36m(interpolated),np.full((len(dense),17),.8),'camera')
+            import body_constraints
+            dense,interpolated,confidence,info=body_constraints.prepare(world,y0,*people[pid],fr,xyz,c.get('_fps',30.))
+            body_info[pid]=info
+            lifts[pid]=(dense,sam3d_body.h36m(interpolated),body_constraints.confidence_h36m(confidence),'camera')
     p3 = {"weight": float(c.get("pose3d_weight", 1.0)), "sigma": float(c.get("pose3d_sigma", 0.2))}
     for n, pid in enumerate(todo):
         fs, K = people[pid]
@@ -868,7 +883,9 @@ def fit_all(world, y0, people, N, c):
             continue
         r = rv.get(str(pid), {})
         model_height = sam3d_body.height_of(body['p%s_placed'%pid]) if body is not None and 'p%s_placed'%pid in body else None
-        height = float(r.get("height") or model_height or c["person_height"])
+        info=body_info.get(pid,{})
+        trustworthy_height=not (info.get('full_body_fraction',1)<.5 and info.get('placement_confidence',1)<.5)
+        height = float(r.get("height") or (model_height if trustworthy_height else None) or c["person_height"])
         log("    person %s: %d frames%s" % (pid, len(fs), ("  role " + r["role"]) if r.get("role") else ""))
         style = (c.get("_hints") or {}).get("character_style") or c.get("character_style", "sample")
         hint = {"foot_contact": c.get("foot_contact", True),
@@ -882,12 +899,21 @@ def fit_all(world, y0, people, N, c):
                 for f,p in zip(body[prefix+'_f'],hip):
                     f = int(f); world_point = world.C_at(f)+world.R_cw(f).T @ p
                     targets.append([f,*world_point.tolist()])
-                hint['_body_hip'] = targets
-                hint['distance'] = [[t[0],float(np.linalg.norm(np.asarray(t[1:3])-world.C_at(int(t[0]))[:2]))] for t in targets]
-            if not any(k in hint for k in ('legs','leg_pose','mount')): hint['legs'] = 'free'
+                hint['_body_start']=targets
+                if info.get('placement_confidence',0)>.35:
+                    hint['_body_hip']=targets
+                    hint['_body_hip_sigma']=.15/max(.35,info['placement_confidence'])
+                if info.get('full_body_fraction',1)<.5 and not any(k in hint for k in ('legs','leg_pose','pelvis_z','seat_height')):
+                    hint['_body_unanchored']=True
+                    hint['legs']='free'
         rig, Q, err = cached_fit_track(world, y0, fs, K, height, c, style, hint, lifts.get(pid), p3)
         sm = (hint or {}).get("smooth", 1.0 if (hint or {}).get("follow_dots") else c.get("smooth_frames", 1.5))
-        keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)))
+        arm_confidence=None
+        if pid in lifts and not any(hint.get(k) for k in ('pose','keys','keys_more','ignore_kps')):
+            arm_confidence=np.stack([np.interp(np.arange(N),fs,np.asarray(K)[:,j,2]) for j in range(17)],1)
+            arm_confidence[~np.isin(np.arange(N),fs)]=0
+        keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)),
+                            confidence=arm_confidence,fps=c.get('_fps',30.))
         if c.get('_persistent_tracks'):
             observed = set(fs)
             keys['visible'] = [f in observed for f in range(N)]
@@ -912,6 +938,8 @@ def fit_all(world, y0, people, N, c):
         kind = "P%d" % (n + 1)
         keys.update(label=label, colour=colour, height=height, track_id=pid, style=style)
         keys['human_backend'] = 'sam3d_body' if pid in lifts else '2d'
+        keys['body_constraints']=dict(info,version=2,unanchored=bool(hint.get('_body_unanchored')),
+                                      height_source='review' if r.get('height') else ('body' if trustworthy_height and model_height else 'configured prior'))
         chars[kind] = keys
         e = np.array(list(err.values()))
         report.append({"person": kind, "track": pid, "colour": colour, "frames": len(fs),

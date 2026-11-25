@@ -760,7 +760,7 @@ def main():
                 ch["root_z_fit"] = [r[2] for r in ch["root"]]
             fr = list(range(a0, min(a1 + 1, len(ch["root"]))))
             h_ = ((hints.get("people") or {}).get(str(ch.get("track_id"))) or {})
-            keep = h_.get("keep_height", not follow)          # hint / set: keep the fit's own height, no ground following
+            keep = h_.get("keep_height", not follow or ch.get('body_constraints',{}).get('unanchored',False))
             zs, zfit = [], []
             for f in fr:
                 x, y, zl = ch["root"][f][0], ch["root"][f][1], ch["root_z_fit"][f]

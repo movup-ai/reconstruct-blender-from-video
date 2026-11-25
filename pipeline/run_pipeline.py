@@ -322,6 +322,7 @@ def carry_over(work, name, c, chars, N, sky):
         return sky
     kept = []
     for kind, ch in chars.items():
+        if ch.get('body_constraints',{}).get('unanchored'): continue
         pc = (prev.get("chars") or {}).get(kind)
         if not pc or pc.get("track_id") != ch.get("track_id") or len(pc.get("root", [])) != N:
             continue
@@ -700,7 +701,16 @@ def run_clip(video, c, args):
             (len(verification["unresolved"]), len(verification["repairs"])))
         # Re-anchor after any measured human placement correction.
         rep['held_objects'] = held_place(name, work, video, c)
+    final_data=jload(dp)
+    alignment=quality.alignment_audit(final_data,pose,y0)
+    jsave(os.path.join(work,'human_alignment.json'),alignment)
+    rep['human_alignment']=alignment
+    if not alignment['passed']:
+        warns.append('Human alignment failed: Re-check placement before Finish')
+        processed_inputs['fit']=None
+        jsave(os.path.join(work,'report.json'),dict(rep,status='needs_review'))
     if args.stage in ("blend", "all"):
+        quality.require_alignment(alignment)
         blender_render(c, work, dp, N)
     if args.stage == "all":
         rep.update(make_zip(name, video, work, c))
@@ -1044,6 +1054,12 @@ def render_only(name, video, work, c, args, t0):
     if not os.path.exists(hp):
         hp = os.path.join(output_dir(), name, "hints.json")
     hints = jload(hp) if os.path.exists(hp) else {}
+    pp=os.path.join(marks_dir(video,c),'pose.json')
+    if os.path.exists(pp):
+        source_pose=jload(pp)
+        alignment=quality.alignment_audit(data,source_pose,(source_pose.get('picture_area') or [0,0])[1])
+        jsave(os.path.join(work,'human_alignment.json'),alignment)
+        quality.require_alignment(alignment)
     if hints.get("plant_feet") or hints.get("pulldown_retime"):                # the fit stays in scene_data.json; the
         data.pop("feet_planted", None); data.pop("pulldown_retimed", None)      # render-time changes go to a copy
         jsave(dp, {k: v for k, v in data.items()})                              # (palette / paths for the checkers)
