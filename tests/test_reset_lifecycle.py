@@ -145,5 +145,106 @@ class ResetLifecycleTests(unittest.TestCase):
             self.assertTrue(self.runner.is_paused(self.ws.user))
         finally:self.runner.inflight.clear()
 
+    def test_pause_stops_active_work_then_resume_reuses_completed_cache(self):
+        import numpy as np
+        cl=self.ws.lib.clips[0];f=self.fill(cl)
+        checkpoint=Path(f['work'])/'checkpoint';done=self.root/'resumed-done'
+        valid=Path(f['work'])/'complete.npz';np.savez(valid,value=[1,2,3]);before=valid.read_bytes()
+        broken=Path(f['work'])/'incomplete.npz';broken.write_bytes(b'partial interrupted numpy output')
+        code="from pathlib import Path;import sys,time;p=Path(sys.argv[1]);\nif p.exists():Path(sys.argv[2]).write_text('reused checkpoint');sys.exit(0)\np.write_text('completed expensive stage');\nwhile True:time.sleep(.02)"
+        self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(checkpoint),str(done)]
+        jid=self.ws.enqueue(cl,'fit');self.start_worker()
+        self.wait_for(lambda:checkpoint.exists() and jid in self.runner.procs)
+        self.app.store.db.execute('UPDATE jobs SET started=? WHERE id=?',(time.time()-20,jid))
+        process=self.runner.procs[jid]
+        result=self.runner.interrupt(self.ws.user,pause=True)
+        self.assertTrue(result['resumable']);self.assertTrue(result['paused'])
+        self.assertIsNotNone(process.poll());self.runner.after.assert_not_called()
+        self.assertEqual(valid.read_bytes(),before);self.assertFalse(broken.exists())
+        self.assertTrue(checkpoint.exists());self.assertFalse(done.exists())
+        queued=self.app.store.latest_for(cl.id)
+        self.assertEqual(queued['state'],'queued');self.assertNotEqual(queued['id'],jid)
+        self.assertGreaterEqual(self.app.store.timing()[cl.id]['machine'],20)
+        self.runner.resume(self.ws.user)
+        self.wait_for(lambda:done.exists() and self.app.store.latest_for(cl.id)['state']=='done')
+        self.assertEqual(done.read_text(),'reused checkpoint')
+        self.assertEqual(self.app.store.latest_for(cl.id)['attempts'],1,'Pause does not consume a retry')
+        self.runner.after.assert_called_once()
+
+    def test_cancel_stops_process_without_deleting_completed_work_or_requeueing(self):
+        cl=self.ws.lib.clips[0];f=self.fill(cl);ready=self.root/'cancel-ready'
+        code="from pathlib import Path;import sys,time;Path(sys.argv[1]).write_text('ready');\nwhile True:time.sleep(.02)"
+        self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(ready)]
+        jid=self.ws.enqueue(cl,'fit');self.start_worker()
+        self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
+        process=self.runner.procs[jid]
+        result=self.runner.interrupt(self.ws.user)
+        self.assertTrue(result['paused']);self.assertFalse(result['resumable'])
+        self.assertIsNotNone(process.poll())
+        self.assertEqual(self.app.store.counts(self.ws.user).get('queued',0),0)
+        self.assertEqual(self.app.store.latest_for(cl.id)['state'],'stopped')
+        self.assertEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'cancelled')
+        self.assertTrue(Path(f['work'],'old.json').exists());self.assertTrue(Path(f['zip']).exists())
+        self.assertEqual(self.app.store.recover(),0,'Cancelled work must stay cancelled after restart')
+        self.runner.after.assert_not_called()
+
+    def test_pause_restarts_interrupted_stage_before_later_finish_on_same_clip(self):
+        cl=self.ws.lib.clips[0]
+        fit=self.ws.enqueue(cl,'fit');self.app.store.take({self.ws.user})
+        finish=self.app.store.enqueue(cl.id,'all',force=True,user=self.ws.user)
+        self.runner.interrupt(self.ws.user,pause=True)
+        resumed=self.app.store.take({self.ws.user})
+        self.assertEqual(resumed['stage'],'fit')
+        self.assertNotEqual(resumed['id'],fit)
+        self.assertIsNone(self.app.store.take({self.ws.user}))
+        self.app.store.finish(resumed['id'],True)
+        self.assertEqual(self.app.store.take({self.ws.user})['id'],finish)
+
+    def test_cancel_one_clip_does_not_cancel_other_waiting_work(self):
+        first,second=self.ws.lib.clips
+        self.ws.enqueue(first,'fit');self.ws.enqueue(second,'fit')
+        self.runner.resume(self.ws.user)
+        result=self.runner.interrupt(self.ws.user,clip=first.id)
+        self.assertFalse(result['paused'],'Other clips may continue')
+        self.assertEqual(self.app.store.latest_for(first.id)['state'],'stopped')
+        self.assertEqual(self.app.store.latest_for(second.id)['state'],'queued')
+        self.app.c['autopilot']='prepare'
+        with patch.object(self.runner.stop,'wait',side_effect=[False,True]):self.runner._autopilot()
+        self.assertEqual(self.app.store.latest_for(first.id)['state'],'stopped','Autopilot must not restart a cancelled clip')
+
+    def test_authenticated_api_pauses_resumes_and_cancels_a_live_job(self):
+        import urllib.request
+        import urllib.error
+        from agent.server import Server,make_handler
+        from agent.users import COOKIE
+        server=Server(('127.0.0.1',0),make_handler(self.app))
+        service=threading.Thread(target=server.serve_forever,daemon=True);service.start()
+        _,token=self.app.users.login('reset-tester')
+        base='http://127.0.0.1:%d'%server.server_address[1]
+        def post(path,authenticated=True):
+            headers={'Cookie':COOKIE+'='+token} if authenticated else {}
+            request=urllib.request.Request(base+path,data=b'{}',headers=headers,method='POST')
+            with urllib.request.urlopen(request,timeout=5) as response:return json.load(response)
+        cl=self.ws.lib.clips[0];f=self.fill(cl);ready=self.root/'api-ready'
+        code="from pathlib import Path;import sys,time;Path(sys.argv[1]).write_text('ready');\nwhile True:time.sleep(.02)"
+        self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(ready)]
+        jid=self.ws.enqueue(cl,'fit');self.start_worker()
+        try:
+            self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
+            process=self.runner.procs[jid]
+            with self.assertRaises(urllib.error.HTTPError) as denied:post('/api/cancel_session',False)
+            self.assertEqual(denied.exception.code,401);self.assertIsNone(process.poll())
+            self.assertTrue(post('/api/pause')['resumable'])
+            self.assertIsNotNone(process.poll());self.assertTrue(Path(f['work'],'old.json').exists())
+            next_id=self.app.store.latest_for(cl.id)['id']
+            post('/api/resume')
+            self.wait_for(lambda:next_id in self.runner.procs)
+            resumed=self.runner.procs[next_id]
+            self.assertGreater(post('/api/cancel_session')['cancelled'],0)
+            self.assertIsNotNone(resumed.poll())
+            self.assertEqual(self.app.store.latest_for(cl.id)['state'],'stopped')
+        finally:
+            server.shutdown();server.server_close();service.join(3)
+
 
 if __name__=='__main__':unittest.main()

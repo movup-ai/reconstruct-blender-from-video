@@ -111,15 +111,32 @@ class JobStore:
             return self.db.execute("DELETE FROM jobs WHERE clip=? AND (user=? OR user IS NULL) AND state!='running'",
                                    (clip, user)).rowcount
 
-    def cancel_for_reset(self, user, clips, all_user=False):
+    def cancel_for_reset(self, user, clips, all_user=False, return_jobs=False):
         """Cancel owned jobs without leaving them eligible for retry or recovery."""
         with self.lock:
-            rows=self.db.execute("SELECT id, clip, user FROM jobs WHERE state IN ('queued','running')").fetchall()
-            ids=[r['id'] for r in rows if (r['user']==user and (all_user or r['clip'] in clips)) or
-                 (r['user'] is None and r['clip'] in clips)]
+            rows=self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','running')").fetchall()
+            selected=[dict(r) for r in rows if (r['user']==user and (all_user or r['clip'] in clips)) or
+                      (r['user'] is None and r['clip'] in clips)]
+            ids=[r['id'] for r in selected]
             for jid in ids:
                 self.db.execute("UPDATE jobs SET state='cancelled',ended=? WHERE id=?",(time.time(),jid))
-            return ids
+            return selected if return_jobs else ids
+
+    def restore_paused(self, pending):
+        """Keep interrupted attempt time, and run that stage before later work on its clip."""
+        with self.lock:
+            for job in pending:
+                if job['state']=='queued':
+                    self.db.execute("UPDATE jobs SET state='queued',ended=NULL WHERE id=?",(job['id'],))
+                else:
+                    self.db.execute("""INSERT INTO jobs(clip,stage,state,priority,attempts,created,user)
+                                       VALUES (?,?,'queued',-1,?,?,?)""",
+                                    (job['clip'],job['stage'],max(0,job['attempts']-1),time.time(),job['user']))
+
+    def mark_stopped(self, pending):
+        with self.lock:
+            for job in pending:
+                self.db.execute("UPDATE jobs SET state='stopped',error='Cancelled by user' WHERE id=?",(job['id'],))
 
     def clear_user(self, user):
         with self.lock:
@@ -255,7 +272,7 @@ class Runner:
         self.wake()
 
     @contextmanager
-    def reset_jobs(self, user, clips, all_user=False, timeout=60.):
+    def reset_jobs(self, user, clips, all_user=False, timeout=60., mode='reset'):
         """Quiesce a member before deleting files; workers must finish cleanup first."""
         clips=set(clips)
         with self.cond:
@@ -264,9 +281,12 @@ class Runner:
             self.resetting.add(user)
             was_active=user in self.active
             self.active.discard(user)
-            ids=set(self.store.cancel_for_reset(user,clips,all_user))
+            pending=self.store.cancel_for_reset(user,clips,all_user,return_jobs=True)
+            ids={job['id'] for job in pending}
             ids.update(jid for jid,job in self.inflight.items() if job.get('user')==user and
                        (all_user or job['clip'] in clips))
+            known={job['id'] for job in pending}
+            pending.extend(dict(self.inflight[jid]) for jid in ids-known if jid in self.inflight and jid in self.cancelled)
             self.cancelled.update(ids)
             processes=[self.procs[jid] for jid in ids if jid in self.procs]
         try:
@@ -277,8 +297,12 @@ class Runner:
                 while any(jid in self.inflight for jid in ids):
                     remaining=deadline-time.monotonic()
                     if remaining<=0:
-                        raise TimeoutError('A worker did not stop; generated files were kept. Retry Reset after it exits.')
+                        raise TimeoutError('A worker did not stop; generated files were kept. Try Cancel again or restart the app.')
                     self.cond.wait(min(remaining,.25))
+                if mode=='pause':self.store.restore_paused(pending)
+                elif mode=='cancel':self.store.mark_stopped(pending)
+            if mode in ('pause','cancel'):
+                self._discard_incomplete_caches(pending)
             yield len(ids)
         finally:
             with self.cond:
@@ -288,6 +312,39 @@ class Runner:
                 if was_active and not all_user:
                     self.active.add(user)
                 self.cond.notify_all()
+
+    def _discard_incomplete_caches(self, pending):
+        """An interrupted ZIP-based numpy write must not poison the next cached run."""
+        from pathlib import Path
+        import zipfile
+        from .clips import _inside
+        seen=set()
+        for job in pending:
+            if job['state']!='running':continue
+            ws=self.app.ws(job.get('user')) if job.get('user') else None
+            if ws is None:continue
+            cl=ws.lib.by_id.get(job['clip'])
+            if cl is None:continue
+            paths=folders(ws.c,cl)
+            for root in (paths['work'],paths['marks']):
+                for path in Path(root).rglob('*.npz'):
+                    if path in seen or not _inside(str(path),[root]):continue
+                    seen.add(path)
+                    try:
+                        with zipfile.ZipFile(path) as archive:archive.infolist()
+                    except zipfile.BadZipFile:
+                        try:path.unlink()
+                        except OSError:log.warning('Could not remove incomplete cache %s',path)
+                    except OSError:pass
+
+    def interrupt(self, user, clip=None, pause=False):
+        """Stop active process trees without deleting completed work or timing records."""
+        mode='pause' if pause else 'cancel'
+        with self.reset_jobs(user,[] if clip is None else [clip],all_user=clip is None,mode=mode) as stopped:
+            result={'ok':True,'interrupted':stopped,'cancelled':0 if pause else stopped,'resumable':pause,
+                    'note':'Paused. Resume restarts the interrupted stage using completed caches.' if pause else 'Processing cancelled; completed files are kept.'}
+        result['paused']=self.is_paused(user)
+        return result
 
     # ---------------------------------------------------------------- workers
     def _worker(self):
@@ -438,7 +495,7 @@ class Runner:
                         c = ws.c
                         for cl in ws.lib.clips:
                             j = latest.get(cl.id)
-                            if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
+                            if j and j['state'] in ('queued','running','failed','stopped'):
                                 continue                           # busy, or failed for good: leave for a person
                             st = status(c, cl, j)
                             if st["held"]:

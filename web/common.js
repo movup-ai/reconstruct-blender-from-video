@@ -25,6 +25,21 @@ async function post(url, body) {
   return d;
 }
 let toastT = null;
+let processingBusy = false;
+async function processingControl(url, message) {
+  if (processingBusy) return null;
+  processingBusy = true;
+  document.querySelectorAll('[data-processing-control]').forEach(button => button.disabled = true);
+  toast(message);
+  try {
+    const result = await post(url);
+    toast(result.note || 'Processing controls updated.');
+    return result;
+  } finally {
+    processingBusy = false;
+    document.querySelectorAll('[data-processing-control]').forEach(button => button.disabled = false);
+  }
+}
 function toast(msg, bad) {
   const t = $('toast'); if (!t) return;
   t.textContent = msg; t.className = 'toast show' + (bad ? ' bad' : '');
@@ -49,6 +64,7 @@ function computerSeconds(t) {
 function tookText(t, st) {
   if (!t) return null;
   const L = t.last, what = L && L.stage === 'all' ? 'finishing' : 'preparing';
+  if (L && L.state === 'stopped') return { text: 'cancelled after ' + fmtDur(L.ran), tip: 'Processing cancelled. Completed files are kept.' };
   if (L && L.state === 'running') return { text: `${what} ${fmtDur(L.ran)}`, tip: `This job has been ${what} for ${fmtDur(L.ran)}.` };
   if (t.done && (!st || st.done)) return { text: 'done in ' + fmtDur(computerSeconds(t)), fin: true,
     tip: `Total recorded processing time since reset: ${fmtDur(computerSeconds(t))}. Queue waits and your review time are excluded.` };

@@ -119,8 +119,12 @@ Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.
    that is not from the zip is left alone (a note appears at the top of the page). The finished package is the usual
    v2.1 zip in `SUBMIT\`.
 2. **Start.** Nothing runs until you press **Start** on the Clips page, also after restarting the app (jobs left from
-   last time wait in the queue). Start prepares every video not prepared yet; **Pause** lets the running job finish
-   and starts nothing new. The Clips page shows each video's step and progress.
+   last time wait in the queue). Start prepares every video not prepared yet; **Pause processing** stops active jobs
+   and preserves completed caches. **Resume processing** restarts the interrupted stage from those caches; it does
+   not restore an exact in-memory frame. **Cancel pipeline** stops your running and queued jobs without retrying
+   them or deleting completed work. Each running clip also has its own **Cancel** action in Cards/Table and on
+   the detail page. Use **Reset all** when you also want to erase generated work and recorded times.
+   The Clips page shows each video's step and progress.
 3. **Review** a clip marked *ready for review*: **1 Who is who** (cards saying *Not a person?* look like a statue, a
    picture or a false detection; one click, then *Re-check*), **2 Joints** (the editor opens on the frames where the
    fitted person moved suddenly), **3 Objects**. Press **✓ Mark reviewed** (finish later) or **▶ Finish now**. Camera, set, held objects and the description

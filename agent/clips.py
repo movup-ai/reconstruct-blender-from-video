@@ -391,7 +391,7 @@ LABELS = {  # label -> group used by the start page
     "not prepared": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
     "waiting for AI": "busy", "ready for review": "ready", "reviewed": "conf", "auto-confirmed": "conf",
     "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail",
-    "waiting for background render": "busy", "rendering background": "busy", "taken out": "new"}
+    "waiting for background render": "busy", "rendering background": "busy", "taken out": "new", "cancelled":"new"}
 
 
 def status(c, cl, job=None):
@@ -420,6 +420,8 @@ def status(c, cl, job=None):
                  ('background','queued'):'waiting for background render', ('background','running'):'rendering background',
                  ("ai", "queued"): "waiting for AI", ("ai", "running"): "AI checking",
                  ("all", "queued"): "waiting to finish", ("all", "running"): "finishing"}[(stage, state)]
+    elif state == 'stopped':
+        label='cancelled'
     elif state == "failed" and stage != "ai":           # a failed AI suggestion does not block the clip
         label = "failed"
     elif s["done"]:

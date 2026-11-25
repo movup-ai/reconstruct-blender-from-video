@@ -1149,8 +1149,15 @@ def make_handler(app):
                 ws.lib.restore(path)
                 return self.send(200, {"ok": True, "clips": len(ws.lib.clips)})
             if parts == ["api", "pause"]:
-                app.runner.pause(ws.user)
-                return self.send(200, {"ok": True})
+                try:
+                    return self.send(200,app.runner.interrupt(ws.user,pause=True))
+                except TimeoutError as error:
+                    raise HttpError(409,str(error))
+            if parts == ['api','cancel_session']:
+                try:
+                    return self.send(200,app.runner.interrupt(ws.user))
+                except TimeoutError as error:
+                    raise HttpError(409,str(error))
             if parts == ["api", "resume"]:
                 app.runner.resume(ws.user)
                 return self.send(200, {"ok": True})
@@ -1259,7 +1266,10 @@ def make_handler(app):
                     ws.lib.remove(cl)
                     return self.send(200, {"ok": True, "removed": cl.name})
                 if action == "cancel":
-                    return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(cl.id)})
+                    try:
+                        return self.send(200,app.runner.interrupt(ws.user,clip=cl.id))
+                    except TimeoutError as error:
+                        raise HttpError(409,str(error))
                 if action == "hold":                                     # out of the waiting line (Take out on its card)
                     job = app.store.latest_for(cl.id)
                     if job and job["state"] == "running":

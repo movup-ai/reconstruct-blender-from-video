@@ -120,7 +120,8 @@
   <label class="small muted" style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> open the next clip after</label>
   <button id="confirm" title="Save and mark the clip reviewed. It is finished later with “Finish all reviewed” on the Clips page.">&#10003; Mark reviewed</button>
   <button id="finish" class="primary" title="Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip">&#9654; Finish now</button>
-  <button id="finishqueue" hidden>Pause queue</button>
+  <button id="finishqueue" data-processing-control hidden>Pause processing</button>
+  <button id="cancel-processing" class="dangerline" data-processing-control hidden>Cancel processing</button>
 </div></footer>
 <div class="toast" id="toast"></div>
 <div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
@@ -639,6 +640,8 @@ function banner() {
     b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${STAGE[j.stage]}). The queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>. You can review meanwhile.` :
       `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', background: 'Rendering annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
+  else if (j && j.state === 'stopped') { b.className = 'banner note';
+    b.textContent = 'Processing cancelled. Completed files and caches are kept. Re-check or Finish starts a new job.'; }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
   else if (!INFO.package && s.fit) { b.className = 'banner note';
@@ -648,17 +651,24 @@ function banner() {
   else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
   else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
   else b.className = 'banner';
-  if ($('unqueue')) $('unqueue').onclick = async e => { e.preventDefault(); await post(`/api/clip/${CID}/cancel`); toast('Removed from the queue'); refresh(); };
+  if ($('unqueue')) $('unqueue').onclick = async e => { e.preventDefault(); await processingControl(`/api/clip/${CID}/cancel`,'Cancelling this clip…'); refresh(); };
 }
 async function load(first) {
   INFO = await api('/api/clip/' + CID);
   const finishQueue = $('finishqueue');
-  finishQueue.hidden = INFO.job?.stage !== 'all' || !['queued', 'running'].includes(INFO.job.state);
-  finishQueue.textContent = INFO.paused ? 'Resume queue' : 'Pause queue';
-  finishQueue.title = INFO.paused ? 'Resume waiting jobs' : 'Pause the queue after the current jobs finish';
+  finishQueue.hidden = !['queued', 'running'].includes(INFO.job?.state);
+  const resume = INFO.paused && INFO.job?.state === 'queued';
+  finishQueue.textContent = resume ? 'Resume processing' : 'Pause processing';
+  finishQueue.disabled = processingBusy;
+  finishQueue.title = resume ? 'Restart the interrupted stage using completed caches' : 'Stop active processes and keep completed caches';
   finishQueue.onclick = async () => {
-    await post(INFO.paused ? '/api/resume' : '/api/pause');
+    await processingControl(resume ? '/api/resume' : '/api/pause','Updating active processing…');
     refresh();
+  };
+  $('cancel-processing').hidden = !['queued', 'running'].includes(INFO.job?.state);
+  $('cancel-processing').disabled = processingBusy;
+  $('cancel-processing').onclick = async () => {
+    await processingControl(`/api/clip/${CID}/cancel`,'Cancelling this clip’s active process…');refresh();
   };
   $('geometry-actions').textContent = (INFO.geometry_protection || []).slice(-12).map(a => `${a.object}: ${a.action || a.reason}`).join(' · ');
   document.title = INFO.clip.name + ' · Blender Agent';

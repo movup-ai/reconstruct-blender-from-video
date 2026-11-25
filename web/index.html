@@ -19,7 +19,7 @@
     <section class="fstep" id="st2">
       <div class="fh"><span class="num">1</span><b>Prepare</b></div>
       <p class="fdesc">Finds people, joints, lens, camera and set in every video. About 3–5 minutes each. Nothing runs until you press Start.</p>
-      <div class="actions"><button id="startbtn">Start</button></div>
+      <div class="actions"><button id="startbtn" data-processing-control>Start</button><button id="cancel-session" class="dangerline" data-processing-control hidden>Cancel pipeline</button></div>
       <div class="q" id="queue"></div>
       <div class="minor" id="minor2"></div>
     </section>
@@ -71,6 +71,7 @@ function stepCell(c, step, p) {
     return `<div class="pst run">running${ran != null ? ' ' + fmtDur(ran) : ''}</div>` + (p && p.progress != null ? progressBar(p.progress, p.step) : '');
   }
   if (mine && j.state === 'queued') return `<div class="pst wait">${DATA.queue.paused ? 'waiting for Start' : 'waiting'}</div>`;
+  if (mine && j.state === 'stopped') return `<div class="pst muted">cancelled${s && s.state === 'stopped' ? ' after ' + fmtDur(s.ran) : ''}</div>`;
   if (s && s.state === 'failed') return `<div class="pst bad">failed after ${fmtDur(s.ran)}</div>`;
   if (s && s.state === 'done') return `<div class="pst ok">&#10003; ${fmtDur(s.ran)}${at(s.ended)}</div>`;
   if (step === 'prepare' && c.status.fit) return '<div class="pst ok">&#10003; done</div>';
@@ -82,7 +83,7 @@ function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
   const running = c.status.job?.state === 'running', waiting = c.status.job?.state === 'queued';
   const held = c.status.held && c.status.label === 'taken out';
-  const queue = running ? '' : waiting || (!c.status.fit && !held)
+  const queue = running ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control>Cancel</button>` : waiting || (!c.status.fit && !held)
     ? `<button class="qb" data-hold="${c.id}" data-name="${short}">Take out</button>`
     : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${short}">Add back</button>` : '';
   const remove = `<button class="rm" data-rm="${c.id}" data-name="${short}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : 'title="Remove from the list (the file stays in SOURCE)"'} aria-label="Remove ${short} from the list">&#10005;</button>`;
@@ -148,22 +149,24 @@ function render() {
   // ---- step 2: prepare
   const todo = cs.filter(c => !c.status.fit && !c.status.held && !(c.status.job && /queued|running/.test(c.status.job.state))).length;
   const failed = cnt.fail || 0;
-  $('startbtn').innerHTML = !q.paused ? '&#10074;&#10074; Pause' : '&#9654; Start' + (todo ? ` · prepare ${todo} video(s)` : '') + (q.queued ? ` · ${q.queued} waiting` : '');
-  $('startbtn').title = q.paused ? 'Prepare every video that is not prepared yet, and run the waiting jobs' : 'The running job finishes; nothing new starts until you press Start again.';
-  $('startbtn').disabled = q.paused && !todo && !q.queued;
+  $('startbtn').innerHTML = !q.paused || q.running ? '&#10074;&#10074; Pause processing' : q.queued ? '&#9654; Resume processing' : '&#9654; Start' + (todo ? ` · prepare ${todo} video(s)` : '');
+  $('startbtn').title = !q.paused || q.running ? 'Stop active processes and keep completed caches. Resume restarts the interrupted stage.' : q.queued ? 'Resume queued work using completed caches' : 'Prepare videos that are not prepared yet';
+  $('startbtn').disabled = processingBusy || (q.paused && !q.running && !todo && !q.queued);
+  $('cancel-session').hidden = !q.running && !q.queued;
+  $('cancel-session').disabled = processingBusy;
   // one queue runs both steps: each card shows its own jobs (stage "all" is Finish, the rest is Prepare)
   const isFin = s => s === 'all';
   const nowP = q.now.filter(j => !isFin(j.stage)), nowF = q.now.filter(j => isFin(j.stage));
   const waitOf = fin => cs.filter(c => c.status.job && c.status.job.state === 'queued' && isFin(c.status.job.stage) === fin).length;
   const waitP = waitOf(false), waitF = waitOf(true);
   const jobLines = js => js.map(j => `<div style="margin-top:6px"><a href="/clip/${j.clip}">${esc(j.name.replace(/^[^_]+_/, ''))}</a> ${progressBar(j.progress, j.step)}</div>`).join('');
-  $('queue').innerHTML = nowP.length || waitP ? (q.paused ? (nowP.length ? '<b>Pausing</b> after the running job. ' : 'Paused · ') : '') +
+  $('queue').innerHTML = nowP.length || waitP ? (q.paused ? 'Paused · ' : '') +
       `<b>${nowP.length}</b> preparing, <b>${waitP}</b> waiting` + jobLines(nowP) :
     todo ? '' : (cs.length ? 'Every video is prepared.' : '');
-  $('finq').innerHTML = nowF.length || waitF ? (q.paused ? (nowF.length ? '<b>Pausing</b> after the running job. ' : 'Paused · ') : '') +
-      `<b>${nowF.length}</b> finishing, <b>${waitF}</b> waiting <button id="finishpause" title="${q.paused ? 'Resume waiting jobs' : 'Pause the queue after the current jobs finish'}">${q.paused ? 'Resume queue' : 'Pause queue'}</button>` + jobLines(nowF) : '';
+  $('finq').innerHTML = nowF.length || waitF ? (q.paused ? 'Paused · ' : '') +
+      `<b>${nowF.length}</b> finishing, <b>${waitF}</b> waiting <button id="finishpause" data-processing-control ${processingBusy ? 'disabled' : ''}>${q.paused && !q.running ? 'Resume processing' : 'Pause processing'}</button>` + jobLines(nowF) : '';
   if ($('finishpause')) $('finishpause').onclick = async () => {
-    await post(q.paused ? '/api/resume' : '/api/pause');
+    await processingControl(q.paused && !q.running ? '/api/resume' : '/api/pause','Updating active processing…');
     load();
   };
   const minor = [];
@@ -225,6 +228,8 @@ function render() {
   renderRemoved();
 }
 function bindCardButtons(list) {
+  list.querySelectorAll('[data-cancel-job]').forEach(b => b.onclick = async () => {
+    await processingControl(`/api/clip/${b.dataset.cancelJob}/cancel`,'Cancelling this clip’s active process…'); load(); });
   list.querySelectorAll('[data-hold]').forEach(b => b.onclick = async () => {
     const r = await post(`/api/clip/${b.dataset.hold}/hold`);
     toast(r.cancelled ? `${b.dataset.name} is out of the waiting line` : `${b.dataset.name} is taken out: Start leaves it`); load(); });
@@ -257,8 +262,10 @@ async function health() {
 }
 $('search').oninput = render;
 $('startbtn').onclick = async () => {
-  if (!DATA.queue.paused) { await post('/api/pause'); toast('Pausing: the running job finishes, nothing new starts.'); load(); return; }
+  if (!DATA.queue.paused || DATA.queue.running) { await processingControl('/api/pause','Stopping active processes and pausing…'); load(); return; }
+  if (DATA.queue.queued) { await processingControl('/api/resume','Resuming interrupted processing…'); load(); return; }
   const r = await post('/api/start'); toast(r.queued ? `Started · ${r.queued} video(s) queued to prepare` : 'Started'); load(); };
+$('cancel-session').onclick = async () => { await processingControl('/api/cancel_session','Cancelling active processes and queued work…'); load(); };
 $('renderall').onclick = async () => { const r = await post('/api/finish_reviewed');
   toast(`${r.queued} clip(s) queued to finish` + (r.unchanged ? ` · ${r.unchanged} unchanged since their last Finish, skipped` : '') +
         (r.no_name ? ` · ${r.no_name} without a delivery name` : '') + (r.busy ? ` · ${r.busy} already working` : ''), !!r.no_name); load(); };
