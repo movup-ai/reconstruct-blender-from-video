@@ -51,9 +51,16 @@
 
   <section class="step" id="s-objects">
     <h2><span class="num">3</span>Objects in the set</h2>
-    <p class="hint">Dashed boxes are what Prepare found. Click a box to fix its type, drag it to move, drag a corner to resize, <kbd>Delete</kbd> removes it. Drag on the picture to add a missing one. Describe each one in your own words; with type <i>other</i> the
+    <p class="hint">Choose a tool and draw on the background to add an object. Use Select to move or resize an existing selection, and <kbd>Delete</kbd> to remove it. Dashed outlines are what Prepare found. With type <i>other</i> the
       description decides how it is built. Trees become pine prototypes, bushes become short rounded shrubs, and named furniture uses recognizable models. Use the held-object timeline below for carried objects.
       <b>Re-check</b> builds the set again with your changes, and Finish uses them.</p>
+    <div id="object-tools" class="seg object-tools" role="group" aria-label="Object drawing tools">
+      <button type="button" data-v="select">Select</button>
+      <button type="button" data-v="pen" title="Trace an outline freehand">Pen</button>
+      <button type="button" data-v="line" title="Drag along a narrow object">Line</button>
+      <button type="button" data-v="rectangle">Rectangle</button>
+      <button type="button" data-v="ellipse" title="Draw a circle or oval">Circle</button>
+    </div>
     <div id="objshots"><div class="empty">Loading…</div></div>
     <div id="geometry-actions" class="small muted"></div>
   </section>
@@ -322,11 +329,34 @@ async function loadObjects() {
   OBJ.shots.forEach(sh => { sh.found = sh.found || []; sh.dropped = sh.dropped || []; mergeFound(sh); });
   ODIRTY = false; OSEL = null; renderObjects();
 }
+let objectTool = 'rectangle';
+const objectTools = $('object-tools');
+segSet(objectTools, objectTool);
+objectTools.onclick = e => {
+  const button = e.target.closest('button[data-v]');
+  if (button) { objectTool = button.dataset.v; segSet(objectTools, objectTool); }
+};
+function objectOutline(d, scale) {
+  if (!d.cur) return [];
+  const [ax, ay] = d.a, [bx, by] = d.cur;
+  if (d.tool === 'pen') return d.points;
+  if (d.tool === 'ellipse') return Array.from({length:48}, (_, i) => {
+    const t = i * Math.PI / 24;
+    return [(ax + bx + (bx - ax) * Math.cos(t)) / 2, (ay + by + (by - ay) * Math.sin(t)) / 2];
+  });
+  if (d.tool === 'line') {
+    const length = Math.hypot(bx - ax, by - ay);
+    if (!length) return [];
+    const x = -(by - ay) * 5 / (scale * length), y = (bx - ax) * 5 / (scale * length);
+    return [[ax+x,ay+y],[bx+x,by+y],[bx-x,by-y],[ax-x,ay-y]];
+  }
+  return [[ax,ay],[bx,ay],[bx,by],[ax,by]];
+}
 function objectsBody() {                            // what Save sends: your objects, and the found ones deleted or changed
   const body = { shots: {} };
   OBJ.shots.forEach(sh => body.shots[sh.tag] = {
-    objects: sh.objects.filter(o => !o.found || o.edited).map(({ what, type, bbox, attach, facing, size, role, colour_role, level }) =>
-      ({ what, type, bbox, attach, facing, size, role: role || (colour_role === 'orange' ? 'near' : null), level: level || null })),
+    objects: sh.objects.filter(o => !o.found || o.edited).map(({ what, type, bbox, outline, attach, facing, size, role, colour_role, level }) =>
+      ({ what, type, bbox, outline, attach, facing, size, role: role || (colour_role === 'orange' ? 'near' : null), level: level || null })),
     dropped: sh.dropped.concat(sh.objects.filter(o => o.found && o.edited).map(o => ({ frame: o.frame, bbox: o.orig, why: 'changed' }))) });
   return body;
 }
@@ -362,7 +392,7 @@ function drawObjects() {
         ${ndel ? ` · <a href="#" class="objback" title="The found objects you deleted come back">bring back ${ndel} deleted</a>` : ''}</div>
       <div class="objgrid"><div class="objwrap"><img src="${sh.plate}?v=${Date.now() >> 15}" alt="background of the shot"><canvas></canvas></div>
       <div><div class="objlist"></div>
-      ${sh.objects.length ? '' : '<div class="objempty">No objects yet. Drag a box on the picture to add one.</div>'}</div></div>`;
+      ${sh.objects.length ? '' : '<div class="objempty">Choose a tool and draw on the background to add an object.</div>'}</div></div>`;
     box.appendChild(wrap);
     const back = wrap.querySelector('.objback');
     if (back) back.onclick = e => { e.preventDefault(); sh.dropped = sh.dropped.filter(d => d.why === 'changed'); mergeFound(sh); OSEL = null; ODIRTY = true; renderObjects(); };
@@ -407,40 +437,56 @@ function drawObjects() {
     function draw() {
       cv.width = img.clientWidth * devicePixelRatio; cv.height = img.clientHeight * devicePixelRatio;
       const g = cv.getContext('2d'); const k = scale() * devicePixelRatio, d = devicePixelRatio; g.clearRect(0, 0, cv.width, cv.height);
+      const stroke = points => {
+        g.beginPath();
+        points.forEach(([x,y], i) => i ? g.lineTo(x*k,y*k) : g.moveTo(x*k,y*k));
+        g.closePath();
+        g.stroke();
+      };
       g.font = `${12 * d}px system-ui`; g.textBaseline = 'bottom';
       boxed().forEach(([o, oi]) => { const [x0, y0, x1, y1] = o.bbox.map(v => v * k); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
         const c = col(o, oi), dashed = o.found && !o.edited;
-        g.setLineDash(dashed ? [6 * d, 4 * d] : []); g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = (sel ? 5 : 3) * d; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
-        g.strokeStyle = c; g.lineWidth = (sel ? 3 : 1.6) * d; g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
+        const outline = o.outline || [[o.bbox[0],o.bbox[1]],[o.bbox[2],o.bbox[1]],[o.bbox[2],o.bbox[3]],[o.bbox[0],o.bbox[3]]];
+        g.setLineDash(dashed ? [6 * d, 4 * d] : []); g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = (sel ? 5 : 3) * d; stroke(outline);
+        g.strokeStyle = c; g.lineWidth = (sel ? 3 : 1.6) * d; stroke(outline); g.setLineDash([]);
         const label = (o.what || o.type).slice(0, 22); const tw = g.measureText(label).width + 8 * d;
         g.fillStyle = c; g.fillRect(x0, Math.max(0, y0 - 16 * d), tw, 16 * d);
         g.fillStyle = '#111'; g.fillText(label, x0 + 4 * d, Math.max(16 * d, y0) - 2 * d);
         if (sel) { g.fillStyle = '#fff'; g.strokeStyle = '#111'; g.lineWidth = 1.2 * d;          // corner handles: drag to resize
           [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].forEach(([hx, hy]) => { g.fillRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); g.strokeRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); }); } });
-      if (drag && drag.kind === 'new' && drag.cur) { const [ax, ay] = drag.a, [bx, by] = drag.cur; g.setLineDash([6, 4]); g.strokeStyle = '#fff'; g.lineWidth = 2;
-        g.strokeRect(Math.min(ax, bx) * k, Math.min(ay, by) * k, Math.abs(bx - ax) * k, Math.abs(by - ay) * k); g.setLineDash([]); }
+      if (drag?.kind === 'new' && drag.cur) { g.setLineDash([6, 4]); g.strokeStyle = '#fff'; g.lineWidth = 2;
+        stroke(objectOutline(drag, scale())); g.setLineDash([]); }
     }
     const pos = e => { const r = cv.getBoundingClientRect(); const s = scale(); return [(e.clientX - r.left) / s, (e.clientY - r.top) / s]; };
     const inside = (b, p) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
-    cv.addEventListener('mousedown', e => { const p = pos(e), tol = 9 / scale();
+    cv.addEventListener('pointerdown', e => { if (e.button !== 0 || drag) return;
+      cv.setPointerCapture(e.pointerId);
+      const p = pos(e), tol = 9 / scale();
       const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null;
-      if (so && !so.nobox) {                        // the selected box: a corner resizes it, inside moves it
+      if (so && !so.nobox && ['select','rectangle'].includes(objectTool)) {
         const b = so.bbox, c = [[0, 1], [2, 1], [0, 3], [2, 3]].find(([ix, iy]) => Math.abs(p[0] - b[ix]) < tol && Math.abs(p[1] - b[iy]) < tol);
         if (c) { drag = { kind: 'size', o: so, c, b0: b.slice() }; return; }
         if (inside(b, p)) { drag = { kind: 'move', o: so, a: p, b0: b.slice() }; return; }
       }
       const hit = boxed().filter(([o]) => inside(o.bbox, p))
         .sort((a, b) => (a[0].bbox[2] - a[0].bbox[0]) * (a[0].bbox[3] - a[0].bbox[1]) - (b[0].bbox[2] - b[0].bbox[0]) * (b[0].bbox[3] - b[0].bbox[1]))[0];
-      drag = { kind: 'new', a: p, hit }; });
-    cv.addEventListener('mousemove', e => {
+      drag = { kind: 'new', a: p, hit, tool: objectTool, points: [p] }; });
+    cv.addEventListener('pointermove', e => {
       const p = pos(e), W = sh.size[0], H = sh.size[1];
       if (!drag) {                                   // the cursor says what a drag will do
+        if (!['select','rectangle'].includes(objectTool)) { cv.style.cursor = 'crosshair'; return; }
         const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null, tol = 9 / scale();
         const corner = so && !so.nobox && [[0, 1], [2, 1], [0, 3], [2, 3]].find(([ix, iy]) => Math.abs(p[0] - so.bbox[ix]) < tol && Math.abs(p[1] - so.bbox[iy]) < tol);
         cv.style.cursor = corner ? ((corner[0] === 0) === (corner[1] === 1) ? 'nwse-resize' : 'nesw-resize') : so && !so.nobox && inside(so.bbox, p) ? 'move' : 'crosshair';
         return;
       }
-      if (drag.kind === 'new') { drag.cur = p; draw(); return; }
+      if (drag.kind === 'new') {
+        if (drag.tool === 'select') return;
+        drag.cur = p;
+        if (drag.tool === 'pen' && drag.points.length < 1024 &&
+            Math.hypot(...p.map((v,i) => v - drag.points.at(-1)[i])) * scale() >= 2) drag.points.push(p);
+        draw(); return;
+      }
       const b = drag.o.bbox;
       if (drag.kind === 'move') {
         const dx = Math.max(-drag.b0[0], Math.min(W - drag.b0[2], p[0] - drag.a[0])), dy = Math.max(-drag.b0[1], Math.min(H - drag.b0[3], p[1] - drag.a[1]));
@@ -449,16 +495,25 @@ function drawObjects() {
         const [ix, iy] = drag.c; b[ix] = Math.max(0, Math.min(W, p[0])); b[iy] = Math.max(0, Math.min(H, p[1]));
       }
       drag.moved = true; draw(); });
-    window.addEventListener('mouseup', () => { if (!drag) return; const d = drag; drag = null;
+    cv.addEventListener('pointercancel', () => {
+      if (drag?.o) drag.o.bbox.splice(0, 4, ...drag.b0);
+      drag = null; draw();
+    });
+    cv.addEventListener('pointerup', () => { if (!drag) return; const d = drag; drag = null;
       if (d.kind !== 'new') {
         const b = d.o.bbox; const n = [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
         if (n[2] - n[0] < 4 || n[3] - n[1] < 4) { b.splice(0, 4, ...d.b0); draw(); return; }      // too small: as it was
         b.splice(0, 4, ...n.map(v => Math.round(v * 10) / 10));
+        if (d.moved && d.o.outline) d.o.outline = d.o.outline.map(point => point.map((v,i) =>
+          b[i] + (v - d.b0[i]) * (b[i+2] - b[i]) / (d.b0[i+2] - d.b0[i])));
         if (d.moved) { touch(d.o); renderObjects(); } return;
       }
-      if (d.cur && Math.abs(d.cur[0] - d.a[0]) > 6 && Math.abs(d.cur[1] - d.a[1]) > 6) {
-        const b = [Math.min(d.a[0], d.cur[0]), Math.min(d.a[1], d.cur[1]), Math.max(d.a[0], d.cur[0]), Math.max(d.a[1], d.cur[1])];
-        sh.objects.unshift({ what: '', type: 'other', bbox: b, attach: null, facing: 'camera' }); OSEL = [si, 0]; ODIRTY = true; renderObjects();
+      const outline = objectOutline(d, scale()).map(p => p.map((v,i) => Math.max(0, Math.min(sh.size[i], v))));
+      const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
+      const b = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      if (outline.length >= 3 && b[2]-b[0] >= 4 && b[3]-b[1] >= 4 &&
+          (d.tool !== 'line' || Math.hypot(d.cur[0]-d.a[0], d.cur[1]-d.a[1])*scale() >= 4)) {
+        sh.objects.unshift({ what: '', type: 'other', bbox: b, outline: d.tool === 'rectangle' ? undefined : outline, attach: null, facing: 'camera' }); OSEL = [si, 0]; ODIRTY = true; renderObjects();
         const rows = document.querySelectorAll('.objlist'); const sel = rows[si] && rows[si].querySelector('.objrow.osel select'); if (sel) sel.focus();
       } else if (d.hit) { OSEL = [si, d.hit[1]]; renderObjects(); } else if (OSEL && OSEL[0] === si) { OSEL = null; renderObjects(); } else draw(); });
     img.onload = draw; if (img.complete) draw();

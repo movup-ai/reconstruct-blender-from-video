@@ -620,6 +620,14 @@ def save_objects(c, cl, body):
                          "size": size,
                          "role": card_role(o),
                          "level": distance_level(o.get("level"))})
+            outline = o.get("outline")
+            if outline is not None:
+                from prop_timeline import finite_vector
+                if not isinstance(outline, list) or not 3 <= len(outline) <= 1024:
+                    raise ValueError("An object outline must have 3–1024 points")
+                points = [finite_vector(point, 2, "Outline point") for point in outline]
+                objs[-1]["outline"] = [[round(max(b[i], min(b[i+2], v)), 2) for i, v in enumerate(point)]
+                                       for point in points]
         cur = shots.setdefault(tag, {"scene": "", "labels": {}, "drop": []})
         if "dropped" in sh:                                           # found objects deleted or replaced on this page
             cur["dropped"] = [{"frame": int(d["frame"]), "bbox": [round(float(v), 1) for v in d["bbox"]],

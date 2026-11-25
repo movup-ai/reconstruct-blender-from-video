@@ -527,12 +527,14 @@ class TestApi(unittest.TestCase):
                 self.assertEqual([(o["what"], o["type"], o["here"]) for o in sh["found"]],
                                  [("office chair", "chair", True), ("object", "box", False)], "own boxes are not listed as found")
                 code, d = self.post("/api/clip/%s/objects?rebuild=0" % self.cid, {"shots": {"_000": {
-                    "objects": [{"what": "desk", "type": "table", "bbox": [30, 6, 50, 30]}],
+                    "objects": [{"what": "desk", "type": "table", "bbox": [30, 6, 50, 30],
+                                 "outline": [[30, 6], [50, 30], [30, 30]]}],
                     "dropped": [{"frame": 0, "bbox": [5, 6, 20, 30]}]}}})
                 self.assertEqual((code, d["objects"]), (200, 1))
                 sh = json.loads(self.get("/api/clip/%s/objects" % self.cid)[1])["shots"][0]
                 self.assertEqual(sh["dropped"], [{"frame": 0, "bbox": [5.0, 6.0, 20.0, 30.0], "why": "deleted"}])
                 self.assertEqual([o["what"] for o in sh["objects"]], ["desk"])
+                self.assertEqual(sh["objects"][0]["outline"], [[30, 6], [50, 30], [30, 30]])
         finally:
             shutil.rmtree(f["work"], ignore_errors=True); shutil.rmtree(f["marks"], ignore_errors=True); shutil.rmtree(sb, ignore_errors=True)
 

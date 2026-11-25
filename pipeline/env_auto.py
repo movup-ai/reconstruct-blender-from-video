@@ -1149,6 +1149,11 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
             continue
         x0, y0, x1, y1 = [int(round(v * fr.k)) for v in b]
         m = np.zeros((fr.H, fr.W), bool); m[max(0, y0):max(0, y1) + 1, max(0, x0):max(0, x1) + 1] = True
+        outline = o.get("outline")
+        if outline:
+            mask = np.zeros(m.shape, np.uint8)
+            cv2.fillPoly(mask, [np.rint(np.asarray(outline) * fr.k).astype(np.int32)], 1)
+            m &= mask.astype(bool)
         boxm = m & fr.valid & ~fr.bars
         m = boxm & ~fr.person
         if m.sum() < 20:                                          # hidden behind a person here: no depth of its own ->
@@ -1165,7 +1170,7 @@ def user_objects(env, tag, fr, C, f0, first=0, indoor=True, fit=True, models=Non
                 ob["facing"] = o["facing"]
             if o.get('size'): ob.update(size=o['size'], size_locked=True)
             out.append(ob); continue
-        if models is not None and getattr(fr, "rgb", None) is not None:      # the thing itself: SAM's cut of the box
+        if not outline and models is not None and getattr(fr, "rgb", None) is not None:
             try:
                 sm = models.sam_box_mask(fr.rgb, [x0, y0, x1, y1]) & m
                 if sm.sum() >= 0.12 * m.sum():
@@ -1561,7 +1566,7 @@ def run_clip(name, models, a, c):
             for tag, keyframe in tags.items():
                 if keyframe != f: continue
                 for obj in user_env['shots'][tag].get('objects',[]):
-                    if obj.get('bbox'):
+                    if obj.get('bbox') and not obj.get('outline'):
                         box = [int(round(v*k)) for v in obj['bbox']]
                         requests.append({'rgb':rgb,'automatic':False,'boxes':[box]})
     count = prefetch(requests, c, models.scene_cache, models._release_scene_gpu)
