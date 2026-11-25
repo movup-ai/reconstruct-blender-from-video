@@ -173,9 +173,8 @@ a.clip:hover { border-color:var(--seam-strong); box-shadow:0 4px 14px rgba(30,37
 a.clip img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; background:#1e252b; }
 a.clip .t { padding:9px 11px 2px; display:flex; justify-content:space-between; align-items:center; gap:6px; }
 a.clip .n { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-a.clip .pk { padding:0 11px 10px; display:flex; gap:8px; justify-content:space-between; align-items:baseline; white-space:nowrap; }
+a.clip .pk { height:32px; padding:0 11px; display:flex; gap:8px; justify-content:space-between; align-items:center; white-space:nowrap; }
 a.clip .pk .pkn { overflow:hidden; text-overflow:ellipsis; min-width:0; }
-a.clip .zipt { padding:0 11px 4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 a.clip .pk .took { flex:none; color:var(--slate); font-variant-numeric:tabular-nums; }
 a.clip .pk .took.fin { color:var(--ok); }
 a.clip { position:relative; }
@@ -322,16 +321,18 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
 
 /* clip card: remove from the list (the x in the top right corner of the picture) */
 .clipcard { position:relative; }
-.clipcard .rm { position:absolute; top:8px; right:8px; min-height:0; width:28px; height:28px; padding:0; border-radius:50%;
+.clipcard .rm, .table-actions .rm { min-height:0; width:22px; height:22px; padding:0; border-radius:50%;
                 background:rgba(255,255,255,.92); border:1px solid rgba(30,37,43,.12); color:var(--ink); font-size:12px; line-height:1;
                 box-shadow:0 1px 3px rgba(30,37,43,.2); opacity:.85; }
-.clipcard:hover .rm, .clipcard .rm:focus-visible { opacity:1; }
-.clipcard .rm:hover { background:var(--bad); border-color:var(--bad); color:#fff; }
-.clipcard .rm:disabled { opacity:.45; background:rgba(255,255,255,.92); color:var(--faint); }
+.clipcard .rm { position:absolute; top:8px; right:8px; }
+.clipcard:hover .rm, .rm:focus-visible { opacity:1; }
+:is(.clipcard, .table-actions) .rm:hover:not(:disabled) { background:var(--bad); border-color:var(--bad); color:#fff; }
+:is(.clipcard, .table-actions) .rm:disabled { opacity:.45; background:rgba(255,255,255,.92); color:var(--faint); }
 /* in or out of the waiting line: a small button on the card's last row */
-.clipcard .qb { position:absolute; right:10px; bottom:7px; min-height:0; height:24px; padding:0 10px; font-size:12px; border-radius:999px; }
-.clipcard .qb.add { background:var(--accent-tint); border-color:#b9d6d8; color:var(--accent); font-weight:600; }
-.clipcard.hasq a.clip .pk { padding-right:96px; }
+.clipcard .qb, .table-actions .qb { min-height:0; height:22px; padding:0 8px; font-size:11px; border-radius:999px; }
+.clipcard .qb { position:absolute; right:11px; bottom:6px; }
+:is(.clipcard, .table-actions) .qb.add { background:var(--accent-tint); border-color:#b9d6d8; color:var(--accent); font-weight:600; }
+.clipcard.hasq a.clip .pk { padding-right:86px; }
 .clipcard.hasq a.clip .pk .took { display:none; }
 .clipcard.held img { filter:grayscale(1); opacity:.55; }
 /* Start over with every clip: its own quiet block at the bottom, a clearly dangerous button */
@@ -405,7 +406,6 @@ table.subs tr.probs li { margin:2px 0; }
 .tablewrap { overflow-x:auto; }
 table.progtable td { vertical-align:top; }
 .table-actions { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
-.table-actions .rm, .table-actions .qb { position:static; opacity:1; }
 table.progtable th.r, table.progtable td.r { text-align:right; }
 table.progtable .nowrap { white-space:nowrap; }
 table.progtable td.pname a { display:flex; gap:10px; align-items:center; color:inherit; text-decoration:none; min-width:0; }
