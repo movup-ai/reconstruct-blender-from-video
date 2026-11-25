@@ -40,6 +40,55 @@ The delivered `.blend` continues to contain editable mannequins in the selected 
 meshes provide observations and calibration; they do not replace the blockout with textured human scans.
 The initial dense mesh for each track is retained in the raw observation artifact for inspection.
 
+## Partial bodies and uncertain hands
+
+In close shots, a guessed floor and standing pelvis limit can move an otherwise tracked person out of the
+picture. When hips and ankles lack sustained image support, the fitter releases automatic floor contact and
+the standing pelvis limit. Metric hip placement becomes a soft prior only when it agrees with visible joints;
+it no longer sets a hard per-frame distance. Explicit floor, mount, seated-pose and distance controls still win.
+An unreliable inferred height for a cropped person falls back to the configured height; reviewed heights win.
+Later background fitting and scene repair preserve this placement instead of snapping the body back to ground.
+
+The body prior uses per-joint image confidence and reprojection agreement. Cropped endpoints at the image
+border and isolated guesses below a cropped torso receive less influence. Missing frames never acquire
+observation confidence through interpolation. Relative body motion is filtered separately from translation.
+The fitter continues from the previous solution rather than reinitializing hidden limbs on every frame.
+Confidently observed gestures retain freedom to move; hidden wrist bends hold or interpolate observed poses.
+Output arm filtering checks body-block collisions before accepting a change. Completely hidden hands remain
+estimates: this cannot recover finger motion or prove an unseen wrist's true depth.
+
+`human_alignment.json` compares final rig projections with confident source joints. Gross misalignment or
+hidden tracked characters blocks rendering and prevents an unsuccessful fit from being cached as successful.
+This is separate from quality warnings about uncertain feet, small motion or abrupt movement. Previous human
+fit caches and finished fingerprints are invalidated once by this upgrade. Model observations and tracking
+caches remain reusable; later prop-only edits continue to reuse people and cameras.
+
+For an existing clip, open Review, run **Re-check**, inspect Joints and the comparison, then **Finish**. No reset
+of tracking or model observations is needed solely for this fitting upgrade.
+
+### Office regression, November 25, 2026
+
+The full Prepare/Finish path was exercised in a separate sandbox using `SOURCE/swan/office.mp4`, existing SAM 3
+and SAM 3D Body observations, and reviewed heights of 1.80 m and 1.70 m. Both tracks cover all 137 source frames.
+Validation included camera estimation, metric alignment, retargeting, the automatic set, scene verification,
+Blender rendering and delivery ZIP integrity. The production delivery was not overwritten.
+
+- Both red and blue characters were present in every rendered frame, checked from rendered pixels.
+- The final projection audit passed every checked frame for both people; median errors were 12.9 px and 5.6 px
+  at source resolution (1280 by 720).
+- The woman's confident left/right wrist observations had median errors of 3.1 px and 4.1 px, with 95th
+  percentiles of 18.2 px and 14.5 px. These compare against tracked joints, not manually labeled ground truth.
+- All 4,658 Blender joint transforms matched the fitted scene within 0.000001 m across 137 frames.
+- All 225 automated tests passed, including partial-body placement, uncertain hands, manual controls, cache
+  invalidation, delivery rejection and selective prop rebuilding.
+
+The man's hands are cropped out, so their exact motion could not be verified against visible source hands.
+Quality and scene reports still flag ambiguous feet, abrupt motion and unresolved background geometry; the
+visibility/alignment fix does not establish exact hidden anatomy or a fully measured floor.
+
+Local evidence is under the ignored `downloads/office-regression/` folder: `office-verified.mp4` (source above,
+render below), `office-verified.jpg`, `delivery_validation.json` and `blender_audit.json`.
+
 ## Settings and artifacts
 
 `sam3d_stride` is exposed as **Body inference interval**, default 2. It measures every second observed frame,

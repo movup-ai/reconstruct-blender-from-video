@@ -21,7 +21,8 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 - measures the clip's lens from the picture (MoGe-2) instead of the fixed `lens_mm`; `"lens_auto": false` switches it off,
   and a lens set in `hints.json` or in the review wins;
 - leaves out tracks that are both short and unclear (`"junk_filter": false` switches it off);
-- in half-body shots (no feet in the picture) puts the floor under the people (`"floor_from_people": false`);
+- in partial-body shots, fits visible joints without forcing hidden feet onto an assumed floor; explicit floor,
+  seated-pose and distance controls still take priority;
 - writes quality numbers and flags into `report.json` and the clip's warnings (`python pipeline\quality.py <clip>`);
 - builds what people carry (`pipeline\held_objects.py`): Grounding DINO (`models\grounding_dino`) finds objects in the
   hands and backpacks on every 2nd frame, CLIP names them (bag, phone, cup, umbrella...), and they are placed on the
@@ -34,6 +35,9 @@ Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
 SAM 3D Body is the metric 3D body backend using tracked masks and the local body
 checkpoints. It adds visible-mesh depth calibration and camera-space pose/placement constraints to the
 editable mannequin fitter. See [SAM 3D Body operation and validation](docs/SAM3D_BODY.md).
+Partial-body placement and arm motion use observation confidence, cropped-joint filtering and temporal
+continuation. Old human fits are invalidated once; subsequent prop edits still reuse fitted people and cameras.
+Gross source/rig misalignment blocks Finish and writes `human_alignment.json` for diagnosis.
 
 SAM 3 video tracking uses the local `models/sam3/sam3.pt` checkpoint. It supplies
 persistent person masks and IDs to RTMPose joint measurements. Prepare/Re-check generates the new tracks and
