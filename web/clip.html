@@ -684,7 +684,7 @@ async function load(first) {
   $('geometry-actions').textContent = (INFO.geometry_protection || []).slice(-12).map(a => `${a.object}: ${a.action || a.reason}`).join(' · ');
   document.title = INFO.clip.name + ' · Blender Agent';
   $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('title').title = INFO.clip.name; $('film').textContent = INFO.clip.film;
-  $('state').innerHTML = chip(INFO.paused && /^waiting to/.test(INFO.status.label) ? Object.assign({}, INFO.status, { label: 'waiting for Start' }) : INFO.status); $('pos').textContent = `${INFO.index + 1} of ${INFO.count}`;
+  $('state').innerHTML = chip(INFO.status); $('pos').textContent = `${INFO.index + 1} of ${INFO.count}`;
   [['prevc', INFO.prev], ['nextc', INFO.next]].forEach(([id, to]) => { const a = $(id);   // an end of the list greys out, it does not leave a hole
     if (to) { a.href = '/clip/' + to; a.removeAttribute('aria-disabled'); a.classList.remove('off'); } else { a.removeAttribute('href'); a.setAttribute('aria-disabled', 'true'); a.classList.add('off'); } });
   if (first) {

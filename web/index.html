@@ -70,7 +70,7 @@ function stepCell(c, step, p) {
     const ran = s && s.state === 'running' ? s.ran : (p ? p.since : null);
     return `<div class="pst run">running${ran != null ? ' ' + fmtDur(ran) : ''}</div>` + (p && p.progress != null ? progressBar(p.progress, p.step) : '');
   }
-  if (mine && j.state === 'queued') return `<div class="pst wait">${DATA.queue.paused ? 'waiting for Start' : 'waiting'}</div>`;
+  if (mine && j.state === 'queued') return `<div class="pst wait">${j.error === 'Paused by user' ? 'paused' : 'waiting'}</div>`;
   if (mine && j.state === 'stopped') return `<div class="pst muted">cancelled${s && s.state === 'stopped' ? ' after ' + fmtDur(s.ran) : ''}</div>`;
   if (s && s.state === 'failed') return `<div class="pst bad">failed after ${fmtDur(s.ran)}</div>`;
   if (s && s.state === 'done') return `<div class="pst ok">&#10003; ${fmtDur(s.ran)}${at(s.ended)}</div>`;
@@ -121,8 +121,6 @@ function progressSummary(cs, q) {
 
 function render() {
   const cs = DATA.clips, q = DATA.queue, cnt = {};
-  if (q.paused) cs.forEach(c => { if (c.status.label === 'waiting to prepare' || c.status.label === 'waiting to finish')   // nothing runs until Start
-    c.status = Object.assign({}, c.status, { label: 'waiting for Start' }); });
   cs.forEach(c => cnt[c.status.group] = (cnt[c.status.group] || 0) + 1);
   // ---- filter tabs: only groups that have clips
   const t = $('tabs'); t.innerHTML = '';

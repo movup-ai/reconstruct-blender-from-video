@@ -9,6 +9,30 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class ProcessingControlsUiTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'),'Node is needed for JavaScript control checks')
+    def test_pausing_keeps_ready_and_waiting_statuses_and_only_marks_interrupted_row(self):
+        script=r'''
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const html=fs.readFileSync('web/index.html','utf8');
+const context=vm.createContext({});
+const start=html.indexOf('function render() {'),end=html.indexOf('  // ---- filter tabs',start);
+vm.runInContext(html.slice(start,end)+'return cs;}',context);
+context.DATA={queue:{paused:true},clips:[
+ {status:{label:'ready for review',group:'ready'}},
+ {status:{label:'waiting to finish',group:'busy'}},
+ {status:{label:'processing paused',group:'busy'}}]};
+const before=JSON.stringify(context.DATA.clips);vm.runInContext('render()',context);
+assert.equal(JSON.stringify(context.DATA.clips),before);
+const step=html.slice(html.indexOf('const STEP_OF ='),html.indexOf('function clipActions('));
+vm.runInContext(step,context);
+context.waiting={status:{job:{stage:'fit',state:'queued'}}};
+assert(vm.runInContext("stepCell(waiting,'prepare')",context).includes('>waiting<'));
+context.waiting.status.job.error='Paused by user';
+assert(vm.runInContext("stepCell(waiting,'prepare')",context).includes('>paused<'));
+'''
+        result=subprocess.run(['node','-e',script],cwd=ROOT,capture_output=True,text=True,encoding='utf-8')
+        self.assertEqual(result.returncode,0,result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'),'Node is needed for JavaScript control checks')
     def test_running_clip_has_cancel_and_all_stages_have_active_pause_controls(self):
         script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),root=process.argv[1],elements={};

@@ -200,6 +200,39 @@ class ResetLifecycleTests(unittest.TestCase):
         self.app.store.finish(resumed['id'],True)
         self.assertEqual(self.app.store.take({self.ws.user})['id'],finish)
 
+    def test_pause_only_interrupts_active_job_and_keeps_ready_clip_and_waiting_row(self):
+        active,ready_clip=self.ws.lib.clips
+        paths=self.fill(ready_clip)
+        Path(paths['zip']).unlink()
+        Path(paths['scene']).write_text('{}')
+        Path(paths['preview']).write_bytes(b'prepared preview')
+        before_status=clips.status(self.ws.c,ready_clip)
+        self.assertEqual(before_status['label'],'ready for review')
+        ready=self.root/'pause-only-running'
+        self.runner._cmd=lambda *_:[sys.executable,'-c',
+            "from pathlib import Path;import sys,time;Path(sys.argv[1]).touch();time.sleep(60)",str(ready)]
+        running_id=self.ws.enqueue(active,'fit');self.start_worker()
+        self.wait_for(lambda:ready.exists() and running_id in self.runner.procs)
+        waiting_id=self.ws.enqueue(active,'all',force=True)
+        def waiting_row():
+            return dict(self.app.store.db.execute('SELECT * FROM jobs WHERE id=?',(waiting_id,)).fetchone())
+        before_waiting=waiting_row()
+        result=self.runner.interrupt(self.ws.user,pause=True)
+        self.assertEqual(result['interrupted'],1)
+        self.assertEqual(waiting_row(),before_waiting,'Pause must not rewrite waiting jobs')
+        self.assertEqual(clips.status(self.ws.c,ready_clip),before_status)
+        paused=self.app.store.latest_for(active.id)
+        self.assertEqual(clips.status(self.ws.c,active,paused)['label'],'processing paused')
+
+    def test_pause_with_only_waiting_work_does_not_rewrite_it(self):
+        cl=self.ws.lib.clips[0]
+        self.ws.enqueue(cl,'fit')
+        before=self.app.store.latest_for(cl.id)
+        self.runner.resume(self.ws.user)
+        result=self.runner.interrupt(self.ws.user,pause=True)
+        self.assertEqual(result['interrupted'],0)
+        self.assertEqual(self.app.store.latest_for(cl.id),before)
+
     def test_cancel_one_clip_does_not_cancel_other_waiting_work(self):
         first,second=self.ws.lib.clips
         self.ws.enqueue(first,'fit');self.ws.enqueue(second,'fit')

@@ -111,10 +111,11 @@ class JobStore:
             return self.db.execute("DELETE FROM jobs WHERE clip=? AND (user=? OR user IS NULL) AND state!='running'",
                                    (clip, user)).rowcount
 
-    def cancel_for_reset(self, user, clips, all_user=False, return_jobs=False):
+    def cancel_for_reset(self, user, clips, all_user=False, return_jobs=False, running_only=False):
         """Cancel owned jobs without leaving them eligible for retry or recovery."""
         with self.lock:
-            rows=self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','running')").fetchall()
+            rows=self.db.execute("SELECT * FROM jobs WHERE " +
+                                 ("state='running'" if running_only else "state IN ('queued','running')")).fetchall()
             selected=[dict(r) for r in rows if (r['user']==user and (all_user or r['clip'] in clips)) or
                       (r['user'] is None and r['clip'] in clips)]
             ids=[r['id'] for r in selected]
@@ -129,8 +130,8 @@ class JobStore:
                 if job['state']=='queued':
                     self.db.execute("UPDATE jobs SET state='queued',ended=NULL WHERE id=?",(job['id'],))
                 else:
-                    self.db.execute("""INSERT INTO jobs(clip,stage,state,priority,attempts,created,user)
-                                       VALUES (?,?,'queued',-1,?,?,?)""",
+                    self.db.execute("""INSERT INTO jobs(clip,stage,state,priority,attempts,created,user,error)
+                                       VALUES (?,?,'queued',-1,?,?,?,'Paused by user')""",
                                     (job['clip'],job['stage'],max(0,job['attempts']-1),time.time(),job['user']))
 
     def mark_stopped(self, pending):
@@ -281,7 +282,7 @@ class Runner:
             self.resetting.add(user)
             was_active=user in self.active
             self.active.discard(user)
-            pending=self.store.cancel_for_reset(user,clips,all_user,return_jobs=True)
+            pending=self.store.cancel_for_reset(user,clips,all_user,return_jobs=True,running_only=mode=='pause')
             ids={job['id'] for job in pending}
             ids.update(jid for jid,job in self.inflight.items() if job.get('user')==user and
                        (all_user or job['clip'] in clips))
