@@ -254,6 +254,9 @@ class Workspace:
                                       ('scene_data.json','camera.json','clip_info.json')),
                              'preview':os.path.getmtime(background_preview) if os.path.isfile(background_preview) else None,
                              'report':read_json(os.path.join(f['work'],'report_background.json'))}
+        out['background']['alignment'] = read_json(os.path.join(f['work'],'object_alignment.json'))
+        out['background']['timings'] = {name:read_json(os.path.join(f['work'],name+'_profile.json'))
+                                        for name in ('environment','verification')}
         out["suggested"] = review.suggested(c, cl) if pose else None
         out["ai"] = {k: v for k, v in (read_json(f["ai"], {}) or {}).items() if k != "raw"} or None
         out["env_ai"] = (read_json(os.path.join(f["marks"], "env_ai.json"), {}) or {}).get("shots")

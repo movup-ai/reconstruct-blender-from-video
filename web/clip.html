@@ -65,6 +65,8 @@
     <div id="objshots"><div class="empty">Loading…</div></div>
     <div id="geometry-actions" class="small muted"></div>
     <details id="background-result" hidden><summary>Background preview</summary><img id="background-preview" class="prev" alt="Updated background placement and fitted objects"></details>
+    <p id="background-alignment" class="small muted"></p>
+    <details id="background-timings" hidden><summary>Background timings</summary><div id="background-timing-rows" class="small"></div><p class="small muted">Loading and inference are separate. Cached work is reused. Nested timings overlap and should not be added together.</p></details>
   </section>
 
 
@@ -597,6 +599,17 @@ async function load(first) {
   $('background-state').textContent = !INFO.background?.ready ? 'Prepare the clip first.' : busy ? 'Waiting for this clip’s current job.' :
     INFO.background.report ? `Last background update: ${INFO.background.report.seconds}s. People and camera reused.` : 'Updates drawn objects; keeps the saved movement and camera.';
   $('background-result').hidden = !INFO.background?.preview;
+  const alignment = INFO.background?.alignment;
+  const failed = (alignment?.objects || []).filter(o => !o.passed);
+  $('background-alignment').textContent = alignment?.checked ? `${alignment.objects.length} objects checked against source masks. ${failed.length ? `${failed.length} need review: ${failed.map(o => o.object).join(', ')}.` : 'All passed size, center and silhouette checks.'}` : '';
+  const timingLabels = {model_loading:'Model loading',sam_model_loading:'SAM model loading',sam_inference:'SAM inference',sam_worker_overhead:'SAM worker startup and transfer',semantic_classification:'Semantic classification',object_classification:'Object classification',prototype_observation_matching:'Matching and segmenting additional views',prototype_fitting:'Joint prototype fitting',silhouette_verification:'Projected silhouette verification',scene_verification:'Scene verification and repair',geometry_inference:'Depth inference'};
+  const timingRows = Object.entries(INFO.background?.timings || {}).flatMap(([worker, p]) => p ? [
+    `<p><b>${esc(worker)}: ${(+p.total_seconds || 0).toFixed(2)}s</b></p>`,
+    ...Object.entries(p.stages || {}).map(([key, value]) => `<div>${esc(timingLabels[key] || key)}: ${(+value.seconds).toFixed(2)}s (${value.calls} calls)</div>`),
+    ...Object.entries(p.counters || {}).map(([key, value]) => `<div>${esc(key.replaceAll('_', ' '))}: ${+value}</div>`)
+  ] : []);
+  $('background-timings').hidden = !timingRows.length;
+  $('background-timing-rows').innerHTML = timingRows.join('');
   if (INFO.background?.preview && $('background-preview').dataset.version !== String(INFO.background.preview)) {
     $('background-preview').dataset.version = String(INFO.background.preview);
     $('background-preview').src = `/media/background/${CID}.jpg?v=${INFO.background.preview}`;
