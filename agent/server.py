@@ -131,7 +131,10 @@ class Workspace:
         return (self.app.users.get(self.user) or {}).get("name", self.user)
 
     def enqueue(self, cl, stage, force=False):
-        return self.store.enqueue(cl.id, stage, force=force, user=self.user)
+        with self.runner.cond:
+            if self.user in self.runner.resetting:
+                raise HttpError(409,'Reset is still stopping jobs and clearing files. Wait for it to finish.')
+            return self.store.enqueue(cl.id, stage, force=force, user=self.user)
 
     def clip(self, cid):
         try:
@@ -161,32 +164,49 @@ class Workspace:
                 "autopilot": self.app.c["autopilot"], "now": run,
                 "paused": self.runner.is_paused(self.user)}
 
-    def reset(self, cls, dry=False):
-        """Start over for these clips: what would be deleted (dry), or delete it.  A clip with a running job is
-        skipped (its program is writing those files); its waiting jobs are cancelled first."""
+    def reset(self, cls, dry=False, all_clips=False):
+        """Stop writers before clearing outputs/history; Reset all restores the fresh folder list."""
         from . import clips as clipsmod
+        if all_clips:
+            self.lib.rescan()
+            cls=list(self.lib.clips)+list(self.lib.removed_by_id.values())
         running = {j["clip"] for j in self.store.running()}
         busy = [cl.name for cl in cls if cl.id in running]
-        todo = [cl for cl in cls if cl.id not in running]
         if dry:
-            items = [{"clip": cl.name, "paths": [{"path": p, "what": w} for p, w in clipsmod.prepared_paths(self.c, cl)]} for cl in todo]
-            return {"ok": True, "dry": True, "busy": busy, "clips": [x for x in items if x["paths"]]}
+            items = [{"clip": cl.name, "paths": [{"path": p, "what": w} for p, w in clipsmod.prepared_paths(self.c, cl)]} for cl in cls]
+            return {"ok": True, "dry": True, "busy": busy, "clips": items}
         removed, failed, done = 0, [], []
-        for cl in todo:
-            # Workers claim jobs under this same lock. Recheck before touching files.
-            with self.runner.cond:
-                if any(j["clip"] == cl.id for j in self.store.running()):
-                    busy.append(cl.name)
-                    continue
-                self.store.cancel_queued(clip=cl.id, user=self.user)
-                r = clipsmod.reset(self.c, cl)
-                if not r["failed"]:
+        try:
+            with self.runner.reset_jobs(self.user,[cl.id for cl in cls],all_user=all_clips) as stopped:
+                restored=set()
+                for cl in cls:
+                    with media._lock:
+                        r = clipsmod.reset(self.c, cl)
                     self.store.clear_clip(cl.id, self.user)
-            removed += len(r["removed"]); failed += [{"clip": cl.name, "path": p, "reason": why} for p, why in r["failed"]]
-            if r["removed"]:
-                done.append(cl.name)
-        log.info("%s: start over: %d clip(s), %d item(s) deleted, %d failed, %d busy", self.user, len(done), removed, len(failed), len(busy))
-        return {"ok": not failed, "clips": done, "removed": removed, "failed": failed, "busy": busy}
+                    removed += len(r['removed'])
+                    failed += [{'clip':cl.name,'path':p,'reason':why} for p,why in r['failed']]
+                    if not r['failed']:
+                        clipsmod.set_held(cl.id,False,self.c)
+                        restored.add(os.path.normcase(os.path.abspath(cl.video)))
+                        done.append(cl.name)
+                if all_clips:
+                    self.store.clear_user(self.user)
+                    clipsmod.save_removed(clipsmod.removed_set(self.c)-restored,self.c)
+                    for filename in ('CLAUDE_HANDOFF.json','CLAUDE_HANDOFF.md'):
+                        path=os.path.join(self.c['work_root'],filename)
+                        if os.path.exists(path):
+                            if not clipsmod._inside(path,[self.c['work_root']]):
+                                failed.append({'clip':'folder','path':path,'reason':"outside the app's folders"})
+                                continue
+                            try:
+                                os.remove(path);removed+=1
+                            except OSError as error:
+                                failed.append({'clip':'folder','path':path,'reason':str(error)})
+                    self.lib.rescan()
+        except TimeoutError as error:
+            raise HttpError(409,str(error))
+        log.info('%s: reset %d clips, %d items deleted, %d jobs cancelled, %d failures',self.user,len(done),removed,stopped,len(failed))
+        return {'ok':not failed,'clips':done,'removed':removed,'failed':failed,'busy':[], 'stopped':stopped}
 
     def next_to_review(self, after_id):
         items = self.status_all()
@@ -1151,7 +1171,7 @@ def make_handler(app):
                 app.runner.resume(ws.user)
                 return self.send(200, {"ok": True, "queued": n})
             if parts == ["api", "reset_all"]:                            # Start over with every clip on the member's list
-                return self.send(200, ws.reset(list(ws.lib.clips), dry=(q.get("dry") or ["0"])[0] == "1"))
+                return self.send(200, ws.reset([], dry=(q.get("dry") or ["0"])[0] == "1",all_clips=True))
             if parts == ["api", "cancel_queued"]:
                 return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(user=ws.user)})
             if parts == ["api", "rescan"]:

@@ -85,15 +85,16 @@ async function openFolder(path) { try { await post('/api/open', { path }); } cat
 async function startOver(cid, name) {
   const base = cid ? `/api/clip/${cid}/reset` : '/api/reset_all';
   const r = await post(base + '?dry=1');
-  if (cid && r.busy.length) { toast('This clip is being processed right now. Start over when that job is done.', true); return false; }
-  if (!r.clips.length) { toast(r.busy.length ? 'Every clip with files is being processed right now. Try again when those jobs are done.' : 'Nothing to delete: no clip has prepared files.'); return false; }
-  const what = [...new Set(r.clips.flatMap(c => c.paths.map(p => p.what)))].join('; ');
+  if (!r.clips.length) { toast('There are no clips in the selected folder to reset.'); return false; }
+  const what = [...new Set(r.clips.flatMap(c => c.paths.map(p => p.what)))].join('; ') || 'queue entries and processing history';
   const pts = [(cid ? 'Deleted: ' : `Deleted for ${r.clips.length} clip(s): `) + what + '.',
     'Your roles, joint fixes and objects are deleted too. This cannot be undone.',
-    cid ? 'Kept: the video, its delivery name and its thumbnail.' : 'Kept: the videos, their delivery names and their thumbnails.',
+    'Running processes are stopped, waiting jobs are cancelled, and all recorded processing times are cleared.',
+    cid ? 'Kept: the original video, task zip and delivery name.' : 'Kept: the original videos, task zips and delivery names.',
     cid ? 'Press Prepare this clip (or Start) to detect the people again.' : 'Press Start to prepare them again from the videos.'];
-  if (r.busy.length) pts.push(`Skipped while they are being processed: ${r.busy.join(', ')}.`);
+  if (!cid) pts.push('The queue stays paused. Taken-out and removed clips return to the list as not prepared.');
   if (!(await ask('', cid ? 'Delete and start over' : 'Reset all', { title: cid ? 'Start this clip over?' : `Reset all ${r.clips.length} clip(s)?`, name: cid ? name : '', danger: true, points: pts }))) return false;
+  toast('Stopping processes and clearing generated files and timing records…');
   const d = await post(base);
   if (d.failed.length) toast(`${d.failed.length} item(s) could not be deleted (${d.failed[0].reason}): close any program using them and try again.`, true);
   else toast(cid ? 'Started over: prepare the clip again.' : `Reset ${d.clips.length} clip(s). Press Start to prepare them.`);

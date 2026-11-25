@@ -335,12 +335,13 @@ def folders(c, cl):
 
 def prepared_paths(c, cl):
     """everything preparing, reviewing and finishing a clip left on disk -> [(path, what)] that exist.
-    Not included: the video, its delivery name, its thumbnail, the film's cast notes (shared by its clips)."""
+    Not included: the video, its delivery name, the film's cast notes (shared by its clips)."""
     from common import output_dir                                     # pipeline
     f = folders(c, cl)
     out = [(f["marks"], "detected joints, roles, joint fixes, objects, AI suggestions, description"),
            (os.path.join(output_dir(c), cl.name), "hints and a hand-built set"),
            (f["work"], "fit, set, preview, renders and job logs"),
+           (os.path.join(c['work_root'],'_thumbs',cl.id+'.jpg'), 'cached thumbnail'),
            (f["submit"], "the finished package"),
            (f["zip"], "the finished zip")]
     return [(p, what) for p, what in out if os.path.exists(p)]

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 
 from . import config
 from .clips import folders, status, read_json, fingerprint, record_finish
@@ -110,6 +111,20 @@ class JobStore:
             return self.db.execute("DELETE FROM jobs WHERE clip=? AND (user=? OR user IS NULL) AND state!='running'",
                                    (clip, user)).rowcount
 
+    def cancel_for_reset(self, user, clips, all_user=False):
+        """Cancel owned jobs without leaving them eligible for retry or recovery."""
+        with self.lock:
+            rows=self.db.execute("SELECT id, clip, user FROM jobs WHERE state IN ('queued','running')").fetchall()
+            ids=[r['id'] for r in rows if (r['user']==user and (all_user or r['clip'] in clips)) or
+                 (r['user'] is None and r['clip'] in clips)]
+            for jid in ids:
+                self.db.execute("UPDATE jobs SET state='cancelled',ended=? WHERE id=?",(time.time(),jid))
+            return ids
+
+    def clear_user(self, user):
+        with self.lock:
+            return self.db.execute('DELETE FROM jobs WHERE user=?',(user,)).rowcount
+
     def latest(self):
         """{clip: latest job (not cancelled)}"""
         with self.lock:
@@ -166,12 +181,15 @@ class JobStore:
 
 
 def kill_tree(proc):
-    if proc.poll() is not None:
-        return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        if proc.poll() is None:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
     else:
-        proc.kill()
+        import signal
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            if proc.poll() is None: proc.kill()
 
 
 class Runner:
@@ -187,6 +205,9 @@ class Runner:
         self.procs = {}
         self.stop = threading.Event()
         self.active = set()       # members who pressed Start: nothing of a member runs before that (even from last time)
+        self.resetting = set()
+        self.inflight = {}
+        self.cancelled = set()
 
     @property
     def paused(self):
@@ -210,8 +231,10 @@ class Runner:
 
     def resume(self, user):
         """this member's waiting jobs may run"""
-        self.active.add(user)
-        self.wake()
+        with self.cond:
+            if user not in self.resetting:
+                self.active.add(user)
+                self.cond.notify_all()
 
     def pause(self, user=None):
         """no new job of this member (None: of anyone) starts; running ones finish, queued ones wait"""
@@ -227,6 +250,41 @@ class Runner:
             kill_tree(p)
         self.wake()
 
+    @contextmanager
+    def reset_jobs(self, user, clips, all_user=False, timeout=60.):
+        """Quiesce a member before deleting files; workers must finish cleanup first."""
+        clips=set(clips)
+        with self.cond:
+            while user in self.resetting:
+                self.cond.wait()
+            self.resetting.add(user)
+            was_active=user in self.active
+            self.active.discard(user)
+            ids=set(self.store.cancel_for_reset(user,clips,all_user))
+            ids.update(jid for jid,job in self.inflight.items() if job.get('user')==user and
+                       (all_user or job['clip'] in clips))
+            self.cancelled.update(ids)
+            processes=[self.procs[jid] for jid in ids if jid in self.procs]
+        try:
+            for proc in processes:
+                kill_tree(proc)
+            deadline=time.monotonic()+timeout
+            with self.cond:
+                while any(jid in self.inflight for jid in ids):
+                    remaining=deadline-time.monotonic()
+                    if remaining<=0:
+                        raise TimeoutError('A worker did not stop; generated files were kept. Retry Reset after it exits.')
+                    self.cond.wait(min(remaining,.25))
+            yield len(ids)
+        finally:
+            with self.cond:
+                self.resetting.discard(user)
+                self.cancelled.difference_update(jid for jid in ids if jid not in self.inflight)
+                # Reset all leaves the member paused, exactly like selecting a folder.
+                if was_active and not all_user:
+                    self.active.add(user)
+                self.cond.notify_all()
+
     # ---------------------------------------------------------------- workers
     def _worker(self):
         while not self.stop.is_set():
@@ -235,19 +293,24 @@ class Runner:
                     self.cond.wait(5)
                 if self.stop.is_set():
                     return
-                job = self.store.take(set(self.active), prepare_limit=self.app.c['parallel'],
+                job = self.store.take(set(self.active)-self.resetting, prepare_limit=self.app.c['parallel'],
                                       finish_limit=self.app.c.get('finish_parallel', 1))
                 if job is None:
                     self.cond.wait(3)
                     continue
                 self.busy += 1
+                self.inflight[job['id']]=job
             try:
                 self._run(job)
             except Exception as e:                           # never let a worker die
                 log.exception("job %s crashed", job["id"])
-                self.store.finish(job["id"], False, "internal error: %s" % e)
+                with self.cond:
+                    if job['id'] not in self.cancelled:
+                        self.store.finish(job["id"], False, "internal error: %s" % e)
             finally:
                 with self.cond:
+                    self.inflight.pop(job['id'],None)
+                    self.cancelled.discard(job['id'])
                     self.busy -= 1
                     self.cond.notify_all()
 
@@ -262,6 +325,8 @@ class Runner:
         return cmd
 
     def _run(self, job):
+        with self.cond:
+            if job['id'] in self.cancelled: return
         ws = self.app.ws(job["user"]) if job.get("user") else None
         if ws is None:
             self.store.finish(job["id"], False, "this job belongs to no member")
@@ -292,8 +357,11 @@ class Runner:
             lf.write("# %s  %s  attempt %d\n$ %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), job["stage"], job["attempts"], " ".join(cmd)))
             lf.flush()
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=config.ROOT, creationflags=flags)
-            self.procs[job["id"]] = proc
+            with self.cond:
+                if job['id'] in self.cancelled: return
+                proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env, cwd=config.ROOT,
+                                        creationflags=flags,start_new_session=os.name!='nt')
+                self.procs[job["id"]] = proc
             try:
                 rc = proc.wait(timeout=timeout)
                 err = None
@@ -301,26 +369,31 @@ class Runner:
                 kill_tree(proc)
                 rc, err = -1, "timed out after %d min" % (timeout // 60)
             finally:
-                self.procs.pop(job["id"], None)
+                with self.cond:
+                    self.procs.pop(job["id"], None)
+        with self.cond:
+            if job['id'] in self.cancelled: return
         with open(logp, encoding="utf-8", errors="replace") as fh:
             txt = fh.read()
         ok = rc == 0 and err is None                   # the exit code is the result (run_pipeline: 1 failed, 3 not confirmed)
         if not ok and err is None:
             err = ("the review is not confirmed: press Mark reviewed or Finish now" if rc == 3 else
                    last_error(txt) or "exit code %s" % rc)
-        if self.stop.is_set():
-            self.store.requeue(job["id"])                      # app closing: do it again next start
-            return
-        if not ok and rc != 3 and job["attempts"] < c.get("max_attempts", 2):     # not confirmed: trying again changes nothing
-            log.warning("job %d failed (%s) - trying again", job["id"], err)
-            self.store.requeue(job["id"])
-            return
-        self.store.finish(job["id"], ok, err, logp)
-        if ok and fp:
-            record_finish(c, cl, fp)
-        log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
-        if ok:
-            self.after(ws, cl, job["stage"])
+        with self.cond:
+            if job['id'] in self.cancelled: return
+            if self.stop.is_set():
+                self.store.requeue(job["id"])                      # app closing: do it again next start
+                return
+            if not ok and rc != 3 and job["attempts"] < c.get("max_attempts", 2):
+                log.warning("job %d failed (%s) - trying again", job["id"], err)
+                self.store.requeue(job["id"])
+                return
+            self.store.finish(job["id"], ok, err, logp)
+            if ok and fp:
+                record_finish(c, cl, fp)
+            log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
+            if ok:
+                self.after(ws, cl, job["stage"])
 
     # ---------------------------------------------------------------- what happens next
     def after(self, ws, cl, stage):
@@ -352,27 +425,28 @@ class Runner:
             if self.app.c["autopilot"] == "off":
                 continue
             try:
-                latest = self.store.latest()
-                for user in sorted(self.active):
-                    ws = self.app.ws(user)
-                    if ws is None:
-                        continue
-                    c = ws.c
-                    for cl in ws.lib.clips:
-                        j = latest.get(cl.id)
-                        if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
-                            continue                           # busy, or failed for good: leave for a person
-                        st = status(c, cl, j)
-                        if st["held"]:
-                            continue                           # taken out of the line on the Clips page
-                        if not st["fit"]:
-                            self.store.enqueue(cl.id, "fit", user=user)
-                        elif c["autopilot"] == "full" and not st["done"]:
-                            if self.app.ai_ready() and not st["ai"] and not st["reviewed"]:
-                                self.store.enqueue(cl.id, "ai", user=user)
-                            elif not st["reviewed"] or st["confirmed"]:
-                                self.auto_confirm(ws, cl)
-                self.wake()
+                with self.cond:
+                    latest = self.store.latest()
+                    for user in sorted(self.active):
+                        ws = self.app.ws(user)
+                        if ws is None:
+                            continue
+                        c = ws.c
+                        for cl in ws.lib.clips:
+                            j = latest.get(cl.id)
+                            if j and (j["state"] in ("queued", "running") or (j["state"] == "failed")):
+                                continue                           # busy, or failed for good: leave for a person
+                            st = status(c, cl, j)
+                            if st["held"]:
+                                continue                           # taken out of the line on the Clips page
+                            if not st["fit"]:
+                                self.store.enqueue(cl.id, "fit", user=user)
+                            elif c["autopilot"] == "full" and not st["done"]:
+                                if self.app.ai_ready() and not st["ai"] and not st["reviewed"]:
+                                    self.store.enqueue(cl.id, "ai", user=user)
+                                elif not st["reviewed"] or st["confirmed"]:
+                                    self.auto_confirm(ws, cl)
+                    self.wake()
             except Exception:
                 log.exception("autopilot pass failed")
 

@@ -48,6 +48,8 @@ def shot_frame(c, cl, tag, frame):
     if os.path.exists(p) and (not os.path.exists(plate) or os.path.getmtime(p) >= os.path.getmtime(plate)):
         return p
     with _lock:
+        if not os.path.exists(plate):
+            return None  # Reset removed this prepared shot while the request was waiting.
         img = read_frames_at(cl.video, [int(frame)]).get(int(frame))
         if img is None:
             return None
