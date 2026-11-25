@@ -807,6 +807,9 @@ def rebuild_edits(name, video, work, c, args, t0, previous, current):
         hand = hand_set_path(video, name, c) is not None and not getattr(args, 'auto_set', False)
         rep['set'] = make_set(name, video, work, c, args.stage, hand)
     if props_changed:
+        rv = c.get('_review', {})
+        if rv.get('prop_mode', 'manual' if rv.get('prop_timeline') else 'auto') == 'auto':
+            held_detect(name, video, work, c)
         rep['held_objects'] = held_place(name, work, video, c)
     data = jload(dp)
     if args.stage == 'fit' and (env_changed or props_changed) and c.get('scene_verify', True):

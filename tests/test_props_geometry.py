@@ -284,6 +284,7 @@ class DependencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             video,work,marks,out,rv=self.setup_case(tmp)
             c=dict(DEFAULT_CFG,scene_verify=False); rv.update(prop_timeline=[prop()],prop_mode='manual')
+            c['_review']=rv
             jsave(os.path.join(marks,'review.json'),rv)
             before=DEP.inputs(video,c,work,marks,out)
             def edit_during_job(*args,**kwargs):
@@ -296,6 +297,17 @@ class DependencyTests(unittest.TestCase):
             state=jload(os.path.join(work,'build_state.json'))
             self.assertEqual(state,before)
             self.assertNotEqual(state['props'],DEP.inputs(video,c,work,marks,out)['props'])
+
+    def test_switching_automatic_props_on_runs_only_held_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video,work,marks,out,rv=self.setup_case(tmp)
+            c=dict(DEFAULT_CFG,scene_verify=False,_review=dict(rv,prop_mode='auto'))
+            state=DEP.inputs(video,c,work,marks,out)
+            with patch.object(RP,'held_detect',return_value=True) as detect,patch.object(RP,'held_place',return_value=[]), \
+                 patch.object(RP,'make_set',side_effect=AssertionError('Background was rebuilt')):
+                result=RP.rebuild_edits('work',video,work,c,types.SimpleNamespace(stage='fit'),0,
+                                      dict(state,props='off'),state)
+            detect.assert_called_once(); self.assertTrue(result['reused_people'])
 
     def test_scene_batch_reuses_cached_results_without_starting_worker(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -56,7 +56,7 @@ Uncached background SAM 3 requests are grouped into one worker that loads the ch
 
 ## Validation
 
-Run `.venv\Scripts\python -m unittest discover -s tests -q` (206 tests) and `node --check web/prop_timeline.js`.
+Run `.venv\Scripts\python -m unittest discover -s tests -q` (207 tests) and `node --check web/prop_timeline.js`.
 Regression tests cover selective rebuilds with expensive entry points forbidden, unchanged human/camera data,
 owner changes, independent props, hidden intervals, release interpolation, camera cuts, dimensions, invalid API
 input, cache invalidation, recognizable prototypes and source-visible-person geometry corrections.
