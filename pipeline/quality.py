@@ -124,7 +124,8 @@ def fit_error(ch, track, cam, y0, frames):
         k = track["frames"].get(str(f))
         if k is None or not ch["visible"][f]:
             continue
-        k = np.array(k, float); ok = np.where(k[:, 2] > SURE)[0]
+        from body_constraints import image_keys
+        k = image_keys(k,cam.W,cam.H,y0); ok = np.where(k[:, 2] > SURE)[0]
         if len(ok) < 3:
             continue
         h = max(40.0, float(np.ptp(k[k[:, 2] > 0.3, 1])))
@@ -194,7 +195,8 @@ def alignment_audit(data, pose, y0=0):
         for f,keys in track.get('frames',{}).items():
             f=int(f)
             if f>=data['frames']: continue
-            k=np.asarray(keys,float); sure=k[:,2]>.5
+            from body_constraints import image_keys
+            k=image_keys(keys,cam.W,cam.H,y0); sure=k[:,2]>.5
             if sure.sum()<4: continue
             if f>=len(ch['root']) or not ch.get('visible',[True]*data['frames'])[f]:
                 missing+=1; bad+=1; errors.append(float('inf')); continue

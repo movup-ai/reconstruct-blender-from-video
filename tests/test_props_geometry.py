@@ -256,7 +256,8 @@ class DependencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             video,work,marks,out,rv=self.setup_case(tmp)
             data=jload(os.path.join(work,'scene_data.json'))
-            for ch in data['chars'].values(): ch['body_constraints']={'version':2}
+            from body_constraints import VERSION as BODY_VERSION
+            for ch in data['chars'].values(): ch['body_constraints']={'version':BODY_VERSION}
             jsave(os.path.join(work,'scene_data.json'),data)
             DEP.adopt_existing(video,{},work,marks,out)
             state=jload(os.path.join(work,'build_state.json'))

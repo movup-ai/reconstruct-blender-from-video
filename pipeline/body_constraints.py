@@ -2,7 +2,16 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter1d, median_filter
 
-VERSION = 2
+VERSION = 3
+
+
+def image_keys(keys, width, height, y0=0):
+    """Cropped joints pinned to the image edge are inferred endpoints, not visible measurements."""
+    keys=np.asarray(keys,float).copy()
+    margin=max(4.,.015*min(width,height))
+    clipped=(keys[...,0]<margin)|(keys[...,0]>width-margin)|(keys[...,1]<y0+margin)|(keys[...,1]>y0+height-margin)
+    keys[...,2][clipped]*=.1
+    return keys
 
 
 def stabilize_arms(parameters, confidence, angles, fps=30.):
@@ -10,14 +19,20 @@ def stabilize_arms(parameters, confidence, angles, fps=30.):
     result=parameters.copy()
     for i,(joint,*_) in enumerate(angles):
         if joint.startswith('shoulder_'):
-            ids=(5,7,9) if joint.endswith('_L') else (6,8,10)
+            ids=(7,9) if joint.endswith('_L') else (8,10)
         elif joint.startswith('elbow_'):
             ids=(7,9) if joint.endswith('_L') else (8,10)
         else: continue
-        visible=np.min(confidence[:,ids],axis=1)
+        visible=np.max(confidence[:,ids],axis=1) if joint.startswith('shoulder_') else confidence[:,ids[-1]]
         weight=np.clip((.65-visible)/.65,0,1)
         source=parameters[:,4+i]
         clean=gaussian_filter1d(median_filter(source,size=3,mode='nearest'),max(1.,.13*fps),mode='nearest')
+        if joint.startswith('elbow_'):
+            # Through long wrist occlusion, keep/interpolate observed bends instead of following
+            # unconstrained per-frame depth flips. A never-visible wrist retains a stable inferred bend.
+            anchors=np.flatnonzero(visible>=.65)
+            reference=np.interp(np.arange(len(source)),anchors,source[anchors]) if len(anchors) else np.full(len(source),np.median(source))
+            clean=reference
         result[:,4+i]=source*(1-weight)+clean*weight
     return result
 

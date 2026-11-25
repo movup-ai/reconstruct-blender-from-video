@@ -6,7 +6,7 @@ from pathlib import Path
 
 from common import DEFAULT_CFG, jload, jsave
 
-VERSION = 2  # visibility-aware placement and body priors; old fits must not be reused
+VERSION = 3  # cropped endpoints and temporal continuation; old fits must not be reused
 FIT_KEYS = ('lens_mm', 'person_height', 'character_style', 'pose_mode', 'pose_engine', 'camera_backend',
             'da3_model', 'da3_meters_per_unit', 'da3_max_views', 'foot_contact', 'metric_scene',
             'sam3_checkpoint', 'sam3_mask_side', 'sam3_probability', 'sam3_max_objects',
@@ -86,7 +86,8 @@ def adopt_existing(video, c, work, marks, out):
     pose = read(Path(marks) / 'pose.json', {}) or {}
     if scene.get('human_backend') != 'sam3d_body' or pose.get('tracker_backend') != 'sam3':
         return
-    if any(ch.get('body_constraints',{}).get('version') != 2 for ch in scene.get('chars',{}).values()):
+    from body_constraints import VERSION as BODY_VERSION
+    if any(ch.get('body_constraints',{}).get('version') != BODY_VERSION for ch in scene.get('chars',{}).values()):
         return  # these scenes used incompatible floor/hip assumptions; refit them once
     state = inputs(video, c, work, marks, out)
     state['environment'] = None  # rebuild old geometry with the new protection/prototype rules once

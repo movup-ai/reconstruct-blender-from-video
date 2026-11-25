@@ -369,6 +369,10 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
     rig = Rig(height, style)
     lo, hi = bounds(rig)
     fs = list(fs); K = np.asarray(K, float).copy(); K[:, :, 1] -= y0
+    if unanchored:
+        for j in range(11,17):
+            if (K[:,j,2]>.5).mean()<.25:
+                K[:,j,2]=0  # sparse guesses below a cropped torso must not reposition the person
     fidx = {f_: i_ for i_, f_ in enumerate(fs)}
     def legs_at(f):
         """"seated" | "hidden" | "free" (stand on the floor, the marks decide) at frame f"""
@@ -569,6 +573,16 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
         ysig = float(hint.get("yaw_sigma", 12.0))
         if qprev is not None:
             st = np.r_[0.12 * dt, 0.12 * dt, 12.0 * dt, 0.05 * dt, np.full(len(ANG), 18.0 * dt)]
+            if unanchored:
+                st[:4]=[.04*dt,.04*dt,(3.+9.*min(k[5,2],k[6,2]))*dt,.025*dt]
+                for i,(joint,*_) in enumerate(ANG):
+                    if joint.startswith('shoulder_'):
+                        a,b=(7,9) if joint.endswith('_L') else (8,10)
+                        support=max(k[a,2],k[b,2])
+                    elif joint.startswith('elbow_'):
+                        support=k[9 if joint.endswith('_L') else 10,2]
+                    else: support=.3
+                    st[NB+i]=(3.+15.*float(np.clip(support,0,1)))*dt
         p3t = p3_frame(f, k, kt, yh); Rcw = world.R_cw(f)
         contacts = []
         if not unanchored and qprev is not None and dt <= 4 and hint.get("foot_contact", True) and not lying and not bent and lg == "free":
@@ -743,7 +757,9 @@ def fit_track(world, y0, fs, K, height, step=2, style="sample", hint=None, lift=
             qs = qprev.copy()
             for i_, v_ in key_targets(f):                    # start from the hand-set pose: the fit refines it, it does not have to find it
                 qs[NB + i_] = float(np.clip(v_, lo[NB + i_], hi[NB + i_]))
-            s = solve(lift_start(qs, f, k), f, k, qprev, dt, None)     # (lift_start: no-op without the 3D prior)
+            # Partial bodies keep the previous solution as their seed. Reinitializing an
+            # ambiguous hidden limb from independent model frames caused depth/yaw flips.
+            s = solve(qs if unanchored else lift_start(qs, f, k), f, k, qprev, dt, None)
             if bent_at(f) and legs_at(f) == "free":          # kneeling / crouching: a standing body can often explain
                 for start in low_starts(qs):                  # the marks too (front view) - try low poses as well
                     s2 = solve(start, f, k, qprev, dt * 6, None)
@@ -779,7 +795,19 @@ def assemble(rig, Q, N, smooth, span=None, confidence=None, fps=30.):
         B[seg] = gaussian_filter1d(B[seg], smooth, axis=0, mode="nearest")
     if confidence is not None and last-first>3:
         from body_constraints import stabilize_arms
-        B[first:last+1]=stabilize_arms(B[first:last+1],confidence[first:last+1],ANG,fps)
+        from scipy.ndimage import minimum_filter1d
+        original=B[first:last+1].copy()
+        proposal=stabilize_arms(original,confidence[first:last+1],ANG,fps)
+        limit=np.maximum(.7,merge_b(fk_b(rig,original),rig.s).max(1))
+        strength=np.ones(len(original))
+        for fallback in (.5,.25,0.):
+            trial=original+(proposal-original)*strength[:,None]
+            strength[merge_b(fk_b(rig,trial),rig.s).max(1)>limit]=fallback
+        strength=minimum_filter1d(strength,size=5,mode='nearest')
+        trial=original+(proposal-original)*strength[:,None]
+        unsafe=merge_b(fk_b(rig,trial),rig.s).max(1)>limit+.01
+        trial[unsafe]=original[unsafe]
+        B[first:last+1]=trial
     lo, hi = bounds(rig)
     lo[3] = min(lo[3], 0.04 * rig.s, float(B[:, 3].min()) - 1e-3)   # kneeling / lying people sit lower
     for i_, (lim_lo, lim_hi) in zip(PELVIS_IDX, ((-110.0, 110.0), (-60.0, 60.0))):
@@ -822,7 +850,7 @@ def cached_fit_track(world, y0, fs, K, height, c, style, hint, lift, p3):
     path = None
     if directory:
         frames = list(range(max(fs)+1))
-        key = digest({'version': 2, 'frames': fs, 'keypoints': K, 'y0': y0, 'height': height,
+        key = digest({'version': 4, 'frames': fs, 'keypoints': K, 'y0': y0, 'height': height,
             'style': style, 'hint': hint, 'lift': lift, 'p3': p3, 'step': c.get('fit_step', 2),
             'camera': [world.cam.K(), [world.C_at(f) for f in frames],
                        [world.R_cw(f) for f in frames], [world.f_at(f) for f in frames]]})
@@ -851,6 +879,8 @@ def cached_fit_track(world, y0, fs, K, height, c, style, hint, lift, p3):
 
 def fit_all(world, y0, people, N, c):
     """people {id: (frames, kps)} -> DATA['chars'] entries + per-person report"""
+    from body_constraints import image_keys
+    people={pid:(fs,image_keys(keys,world.cam.W,world.cam.H,y0)) for pid,(fs,keys) in people.items()}
     labels = ["Main character", "Second character"]
     ROLE = {"main": ("Main character", "red"), "second": ("Second character", "blue"), "third": ("Third character", "green"),
             "fourth": ("Fourth character", "yellow"), "extra": ("Extra person", None)}
@@ -906,6 +936,7 @@ def fit_all(world, y0, people, N, c):
                 if info.get('full_body_fraction',1)<.5 and not any(k in hint for k in ('legs','leg_pose','pelvis_z','seat_height')):
                     hint['_body_unanchored']=True
                     hint['legs']='free'
+                    hint.setdefault('kp_weight',2.)
         rig, Q, err = cached_fit_track(world, y0, fs, K, height, c, style, hint, lifts.get(pid), p3)
         sm = (hint or {}).get("smooth", 1.0 if (hint or {}).get("follow_dots") else c.get("smooth_frames", 1.5))
         arm_confidence=None
