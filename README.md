@@ -10,6 +10,11 @@ and CLIP handle scene geometry, semantic labels and carried objects. Every infer
 `Setup.bat` installs the main runtime and RTMPose joint model. The required SAM worker setup and approved
 checkpoint locations are documented in [SAM 3 tracking](docs/SAM3_TRACKING.md) and [SAM 3D Body](docs/SAM3D_BODY.md).
 Use one concurrent job on the RTX 4070. TensorRT joint engines are cached in `models/trt_cache`.
+The clip editor has a **Held-object timeline** for named props, pickups, releases, transfers and visibility.
+Prop edits reuse fitted people and cameras; only changed scene layers and requested outputs are rebuilt.
+Trees, bushes, palms and potted plants use recognizable measured prototypes. Object boxes and optional
+dimensions constrain their size, and source-visible people are protected from conflicting background geometry.
+See [props, prototypes and selective rebuilding](docs/PROPS_AND_REBUILDS.md).
 A `3D` folder inside `SOURCE` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
 
 Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
