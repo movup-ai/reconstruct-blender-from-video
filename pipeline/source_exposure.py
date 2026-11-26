@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 
-def measure(frames, shots, pose, y0, height):
+def measure(frames, shots, pose, y0, height, fps=30.):
     if not frames:
         return {'stops': [], 'shots': [], 'source': 'no frames'}
     width = frames[0].shape[1]
@@ -40,10 +40,10 @@ def measure(frames, shots, pose, y0, height):
                 tile = luminance[np.ix_(yy, xx)]
                 row.append(float(np.median(tile[mask])) if mask.mean() >= .8 else np.nan)
         samples.append(row)
-    return from_tiles(np.asarray(samples), shots)
+    return from_tiles(np.asarray(samples), shots, fps)
 
 
-def from_tiles(samples, shots):
+def from_tiles(samples, shots, fps=30.):
     samples = np.asarray(samples, float)
     stops = np.zeros(len(samples)); reports = []
     for first, end in shots:
@@ -70,12 +70,43 @@ def from_tiles(samples, shots):
             if reliable[i]:
                 curve[i] = np.clip(median, -8., 0.)
         applied = bool(reliable.mean() >= .7 and np.min(curve) < -.6)
+        edges=np.flatnonzero(np.diff(np.r_[False,~reliable,False]))
+        longest_gap=int(np.max(edges[1::2]-edges[::2])) if len(edges) else 0
+        stable=longest_gap<=max(2,round(.15*fps))
+        applied=bool(applied and stable)
         if applied:
-            # Unreliable frames keep neutral exposure rather than fabricated darkness.
-            stops[first:end] = curve
+            # A brief uncertain estimate must not flash the entire scene back to
+            # neutral. Interpolate short gaps; ambiguous long gaps reject the shot.
+            stops[first:end] = np.interp(np.arange(len(curve)),np.flatnonzero(reliable),curve[reliable])
         reports.append({'frames': [first, end-1], 'applied': applied,
                         'reliable_fraction': round(float(reliable.mean()), 3),
                         'min_stops': round(float(curve.min()), 3),
-                        'reason': 'coherent background dimming' if applied else 'no reliable substantial exposure change'})
+                        'max_unreliable_gap':longest_gap,
+                        'reason': 'coherent background dimming' if applied else
+                            ('ambiguous brightness interval' if not stable else 'no reliable substantial exposure change')})
     return {'stops': stops.round(4).tolist(), 'shots': reports,
             'source': 'linearized source background tiles excluding tracked people; relative stops per shot'}
+
+
+def attach(data, video, work, config, pose=None, info=None, frames=None):
+    """Render-only, opt-in analysis; switching it never requires a new human fit."""
+    if not config.get('source_exposure',False):
+        data.pop('source_exposure',None)
+        return
+    from pathlib import Path
+    from common import jload,read_frames
+    import validation as V
+    if info is None:info=jload(str(Path(work)/'clip_info.json'))
+    if pose is None:
+        from run_pipeline import marks_dir
+        pose=jload(str(Path(marks_dir(video,config))/'pose.json'))
+    shots=[tuple(s['frames']) for s in data.get('shots',[])] or [(0,data['frames']-1)]
+    key=V.digest({'video':V.file_digest(video),'tracks':[p.get('frames',{}) for p in pose.get('people',[])],
+        'crop':[info['y0'],info['Hpic']],'shots':shots,'fps':info['fps'],
+        'implementation':V.implementation(('source_exposure.py',))})
+    def compute():
+        pictures=frames if frames is not None else read_frames(video)[0]
+        return measure(pictures,[(a,b+1) for a,b in shots],pose,info['y0'],info['Hpic'],info['fps'])
+    curve=V.cached_report(Path(work)/'source_exposure.json',key,compute)
+    if len(curve['stops'])!=data['frames']:raise ValueError('Exposure curve frame count does not match the scene')
+    data['source_exposure']=curve

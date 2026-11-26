@@ -14,10 +14,11 @@ DEFAULT_CFG = {
     "work_root": os.path.join(AGENT, "Work_auto"),
     "lens_mm": 34.9,                         # 35 mm-equivalent focal length used for every clip (clip 1 solved to 34.9)
     "person_height": 1.72,
-    "character_style": "l3",                 # supplied L3-2026-11-18 mesh, fixed rigid marks
-    "previs_standard": "l3",                 # migrate legacy defaults; "legacy" preserves older styles
+    "character_style": "sample",             # L3 is available through explicit character selection
+    "previs_standard": "legacy",             # derived from the selected rig, never forces a replacement
     "set_colours": "video",
-    "source_exposure": True,
+    "source_exposure": False,                 # optional relative brightness matching
+    "render_engine": "workbench",             # independent of character style; eevee enables scene lighting
     "temporal_refinement": True,
     "frame_review": True,
     "validation_mode": "normal",             # audit enables exhaustive checks and review exports
@@ -77,8 +78,8 @@ def normalize_backends(c):
     for key in RETIRED_SETTINGS:
         c.pop(key, None)
     c.update(FIXED_BACKENDS)
-    if c.get('previs_standard', 'l3') == 'l3':
-        c['character_style'] = 'l3'
+    c['character_style'] = c.get('character_style') or 'sample'
+    c['previs_standard'] = 'l3' if c['character_style']=='l3' else 'legacy'
     return c
 
 

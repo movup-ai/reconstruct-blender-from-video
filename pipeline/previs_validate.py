@@ -61,9 +61,8 @@ def validate(work, marks, output):
             character['source_range'] = [first,last]
             data['chars'][(tag.strip('_')+'_' if tag else '')+name] = widen(character, first, end, original['frames'])
     data['required_track_ids'] = sorted(settings.get('_required_tracks',set()),key=str)
-    frames, _ = read_frames(info['video'])
     import source_exposure
-    data['source_exposure'] = source_exposure.measure(frames, [(s['frames'][0],s['frames'][1]+1) for s in shots], pose, info['y0'], info['Hpic'])
+    source_exposure.attach(data,info['video'],str(output),settings,pose,info)
     data['render_scale'] = min(1., 960./data['res'][0])
     import colour_card
     colour_card.apply(data, log=None)

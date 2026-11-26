@@ -38,6 +38,7 @@ def rig_assets(data):
     root=Path(__file__).resolve().parents[1]/'assets'
     styles={c.get('style','sample') for c in data.get('chars',{}).values()}
     paths={ASSET_FILES[s] for s in styles if s in ASSET_FILES}
+    if 'sample' in styles:paths.add('sample_character.json')
     if 'l3' in styles:paths.update(('l3/L3_standard.blend','l3/model-profile.json'))
     return {p:file_digest(root/p) for p in sorted(paths)}
 

@@ -207,7 +207,7 @@ def apply(data, log=print):
             role = role_of(m0, V, people, cam, frames)
         for i in idx:
             mesh = meshes[i]
-            if l3 and data.get('background_policy', 'video') in ('source','video') and role == 'bg':
+            if data.get('background_policy', 'video' if l3 else 'grey') in ('source','video') and role == 'bg':
                 original = mesh.setdefault('source_rgb', source_colors.get(mesh.get('colour'), pal['bg']))
                 key = 'source_bg_' + ''.join('%02x' % int(np.clip(v, 0, 255)) for v in original[:3])
                 pal[key] = list(original[:3])

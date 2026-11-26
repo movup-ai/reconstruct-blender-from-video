@@ -9,7 +9,8 @@ from profiling import stage,counter
 def character_parts(style):
     from common import AGENT, jload
     import os
-    asset = {'sample':'sample_character.json', 'base21':'base_character_v21.json', 'master':'human_master.json'}.get(style)
+    asset = {'sample':'sample_character.json', 'base21':'base_character_v21.json',
+             'master':'human_master.json','l3':'l3/character.json'}.get(style)
     return jload(os.path.join(AGENT,'assets',asset))['parts'] if asset else None
 
 

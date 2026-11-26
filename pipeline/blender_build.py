@@ -391,7 +391,8 @@ def build_blender():
         scn.world = bpy.data.worlds.new("World")
     scn.world.color = tuple(c / (2.0 ** EXPOSURE) for c in SKY[:3])
 
-    LZHD = DATA.get("spec") == "lzhd1" or any(c.get('style') == 'l3' for c in DATA.get('chars', {}).values())
+    from render_settings import engine as render_engine
+    LZHD = render_engine(DATA,DATA)=='eevee'
     mats = {}
     for k, c in COLORS.items():
         m = bpy.data.materials.get("WM_" + k) or bpy.data.materials.new("WM_" + k)

@@ -13,7 +13,7 @@ FIT_KEYS = ('lens_mm', 'person_height', 'character_style', 'pose_mode', 'pose_en
             'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_stride', 'sam3d_surface_side', 'fit_step',
             'smooth_frames', 'pose3d_weight', 'pose3d_sigma', 'metric_max_views', 'metric_resolution',
             'max_people', 'camera_estimator', 'lens_auto', 'motion_prior', 'previs_standard',
-            'temporal_refinement', 'source_exposure')
+            'temporal_refinement')
 
 
 def digest(value):
@@ -51,10 +51,11 @@ def inputs(video, c, work, marks, out, review=None, overrides=None):
         if key in hints: c[key] = hints[key]
     if rv.get('camera',{}).get('lens'): c['lens_mm'] = float(rv['camera']['lens'])
     fit_hints = {k: v for k, v in hints.items() if k not in
-                 ('scene_justifications', 'held_objects', 'light', 'exposure', 'palette', 'vegetation_prototypes')}
+                 ('scene_justifications', 'held_objects', 'light', 'exposure', 'source_exposure', 'render_engine', 'palette', 'vegetation_prototypes')}
     from rig import ASSET_FILES
     style = hints.get('character_style') or c.get('character_style', DEFAULT_CFG['character_style'])
-    asset = Path(__file__).resolve().parents[1] / 'assets' / ASSET_FILES[style] if style in ASSET_FILES else None
+    asset_name=ASSET_FILES.get(style) or ('sample_character.json' if style=='sample' else None)
+    asset = Path(__file__).resolve().parents[1] / 'assets' / asset_name if asset_name else None
     fit = digest({'version': VERSION, 'video': stamp(video), 'pose': overrides.get('pose', read(marks / 'pose.json')),
                   'masks': stamp(marks / 'sam3_masks.npz'), 'checked': checked,
                   'people': rv.get('people', {}), 'camera': rv.get('camera', {}), 'hints': fit_hints,

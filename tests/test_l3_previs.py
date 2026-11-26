@@ -35,8 +35,8 @@ class L3StandardTests(unittest.TestCase):
             np.testing.assert_allclose(pb,.8*pa)
         np.testing.assert_allclose([o for j,o in b.coco],.8*np.array([o for j,o in a.coco]))
 
-    def test_default_migration_preserves_explicit_legacy_opt_out(self):
-        self.assertEqual(normalize_backends({'character_style':'master'})['character_style'],'l3')
+    def test_default_migration_preserves_explicit_character_choice(self):
+        self.assertEqual(normalize_backends({'character_style':'master'})['character_style'],'master')
         self.assertEqual(normalize_backends({'character_style':'master','previs_standard':'legacy'})['character_style'],'master')
 
     def test_old_asset_fit_is_not_adopted_under_new_l3_geometry(self):

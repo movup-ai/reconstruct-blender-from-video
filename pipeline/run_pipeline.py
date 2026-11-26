@@ -680,12 +680,10 @@ def run_clip(video, c, args):
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
     data['human_backend'] = 'sam3d_body'
     data['required_track_ids'] = sorted(c.get('_required_tracks', set()), key=str)
-    data['previs_standard'] = c.get('previs_standard', 'l3')
+    data['previs_standard'] = 'l3' if any(ch.get('style')=='l3' for ch in chars_all.values()) else 'legacy'
     data['background_policy'] = env.get('set_colours', c.get('set_colours', 'source'))
-    if c.get('source_exposure', True):
-        import source_exposure
-        data['source_exposure'] = source_exposure.measure(frames, shots, pose, y0, Hp)
-        jsave(os.path.join(work, 'source_exposure.json'), data['source_exposure'])
+    import source_exposure
+    source_exposure.attach(data,video,work,c,pose,{'y0':y0,'Hpic':Hp,'fps':fps},frames)
     if hints.get('light'):
         data['light'] = hints['light']
     import limb_depth
@@ -1089,17 +1087,23 @@ def blender_render(c, work, dp, N, extra=("render",)):
     for key,path in expected.items():
         if os.path.normcase(os.path.abspath(render_data.get(key,'')))!=os.path.normcase(os.path.abspath(path)):
             raise RuntimeError('Scene %s does not match this render workspace; refresh its output paths before rendering.'%key)
+    d_ = jload(dp)
+    from render_settings import engine as render_engine
+    from validation import mode as validation_mode
+    d_['render_engine']=render_engine(c,d_)
+    d_['validation_mode']=validation_mode(c)
+    if not c.get('source_exposure',False):d_.pop('source_exposure',None)
+    elif not d_.get('source_exposure'):
+        import source_exposure
+        source_exposure.attach(d_,jload(os.path.join(work,'clip_info.json'))['video'],work,c)
+    d_['background_policy'] = (c.get('_review') or {}).get('environment',{}).get('set_colours',c.get('set_colours','source'))
+    if (c.get('_hints') or {}).get('light'):d_['light'] = c['_hints']['light']
     try:                                                   # every video follows the colour card (docs/COLOUR_CARD.md)
         import colour_card
-        d_ = jload(dp)
-        from validation import mode as validation_mode
-        d_['validation_mode']=validation_mode(c)
-        d_['background_policy'] = (c.get('_review') or {}).get('environment',{}).get('set_colours',c.get('set_colours','source'))
-        if (c.get('_hints') or {}).get('light'):
-            d_['light'] = c['_hints']['light']
-        colour_card.apply(d_, log=log); jsave(dp, d_)
+        colour_card.apply(d_, log=log)
     except Exception as e:
         log("  colour card not applied (%s)" % str(e)[:200])
+    jsave(dp,d_)
     log("  blender build + render (%d frames) ..." % N)
     done = os.path.join(work, "render_done.txt")
     if os.path.exists(done): os.remove(done)
@@ -1197,6 +1201,8 @@ def render_only(name, video, work, c, args, t0):
         alignment=quality.cached_alignment(data,source_pose,(source_pose.get('picture_area') or [0,0])[1],work)
         jsave(os.path.join(work,'human_alignment.json'),alignment)
         quality.require_alignment(alignment)
+    import source_exposure
+    source_exposure.attach(data,video,work,c)
     if hints.get("plant_feet") or hints.get("pulldown_retime"):                # the fit stays in scene_data.json; the
         data.pop("feet_planted", None); data.pop("pulldown_retimed", None)      # render-time changes go to a copy
         jsave(dp, {k: v for k, v in data.items()})                              # (palette / paths for the checkers)
