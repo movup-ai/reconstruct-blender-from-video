@@ -354,7 +354,7 @@ LABELS = {  # label -> group used by the Clips page
     "outdated": "old", "failed": "fail", "cancelled": "new", "skipped": "skip"}
 
 
-def status(c, cl, job=None):
+def status(c, cl, job=None, stages=None):
     """flags from the files + the clip's latest job -> one label.
     A queued or running job is shown first; otherwise a valid zip (made from today's video, delivery name and
     Stage 1 settings) is "done", whatever happened to a later job that is no longer running."""
@@ -368,12 +368,17 @@ def status(c, cl, job=None):
     s["outdated"] = has_zip and not s["done"]
     s["skipped"] = cl.id in skipped_set(c)
     s["job"] = job and {k: job[k] for k in ("id", "stage", "state", "attempts", "error") if k in job}
-    state = (job or {}).get("state")
-    s["stage"] = (job or {}).get("stage") if state in ("queued", "running") else None
+    s["stage"] = (job or {}).get("stage") if (job or {}).get("state") in ("queued", "running") else None
+    # each stage has its own status: the label is Movement's (from its own latest job), "background" is Stage 2's.
+    # Without the per-stage jobs, the latest job counts for the stage it belongs to.
+    if stages is None:
+        stages = {job["stage"]: job} if job and job.get("stage") else {}
+    mjob, bjob = stages.get("movement"), stages.get("background")
+    state = (mjob or {}).get("state")
     if state == "running":
         label = "processing"
     elif state == "queued":
-        label = "paused" if (job or {}).get("error") == PAUSED else "waiting"
+        label = "paused" if (mjob or {}).get("error") == PAUSED else "waiting"
     elif s["skipped"]:                                     # chosen by the person: shown even over an older finished zip
         label = "skipped"
     elif s["done"]:
@@ -388,20 +393,22 @@ def status(c, cl, job=None):
         label = "new"
     s["label"] = label
     s["group"] = LABELS[label]
-    s["background"] = background_status(f, job, s["done"])
+    s["movement"] = mjob and {k: mjob[k] for k in ("id", "state", "attempts", "error") if k in mjob}
+    s["background"] = background_status(f, bjob, s["done"])
     return s
 
 
 def background_status(f, job, stage1_done):
-    """Stage 2 of a clip: {state, zip}.  state: none / waiting / processing / done / outdated (Stage 1 was made
-    again after it) / failed / cancelled.  Its zip never changes Stage 1's status."""
+    """Stage 2 of a clip: {state, zip}.  state: none / waiting / paused / processing / done / outdated (Stage 1 was
+    made again after it) / failed / cancelled.  job: the clip's latest Background job.  Its zip never changes Stage 1's
+    status."""
     has = os.path.exists(f["bg_zip"])
     j = job if job and job.get("stage") == "background" else None
     st = (j or {}).get("state")
     if st == "running":
         state = "processing"
     elif st == "queued":
-        state = "waiting"
+        state = "paused" if j.get("error") == PAUSED else "waiting"
     elif has:
         state = "done" if stage1_done and os.path.getmtime(f["bg_zip"]) >= os.path.getmtime(f["zip"]) else "outdated"
     elif st == "failed":

@@ -372,3 +372,5 @@ table.progtable .pbar { margin:6px 0 2px; max-width:200px; }
   table.progtable td[data-k] > .pst { display:inline-block; }
 }
 
+/* a clip card's two stage chips: Movement and (once there is one) Background */
+.chips { display:inline-flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }

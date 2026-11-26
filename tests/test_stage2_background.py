@@ -115,6 +115,61 @@ class Geometry(unittest.TestCase):
         self.assertGreater(fo, 0.99); self.assertGreater(zo, 0.99)
 
 
+class StagesRunOnTheirOwn(unittest.TestCase):
+    """Movement and Background: each has its own Start / Pause, its own jobs and its own status"""
+
+    def setUp(self):
+        from agent.jobs import JobStore, Runner
+        import types
+        self.d = tempfile.mkdtemp()
+        self.store = JobStore(os.path.join(self.d, "jobs.db"))
+        self.runner = Runner(types.SimpleNamespace(store=self.store))
+
+    def tearDown(self):
+        self.store.db.close()
+
+    def test_take_runs_only_the_started_stages(self):
+        self.store.enqueue("a", "movement"); self.store.enqueue("b", "background")
+        self.assertIsNone(self.store.take(stages=set()))
+        self.assertEqual(self.store.take(stages={"background"})["clip"], "b")
+        self.assertIsNone(self.store.take(stages={"background"}))
+        self.assertEqual(self.store.take(stages={"movement"})["clip"], "a")
+        self.assertEqual(self.store.counts_by_stage(), {"movement": {"running": 1}, "background": {"running": 1}})
+
+    def test_pause_and_resume_one_stage(self):
+        r = self.runner
+        self.assertTrue(r.is_paused() and r.is_paused("movement") and r.is_paused("background"))
+        r.resume("background")
+        self.assertFalse(r.is_paused("background")); self.assertTrue(r.is_paused("movement")); self.assertFalse(r.is_paused())
+        r.resume("movement"); r.pause("background")
+        self.assertEqual(r.active_stages, {"movement"})
+        r.pause()
+        self.assertTrue(r.is_paused())
+        r.active = True                                      # all stages at once
+        self.assertEqual(r.active_stages, {"movement", "background"})
+
+    def test_cancel_queued_of_one_stage(self):
+        self.store.enqueue("a", "movement"); self.store.enqueue("b", "background")
+        self.assertEqual(self.store.cancel_queued(stage="movement"), 1)
+        self.assertEqual(self.store.active_clips("background"), {"b"})
+        self.assertEqual(self.store.active_clips("movement"), set())
+
+    def test_each_stage_has_its_own_status(self):
+        from agent import clips as clipsmod
+        import types
+        jid = self.store.enqueue("a", "movement"); self.store.take(); self.store.finish(jid, True)
+        jid = self.store.enqueue("a", "background"); self.store.take()
+        stages = self.store.latest_stages()["a"]
+        self.assertEqual({k: v["state"] for k, v in stages.items()}, {"movement": "done", "background": "running"})
+        with tempfile.TemporaryDirectory() as d:
+            c = {"work_root": d, "submit_root": d, "source_root": d, "marks_root": d}
+            cl = types.SimpleNamespace(id="a", name="film_a", video=os.path.join(d, "film", "a.mp4"))
+            st = clipsmod.status(c, cl, self.store.latest()["a"], stages)
+            self.assertEqual(st["label"], "new")                       # Movement: its own job (done, but no zip here)
+            self.assertEqual(st["background"]["state"], "processing")  # Background runs: shown in its own status
+            self.assertEqual(st["job"]["stage"], "background")         # the clip's latest job (Cancel acts on it)
+
+
 class Status(unittest.TestCase):
     def test_background_status_follows_its_zip_and_job(self):
         from agent.clips import background_status

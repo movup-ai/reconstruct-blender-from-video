@@ -437,7 +437,8 @@ class TestApi(unittest.TestCase):
         d = json.loads(self.get("/api/clips")[1])
         self.assertNotIn("me", d)
         self.assertIs(d["local"], True, "the test runs on this PC")
-        self.assertEqual(set(d["queue"]), {"running", "queued", "failed", "parallel", "now", "paused"})
+        self.assertEqual(set(d["queue"]), {"running", "queued", "failed", "parallel", "now", "paused", "stages"})
+        self.assertEqual(set(d["queue"]["stages"]), {"movement", "background"})          # each stage on its own
         self.assertEqual(d["source"]["path"], os.path.join(self.d, "src"))
         self.assertEqual(config.load()["source_root"], os.path.join(self.d, "src"), "the source folder is saved in the settings")
         f = clipsmod.folders(self.ws.c, self.ws.lib.clips[0])

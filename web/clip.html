@@ -194,7 +194,8 @@ async function load(first) {
   finishQueue.disabled = processingBusy;
   finishQueue.title = resume ? 'Restart the interrupted run using completed caches' : 'Stop active processes and keep completed caches';
   finishQueue.onclick = async () => {
-    await processingControl(resume ? '/api/resume' : '/api/pause','Updating active processing…');
+    const stage = INFO.job?.stage || 'movement';                 // this job's stage only: the other stage keeps running
+    await processingControl((resume ? '/api/resume' : '/api/pause') + `?stage=${stage}`, 'Updating active processing…');
     refresh();
   };
   $('cancel-processing').hidden = !['queued', 'running'].includes(INFO.job?.state);
