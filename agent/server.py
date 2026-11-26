@@ -103,10 +103,21 @@ class Workspace:
             self.lib.c = self.c
             self.lib.rescan()
 
+    def ensure_name(self, cl):
+        """a clip without a delivery name gets a generic one (clip-N) when it is queued, so a missing name never fails
+        a job after its GPU work.  It is flagged as made up: Name videos... with a real title replaces it."""
+        if pkg.package_name(cl.name, self.c):
+            return
+        new = pkg.auto_name([cl.name], self.c)
+        if new:
+            log.warning("%s had no delivery name: gave it %s (made up - Name videos... replaces it with the film's title)",
+                        cl.name, new[cl.name])
+
     def enqueue(self, cl, stage="movement", force=False):
         with self.runner.cond:
             if self.runner.resetting:
                 raise HttpError(409, 'Reset is still stopping jobs and clearing files. Wait for it to finish.')
+            self.ensure_name(cl)
             return self.store.enqueue(cl.id, stage, force=force)
 
     def clip(self, cid):
@@ -185,7 +196,8 @@ class Workspace:
         out = {"clip": cl.to_dict(), "status": st, "index": idx, "count": len(self.lib.clips),
                "prev": self.lib.clips[idx - 1].id if idx > 0 else None,
                "next": self.lib.clips[idx + 1].id if 0 <= idx < len(self.lib.clips) - 1 else None,
-               "package": package, "paused": self.runner.is_paused(),
+               "package": package, "auto_name": bool(package) and cl.name in pkg.auto_named(),
+               "paused": self.runner.is_paused(),
                "timing": self.store.timing().get(cl.id)}
         pose = read_json(f["pose"])
         if pose:
@@ -356,7 +368,8 @@ def folder_scan(c, path, title=""):
     names = pkg.package_names(c)
     zipped = {cl.name: os.path.splitext(os.path.basename(cl.zip))[0].lower() for cl in lib.clips if cl.zip}
     zipped = {k: v for k, v in zipped.items() if pkg.PKG_RE.match(v) and not names.get(k)}   # named by their zip
-    title = title or title_guess(names.get(cl.name) for cl in lib.clips)
+    auto = pkg.auto_named()                                   # a made-up name (clip-N) is not the film's title
+    title = title or title_guess(names.get(cl.name) for cl in lib.clips if cl.name not in auto)
     plan = pkg.propose_names([cl.name for cl in lib.clips if cl.name not in zipped], title, c=c)
     plan.update({k: (v, False) for k, v in zipped.items()})
     rows = [{"file": cl.rel, "clip": cl.name, "package": plan[cl.name][0], "new_name": plan[cl.name][1],
@@ -586,9 +599,10 @@ def make_handler(app):
             if parts == ["api", "clips"]:
                 if time.time() - ws.lib.scanned > 10:                   # new videos in the folder appear by themselves
                     ws.lib.rescan()
-                names, tm = pkg.package_names(c), app.store.timing()
+                names, tm, auto = pkg.package_names(c), app.store.timing(), pkg.auto_named()
                 src = c["source_root"]
-                return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name), took=tm.get(cl.id))
+                return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name), took=tm.get(cl.id),
+                                                      auto_name=bool(names.get(cl.name)) and cl.name in auto)
                                                  for cl, st in ws.status_all()],
                                        "queue": ws.queue_summary(),
                                        "local": self.local(),

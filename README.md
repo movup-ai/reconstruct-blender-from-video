@@ -26,7 +26,9 @@ Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.
    (v2.1 layout with `target/original.mp4` and `meta/task.json`) can go in as they are: the app writes each zip's video
    next to it and uses the zip name as its delivery name.
 2. **Name the videos** (*Name videos…*): videos without a v2.1 package name get `title-1`, `title-2`… in file-name
-   order from one English title (`data\package_names.json`). A clip without a package name fails with a clear message.
+   order from one English title (`data\package_names.json`). A clip that is queued without a package name is given a made-up one (`clip-N`, listed in
+   `data\auto_names.json`, marked *auto* in the app) so a run never fails at packaging after its GPU work; naming the
+   videos later with a title replaces made-up names only (the replaced `clip-N` is never reused). Real names never change.
 3. **Start.** Every clip that is not done runs the Movement stage on its own. **Pause / Resume / Cancel** act on the
    running jobs; **Reset** deletes a clip's generated work so it runs from the video again.
 4. **Download** the zip when the clip shows *done*. A zip is *outdated* when the video, its delivery name or a Stage 1

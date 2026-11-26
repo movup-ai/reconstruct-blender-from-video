@@ -92,6 +92,79 @@ class TestOldMemberNames(unittest.TestCase):
         self.assertEqual(pkg.package_name("a"), "film-2")
 
 
+class TestAutoNames(unittest.TestCase):
+    """a clip without a delivery name gets a made-up one (clip-N) instead of failing a run after its GPU work; a real
+    title replaces a made-up name (never a real one) and the replaced name is never given out again"""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = os.path.join(self.d, "package_names.json")
+        with open(self.p, "w", encoding="utf-8") as fh:
+            json.dump({"real": "film-1"}, fh)
+        self.patch = mock.patch.object(pkg, "NAMES_P", self.p); self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_unnamed_clips_get_valid_flagged_names_and_named_ones_are_untouched(self):
+        new = pkg.auto_name(["real", "a", "b"])
+        self.assertEqual(new, {"a": "clip-1", "b": "clip-2"})
+        self.assertTrue(all(pkg.PKG_RE.match(v) for v in new.values()))
+        self.assertEqual(pkg.package_name("real"), "film-1")
+        self.assertEqual(pkg.auto_named(), {"a", "b"})
+        self.assertEqual(pkg.auto_name(["a", "b", "real"]), {}, "a clip that has a name keeps it")
+        self.assertEqual(pkg.auto_name(["c"]), {"c": "clip-3"})
+        self.assertEqual(pkg.auto_name(["老友记 Friends S01E05"]), {"老友记 Friends S01E05": "clip-4"},
+                         "a name that cannot be turned into ASCII still gets a valid one")
+
+    def test_a_real_title_replaces_made_up_names_only(self):
+        pkg.auto_name(["a", "b"])
+        new = pkg.assign_names(["real", "a", "b"], "Friends")
+        self.assertEqual(new, {"a": "friends-1", "b": "friends-2"}, "'real' keeps film-1")
+        self.assertEqual(pkg.package_names(), {"real": "film-1", "a": "friends-1", "b": "friends-2"})
+        self.assertEqual(pkg.auto_named(), set(), "replaced clips are real now")
+        self.assertEqual(pkg.assign_names(["a", "b"], "Other"), {}, "a real name is never replaced")
+
+    def test_replaced_names_are_never_given_out_again(self):
+        pkg.auto_name(["a"])                                   # clip-1
+        pkg.assign_names(["a"], "film")                        # film-2; clip-1 retired
+        self.assertEqual(pkg.auto_name(["b"]), {"b": "clip-2"}, "clip-1 was handed out once and is not reused")
+        with open(os.path.join(self.d, "auto_names.json"), encoding="utf-8") as fh:
+            self.assertIn("clip-1", json.load(fh)["retired"])
+
+    def test_no_title_or_the_generic_title_keeps_made_up_names(self):
+        pkg.auto_name(["a"])
+        self.assertEqual(pkg.assign_names(["a"], ""), {})
+        self.assertEqual(pkg.assign_names(["a"], "clip"), {})
+        self.assertEqual(pkg.package_name("a"), "clip-1")
+        self.assertEqual(pkg.auto_named(), {"a"})
+
+    def test_queueing_a_clip_names_it(self):
+        import threading
+        from types import SimpleNamespace
+        jobs = []
+        ws = object.__new__(server.Workspace)
+        ws.c = {}
+        ws.runner = SimpleNamespace(cond=threading.Condition(), resetting=False)
+        ws.store = SimpleNamespace(enqueue=lambda cid, stage, force=False: jobs.append((cid, stage)) or len(jobs))
+        cl = SimpleNamespace(id="x1", name="brand new clip")
+        self.assertEqual(ws.enqueue(cl), 1)
+        self.assertEqual(jobs, [("x1", "movement")])
+        self.assertEqual(pkg.package_name("brand new clip"), "clip-1")
+        ws.enqueue(cl, "render")
+        self.assertEqual(pkg.package_name("brand new clip"), "clip-1", "queued again: the name stays")
+        self.assertEqual(pkg.auto_named(), {"brand new clip"})
+
+    def test_the_pipeline_names_a_clip_before_any_gpu_work(self):
+        """run_clip gives a nameless clip a made-up name first; a later failure must not be the missing name"""
+        args = mock.Mock(stage="movement", force=False, device="cuda"); args.name = "nameless"
+        c = dict(config.load(), work_root=os.path.join(self.d, "w"), submit_root=os.path.join(self.d, "s"))
+        with mock.patch.object(rp.gpu_lease, "acquire", side_effect=RuntimeError("stop: GPU work would start here")):
+            with self.assertRaisesRegex(RuntimeError, "stop: GPU work"):
+                rp.run_clip(os.path.join(self.d, "nameless.mp4"), c, args)
+        self.assertEqual(pkg.package_name("nameless"), "clip-1")
+
+
 class TestFolders(unittest.TestCase):
     """one workspace: no member folders; a job reads the app's source folder (BA_SOURCE), a test run its sandbox"""
     def test_output_dir_and_cfg(self):

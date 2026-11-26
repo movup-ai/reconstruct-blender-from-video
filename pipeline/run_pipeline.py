@@ -204,6 +204,10 @@ def run_clip(video, c, args):
         real_md = marks_dir(video, dict(real, marks_root=os.path.join(AGENT, "output")))
         if os.path.isdir(real_md) and not os.path.exists(marks_dir(video, c)):
             shutil.copytree(real_md, marks_dir(video, c))
+    if not c.get("_sandbox") and not pkg.package_name(name, c):    # a missing delivery name must not fail a run after its GPU work
+        made = pkg.auto_name([name], c)
+        if made:
+            log("  no delivery name for %s: gave it %s (made up - Name videos... in the app replaces it)" % (name, made[name]))
     t0 = time.time()
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render the saved scene (no new fitting)

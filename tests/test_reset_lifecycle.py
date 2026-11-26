@@ -21,6 +21,9 @@ class ResetLifecycleTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.patch=patch.object(config,'DATA',str(self.root/'data'));self.patch.start()
         self.addCleanup(self.patch.stop)
+        import package  # pipeline, on sys.path through config; queueing names a clip, so keep the names file in the temp folder
+        names=patch.object(package,'NAMES_P',str(self.root/'package_names.json'));names.start()
+        self.addCleanup(names.stop)
         source=self.root/'source';source.mkdir()
         for name in ('one','two'):(source/(name+'.mp4')).write_bytes(b'synthetic source')
         c={**config.DEFAULT_CFG,**config.APP_DEFAULTS,'source_root':str(source),'work_root':str(self.root/'work'),

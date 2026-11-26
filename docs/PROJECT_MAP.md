@@ -13,7 +13,7 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 | `tests\` | Unit tests (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`) | yes |
 | `docs\` | These notes; `docs\v21\` holds the client's delivery spec | yes |
 | `assets\` | The client's sample character (`sample_character.json`), the reconstruction script shipped in every package | yes |
-| `data\` | App state, not in git: `jobs.db` (the job queue), `package_names.json`, skipped clips | no |
+| `data\` | App state, not in git: `jobs.db` (the job queue), `package_names.json`, `auto_names.json` (clips whose name the app made up, and the made-up names a real title replaced), skipped clips | no |
 | `.venv\` | Python environment, made by `Setup.bat` | no |
 | `models\` | Model weights (see MODEL_FLOW.md); `trt_cache\` TensorRT engines | no |
 | `third_party\` | MoGe, SAM 3 and SAM 3D Body source code | no |

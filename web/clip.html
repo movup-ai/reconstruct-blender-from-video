@@ -126,8 +126,10 @@ function banner() {
   else if (j && j.state === 'failed') { b.className = 'banner fail';
     b.innerHTML = `<b>The last run (${esc(STAGE[j.stage] || j.stage)}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
   else if (!INFO.package) { b.className = 'banner note';
-    b.innerHTML = '<span>No delivery name yet. The client needs one for each zip: on the Clips page press <b>Name videos…</b> and type the film’s English title, for example <b>the hidden blade</b>.</span>'; }
+    b.innerHTML = '<span>No delivery name yet. Start gives it a made-up one (clip-1, clip-2…) so the run does not fail. The client needs the film’s title on each zip: on the Clips page press <b>Name videos…</b> and type the film’s English title, for example <b>the hidden blade</b>.</span>'; }
   else if (s.outdated) { b.className = 'banner info'; b.textContent = 'The zip is out of date: the video, its delivery name or the settings changed since it was made. Re-run makes it again.'; }
+  else if (INFO.auto_name) { b.className = 'banner note';
+    b.innerHTML = '<span>The delivery name <b>' + esc(INFO.package) + '</b> was made up because none was given. To use the film’s title, press <b>Name videos…</b> on the Clips page and type it: the name is replaced and the zip is made again.</span>'; }
   else b.className = 'banner';
   if ($('unqueue')) $('unqueue').onclick = async e => { e.preventDefault(); await processingControl(`/api/clip/${CID}/cancel`,'Cancelling this clip…'); refresh(); };
 }
@@ -181,7 +183,7 @@ async function load(first) {
   const dl = INFO.outputs.download;
   $('download').hidden = !dl || !INFO.status.done;
   if (dl) { $('download').href = dl; $('download').title = `Downloads as ${INFO.package}.zip`; }
-  $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The client requires this name for the zip: the film's English title and this video's number">Delivery name <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No delivery name yet</span>';
+  $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The client requires this name for the zip: the film's English title and this video's number">Delivery name <b>${esc(INFO.package)}</b>${INFO.auto_name ? ' (made up)' : ''}</span>` : '<span class="pkname none">No delivery name yet</span>';
 
   const state = INFO.job ? INFO.job.state + INFO.job.id : '';
   if (lastState && /queued|running/.test(lastState) && INFO.job && !/queued|running/.test(INFO.job.state))

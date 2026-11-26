@@ -91,7 +91,7 @@ function renderTable(list, clips, prog) {
     const short = c.name.replace(/^[^_]+_/, ''), tot = computerSeconds(c.took);
     const actions = clipActions(c);
     return `<tr><td class="pname"><a href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt=""><span><b title="${esc(c.name)}">${esc(short)}</b>
-        <span class="small muted">${c.package ? esc(c.package) : 'no delivery name'}</span></span></a></td>
+        <span class="small muted">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : 'no delivery name'}</span></span></a></td>
       <td data-k="Status">${chip(c.status)}</td>
       <td data-k="Movement">${stepCell(c, 'movement', prog[c.id])}</td>
       <td data-k="Computer time" class="r nowrap" title="Total recorded processing time since reset, including repeated jobs; excludes queue waits">${tot != null ? fmtDur(tot) : '–'}</td>
@@ -163,11 +163,11 @@ function render() {
     try { const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); } catch (err) {} load(); };
 
   // ---- step 2: delivered
-  const done = cs.filter(c => c.status.done), working = cs.filter(active).length, unnamed = cs.filter(c => !c.package).length;
+  const done = cs.filter(c => c.status.done), working = cs.filter(active).length, unnamed = cs.filter(c => !c.package || c.auto_name).length;
   $('deldesc').innerHTML = cs.length ? `<b>${done.length}</b> done · <b>${working}</b> processing · <b>${failed}</b> failed` +
     (cnt.old ? ` · <b>${cnt.old}</b> out of date` : '') : 'Finished clips appear here.';
   $('noname').style.display = unnamed ? '' : 'none';
-  $('noname').textContent = unnamed ? `${unnamed} video(s) have no delivery name yet. The client needs one for each zip: press Name videos… and type the film's English title.` : '';
+  $('noname').textContent = unnamed ? `${unnamed} video(s) have no real delivery name yet. Start gives a missing one a made-up name (clip-1, clip-2…) so nothing fails, but the client needs the film's title on each zip: press Name videos… and type the film's English title (it replaces the made-up names).` : '';
   $('nameall').style.display = unnamed ? '' : 'none';
   const shownDone = done.slice(0, 8);
   $('dellist').innerHTML = shownDone.map(c => `<div class="small" style="margin-top:4px"><a href="/clip/${c.id}">${esc(c.name.replace(/^[^_]+_/, ''))}</a>` +
@@ -198,7 +198,7 @@ function render() {
       const step = p && p.step ? ` · ${p.step}` : '';
       g.insertAdjacentHTML('beforeend', `<div class="clipcard${qb ? ' hasq' : ''}${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
         <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span title="${esc(c.status.label + step)}">${chip(c.status)}</span></div>
-        <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
+        <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
         ${remove}${qb}</div>`); });
     list.appendChild(g);

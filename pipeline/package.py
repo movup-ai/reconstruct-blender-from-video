@@ -224,21 +224,57 @@ def title_slug(title):
     return s[:60].strip("_")
 
 
+AUTO_TITLE = "clip"      # the generic title of a name the app made up (clip-1, clip-2 ...) when none was given
+
+
+def _auto_p():
+    """data/auto_names.json, next to the names file"""
+    return os.path.join(os.path.dirname(NAMES_P), "auto_names.json")
+
+
+def _auto_state():
+    """{"clips": [clips whose name the app made up], "retired": [made-up names that a real title replaced]}"""
+    try:
+        with open(_auto_p(), encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        d = {}
+    d = d if isinstance(d, dict) else {}
+    return {"clips": list(d.get("clips") or []), "retired": list(d.get("retired") or [])}
+
+
+def auto_named():
+    """the clips whose package name the app made up (no title was given); Name videos... replaces these"""
+    return set(_auto_state()["clips"])
+
+
+def _write_json(path, obj):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
 def propose_names(clips, title, names=None, c=None):
     """clips: clip names in file-name order.  Clips that already have a package name keep it; the others get
     <slug>-N, numbered after the highest N already used for that title anywhere in the file (also by entries of
-    older versions), so a delivered name is never given out twice.  -> {clip: (package name, is_new)}"""
+    older versions), so a delivered name is never given out twice.  A name the app made up (auto_named) is the one
+    exception: a real title replaces it, and the made-up name is retired for good.
+    -> {clip: (package name, is_new)}"""
     if names is None:
         names = package_names(c)
-        used = set(names.values()) | set(_all_names().values())
+        auto = auto_named()
+        used = set(names.values()) | set(_all_names().values()) | set(_auto_state()["retired"])
     else:
+        auto = set()
         used = set(names.values())
     slug = title_slug(title)
+    replace_auto = bool(slug) and slug != title_slug(AUTO_TITLE)
     nums = [int(v.rsplit("-", 1)[1]) for v in used if v.rsplit("-", 1)[0] == slug and v.rsplit("-", 1)[-1].isdigit()]
     n = max(nums or [0])
     out = {}
     for cl in clips:
-        if names.get(cl):
+        if names.get(cl) and not (replace_auto and cl in auto):
             out[cl] = (names[cl], False)
             continue
         if not slug:
@@ -254,8 +290,33 @@ def propose_names(clips, title, names=None, c=None):
 _NAMES_LOCK = threading.Lock()
 
 
+def _commit_names(new, auto):
+    """write {clip: name} into data/package_names.json.  auto=True: the names were made up by the app, so the clips
+    are remembered (auto_names.json is written first: a crash in between leaves a flagged clip without a name, which
+    is simply named again).  auto=False: real names; a clip that held a made-up name loses the flag and the old name
+    is retired, so it is never handed out again."""
+    allnames, st = _all_names(), _auto_state()
+    if auto:
+        st["clips"] = sorted(set(st["clips"]) | set(new))
+        _write_json(_auto_p(), st)
+        allnames.update(new)
+        _write_json(NAMES_P, allnames)
+        return
+    replaced = [cl for cl in new if cl in st["clips"]]
+    for cl in replaced:
+        old = package_names().get(cl)
+        if old and old not in st["retired"]:
+            st["retired"].append(old)
+    allnames.update(new)
+    _write_json(NAMES_P, allnames)
+    if replaced:
+        st["clips"] = [cl for cl in st["clips"] if cl not in new]
+        _write_json(_auto_p(), st)
+
+
 def assign_names(clips, title, c=None):
-    """write the new names of propose_names() into data/package_names.json; never renames a clip"""
+    """write the new names of propose_names() into data/package_names.json; a clip that has a name keeps it, except
+    one the app made up (auto_named), which a real title replaces"""
     with _NAMES_LOCK:                               # two namings at once must not both take the same number
         plan = propose_names(clips, title, c=c)
         new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
@@ -263,12 +324,22 @@ def assign_names(clips, title, c=None):
             if not PKG_RE.match(pkg):
                 raise ValueError("%r is not a valid v2.1 package name" % pkg)
         if new:
-            allnames = _all_names()
-            allnames.update(new)
-            tmp = NAMES_P + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(allnames, fh, ensure_ascii=False, indent=1)
-            os.replace(tmp, NAMES_P)
+            _commit_names(new, auto=False)
+    return new
+
+
+def auto_name(clips, c=None):
+    """a generic package name (clip-N) for every clip that has none, so a missing name never stops or fails a run.
+    The clips are remembered as made up: Name videos... with a real title replaces them.  -> {clip: name} written"""
+    with _NAMES_LOCK:
+        have = package_names(c)
+        todo = [cl for cl in clips if not have.get(cl)]
+        if not todo:
+            return {}
+        plan = propose_names(todo, AUTO_TITLE, c=c)
+        new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
+        if new:
+            _commit_names(new, auto=True)
     return new
 
 
