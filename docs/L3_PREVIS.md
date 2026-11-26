@@ -1,15 +1,17 @@
 # L3 previs standard in the app
 
-The supplied `live-action-block-previs` skill now informs the production pipeline. SAM 3 tracking, RTMPose, and SAM 3D Body remain the inference stack. FlowHMR is not required or installed by this change.
+The supplied `live-action-block-previs` skill provides an optional production character and audit practices. SAM 3 tracking, RTMPose, and SAM 3D Body remain the inference stack. FlowHMR is not required or installed. The default character is the previous `sample` mannequin; existing explicit character choices are respected.
 
 ## What changes in new preparations
 
-- The default character is the supplied L3-2026-11-18 asset, with its complete native control rig, ten-bone rigid binding layer, original geometry, and seventeen pure-white mark faces.
+- **Settings → Character → Supplied L3 mannequin** selects the L3-2026-11-18 asset with its complete native control rig, ten-bone rigid binding layer, original geometry, and seventeen pure-white mark faces. Its proportions differ from the previous mannequin and require a new fit. Selecting another rig is never overridden by `previs_standard` metadata.
 - The numerical fitting skeleton is measured from the actual asset, including the native rig's object scale. A 180-degree axis conversion aligns the asset's -Y forward direction with the fitter's +Y convention. The renderer and fitter use the same bone/rest transforms.
 - One fixed uniform actor height is shared across shots for the same tracked identity. Explicit reviewed heights win. Unrelated clips do not share actor scale.
 - A bounded sparse temporal solve refines confidently observed elbows/wrists after interpolation. It preserves root/camera placement, bone lengths, model scale, and the established depth branch. Weak/occluded observations retain their prior. Manual pose/keypoint constraints bypass this refinement. Long shots use overlapping windows.
 - Ordinary backgrounds retain their sampled source colors by default; character/interactive-object semantic colors follow the supplied palette. Selecting gray backgrounds remains supported.
-- Coherent source-background dimming is measured outside tracked people independently per shot. Reliable substantial exposure changes animate the entire scene, including the neutral-white stripes. Ambiguous evidence leaves exposure unchanged. This estimates relative exposure changes, not primary-light direction or an HDR calibration. Existing explicit lighting hints still apply.
+- **Match video brightness** is optional and off by default. When enabled, coherent source-background dimming is measured outside tracked people per shot and cached independently of motion fitting. Brief uncertain gaps are interpolated; long ambiguous intervals reject the shot instead of flashing the exposure back to neutral. Fixed image regions can still confuse camera/content changes with lighting, so this remains an explicit choice. Existing explicit lighting hints still apply.
+- **Render quality** selects Workbench (default) or Eevee independently of the character. Workbench provides a fast shaded preview; Eevee uses scene lighting and emission. The explicit LZHD delivery specification continues to require Eevee. Renderer and brightness changes require Finish, without invalidating people, camera, or background fitting.
+- Background protection rasterizes the complete L3 parts, using the same scale and joint transforms as Blender. It uses the actual torso/head silhouette rather than the old generic limb proxy. Changes to rig assets invalidate cached verification results.
 - Fractional source rates are represented using Blender's FPS/base pair rather than rounded away.
 
 ## Checks and review
@@ -31,10 +33,12 @@ The editable `.blend` retains the full L3 rig. Portable reconstruction data repr
 ## Testing existing clips
 
 1. Let current jobs finish and restart the app to load the updated server/configuration defaults.
-2. Run **Prepare/Re-check** once on an existing clip so its fitted skeleton matches L3. Clicking Finish alone preserves an older fit's character style; changing just the render mesh would invalidate alignment.
+2. Select the desired character, then run **Prepare/Re-check** once so its fitted skeleton matches that character. A renderer change never swaps the fitted mesh or skeleton.
 3. Review people, orientation, contacts, and object placement, then use Finish. Subsequent prop changes retain the existing people/camera caches.
 
-No new AI checkpoint is needed. Legacy styles remain available through explicit hints or `previs_standard: "legacy"` plus the desired `character_style`. Changing the standard invalidates the numerical fit once; this does not itself invalidate unchanged SAM tracking/body inference caches.
+No new AI checkpoint is needed. The previous mannequin and L3 are available in Settings; other saved legacy styles and per-clip `character_style` hints remain respected. `previs_standard` describes the chosen character and no longer forces migration. Changing the character invalidates its numerical fit once, while unchanged SAM tracking/body inference caches remain available.
+
+The controlled office comparison in `downloads/skill-commit-audit/` found mixed motion quality: the supplied L3 proportions improved one actor's arms and worsened the other's. L3 is an opt-in asset standard rather than a guaranteed accuracy upgrade. The regression matrix in `downloads/skill-regression-fixes/` exercises both characters with both renderers and compares the actual evaluated Blender geometry against the occlusion-depth implementation.
 
 ## Office regression (2026-11-25)
 

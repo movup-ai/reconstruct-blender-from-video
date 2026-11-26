@@ -49,6 +49,15 @@
       <div><input id="set_max_frames" type="number" min="2" max="12" value="5"></div>
       <div class="k">Person reconstruction</div>
       <div>SAM 3 tracking → RTMPose masked joints → SAM 3D Body</div>
+      <label class="k" for="character_style">Character</label>
+      <div><select id="character_style"><option value="sample">Previous mannequin (default)</option><option value="l3">Supplied L3 mannequin</option></select></div>
+      <div></div><div class="help">Changing characters requires Re-check because their body proportions differ. L3 is optional.</div>
+      <label class="k" for="render_engine">Render quality</label>
+      <div><select id="render_engine"><option value="workbench">Fast shaded render (Workbench)</option><option value="eevee">Scene lighting (Eevee)</option></select></div>
+      <div></div><div class="help">Choose render quality independently of the character. LZHD delivery uses its required lighting renderer.</div>
+      <label class="k" for="source_exposure">Match video brightness</label>
+      <div><input id="source_exposure" type="checkbox"> Optional relative exposure matching (default off)</div>
+      <div></div><div class="help">Use for lighting or exposure changes in the source. Camera movement and scene content can affect this estimate.</div>
       <label class="k" for="sam3_checkpoint">SAM 3 checkpoint</label>
       <div><input id="sam3_checkpoint" type="text"></div>
       <label class="k" for="sam3_python">SAM 3 Python executable</label>
@@ -161,6 +170,12 @@ async function load() {
   for (const key of ['camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
   for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
   $('validation_mode').value = S.validation_mode || 'normal';
+  if (S.character_style && ![...$('character_style').options].some(o => o.value === S.character_style)) {
+    const option = document.createElement('option'); option.value = S.character_style; option.textContent = 'Saved legacy character'; $('character_style').appendChild(option);
+  }
+  $('character_style').value = S.character_style || 'sample';
+  $('render_engine').value = S.render_engine || 'workbench';
+  $('source_exposure').checked = S.source_exposure === true;
   $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
     <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' && S.local ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
@@ -195,6 +210,9 @@ for (const key of ['camera_backend', 'da3_model', 'da3_python', 'sam3_checkpoint
 }
 for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
 $('validation_mode').onchange = e => set({ validation_mode:e.target.value }, 'Validation mode saved');
+$('character_style').onchange = e => set({ character_style:e.target.value }, 'Character saved; Re-check clips to update their fitted proportions');
+$('render_engine').onchange = e => set({ render_engine:e.target.value }, 'Render quality saved; Finish applies it');
+$('source_exposure').onchange = e => set({ source_exposure:e.target.checked }, 'Brightness matching saved; Finish applies it');
 $('set_max_frames').onchange = e => set({ set_max_frames: +e.target.value }, 'Set view limit saved');
 $('sam3d_stride').onchange = e => set({ sam3d_stride: +e.target.value }, 'Body inference interval saved');
 $('da3_meters_per_unit').onchange = e => set({ da3_meters_per_unit: e.target.value === '' ? null : +e.target.value }, 'Camera scale saved');

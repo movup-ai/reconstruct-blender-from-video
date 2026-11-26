@@ -3,8 +3,10 @@
 Local white-model production app. It turns the film clips in the `SOURCE` folder into the client's submission
 packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
 Person reconstruction uses **SAM 3 tracking → RTMPose masked joints → SAM 3D Body → editable Blender rigs**.
-New preparations use the supplied **L3 character standard**, fixed white markings, continuous arm refinement,
-source-color backgrounds, and conservative source-exposure matching. Normal processing uses sampled checks,
+New preparations use the previous mannequin by default. The supplied **L3 character standard** is an explicit
+choice in Settings, with its fixed white markings and continuous arm refinement. Render quality is selected
+independently; fast Workbench rendering is the default. Source-exposure matching is optional and off by default.
+Normal processing uses sampled checks,
 bounded repairs, and cached validation results. **Settings → Validation mode → Audit** enables exhaustive checks
 and a frame review page with overlay and playback controls. Existing clips need one Re-check to adopt the new skeleton.
 See [L3 integration, testing, and known limits](docs/L3_PREVIS.md).
