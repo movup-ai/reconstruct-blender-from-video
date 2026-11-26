@@ -180,13 +180,13 @@ class CommandLineTests(unittest.TestCase):
         return subprocess.run([sys.executable, os.path.join(ROOT, "pipeline", "run_pipeline.py")] + list(args),
                               capture_output=True, text=True, timeout=120)
 
-    def test_only_movement_and_render_stages(self):
-        for stage in ("fit", "blend", "all", "background", "depth"):
+    def test_only_movement_render_and_background_stages(self):
+        for stage in ("fit", "blend", "all", "depth"):
             r = self.run_cli("x.mp4", "--stage", stage)
             self.assertEqual(r.returncode, 2, stage); self.assertIn("invalid choice", r.stderr)
         r = self.run_cli("x.mp4", "--require-confirm")
         self.assertEqual(r.returncode, 2); self.assertIn("unrecognized arguments", r.stderr)
-        self.assertEqual(RP.STAGES, ("movement", "render"))
+        self.assertEqual(RP.STAGES, ("movement", "render", "background"))
 
 
 if __name__ == "__main__":

@@ -35,11 +35,18 @@ What each step leaves in `Work_auto\<clip>\`:
 | `render\`, `render_done.txt`, `blender_log.txt` | Blender frames and log |
 | `profile_movement.json` | wall time per step |
 
-## Stage 2 Background (planned)
+## Stage 2 Background (started by hand, `pipeline\background.py`)
 
-Objects are detected on Stage 1's saved depth (`metric_observation*.npz`) and the semantic labels, placed as your
-prebuilt assets, the `.blend` is rebuilt with them, re-rendered and re-packed. `colour_card.role_of` already holds
-the colour rules for set pieces. Nothing of Stage 2 runs in this version.
+| Step | Model | What it gives |
+|---|---|---|
+| find | **SAM 3** (`models\sam3`, text prompts = the `.blend` names in `assets\objects`) | every object of each type, masked and followed through each shot, a few frames per second (`sam3_objects.py`) |
+| depth | **MoGe** (the configured version) + **Mask2Former** (`metric_observe.py`) | depth and floor labels on each object's best views |
+| place | none (geometry) | depth scaled so the floor lies on Stage 1's floor; points through Stage 1's camera; a box per object |
+
+The models (`assets\objects\*.blend`) are read once with Blender (`asset_export.py`) and cached in
+`assets\objects\_cache`. SAM 3 and depth results are cached in `Work_auto\<clip>\background\` (`sam3_objects.npz`,
+`depth.npz`). The colour card colours the objects with `colour_card.role_of`. The result is a second package in
+`SUBMIT\_background\`; Stage 1's zip is not changed.
 
 ## Removed
 

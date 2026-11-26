@@ -54,8 +54,7 @@ Exit code 0 = done (or skipped: the zip exists and `--force` was not given), 1 =
    - camera: dense flow tracking with Depth Anything V2 Small depth cues, steadying, level roll, and the per-frame
      zoom, folded with the measured lens (`camera_estimate.py`);
    - metric scene: MoGe-2 depth + Mask2Former floor / wall / ceiling labels (`metric_scene.py`, `metric_observe.py`)
-     give gravity, the world yaw and the camera height. The cached `Work_auto\<clip>\metric_observation*.npz` is the
-     saved depth that Stage 2 will build on;
+     give gravity, the world yaw and the camera height (cached in `Work_auto\<clip>\metric_observation*.npz`);
    - SAM 3D Body recovers metric bodies; their visible surfaces calibrate the depth scale (`sam3d_body.py`);
    - the characters (the client's sample mesh) are fitted to the joints with the body priors (`fit_people.py`);
    - half-body shots (nobody's feet in the picture) move the floor under the people when SAM 3D Body could not
@@ -75,6 +74,31 @@ Exit code 0 = done (or skipped: the zip exists and `--force` was not given), 1 =
 
 Each run writes `Work_auto\<clip>\profile_<stage>.json` (wall time per step: marks, camera, metric observation,
 SAM 3D Body, people fit, Blender, encoding and package, package check), also for a failed run.
+
+## Stage 2 Background (`pipeline\background.py`)
+
+Started by hand on a clip whose Stage 1 is done (its page: **Add background**; or
+`run_pipeline.py <video> --stage background --name <clip>`). It adds your object models to Stage 1's scene and packs
+a **second** zip; Stage 1's zip is never changed.
+
+1. **Models**: one `.blend` per object type in `assets\objects\` (see `assets\objects\README.md`); the file name is
+   what SAM 3 looks for. No models: the run stops and says so.
+2. **Find**: SAM 3 looks for each type by name in a few frames per second of every shot (`sam3_objects.py`), so an
+   object that only comes into view later (zoom, pan) is found where it appears. Views mostly hidden by a person
+   are not used.
+3. **Depth**: each object's best views (big, whole, not hidden) get MoGe depth and Mask2Former floor labels
+   (`metric_observe.py`, the configured MoGe version).
+4. **Scale**: each frame's depth is matched to Stage 1's floor (its floor pixels must land on z = 0), so the objects
+   stand on the floor the people stand on.
+5. **Place**: the object's pixels become 3D points through Stage 1's camera of that frame (with its zoom); a box
+   facing the camera is fitted (the hidden depth from the model's own proportions; standing types reach down to the
+   floor, hanging ones stay where they are seen); one object found twice is kept once; the model is stretched into
+   the box. A person standing inside an object is reported as a warning.
+6. **Build**: Stage 1's scene + the objects -> Blender (colour card) -> v2.1 package -> v2.1 package check.
+
+Files: `Work_auto\<clip>\background\` (`report.json` with every object, `preview.jpg` with the boxes drawn over the
+video, the SAM 3 and depth caches, the render) and `SUBMIT\_background\<clip>\` + `<clip>.zip` (downloaded as
+`<package>_background.zip`). When Stage 1 is made again later, the background zip shows as out of date.
 
 ## Colours
 

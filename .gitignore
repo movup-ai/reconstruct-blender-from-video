@@ -101,3 +101,6 @@ data/model_inference.lock
 # ---------------------------------------------------------------
 *.tmp
 *.part
+
+# Stage 2 object models read by Blender (made again from the .blend files)
+assets/objects/_cache/

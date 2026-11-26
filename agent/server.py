@@ -228,6 +228,16 @@ class Workspace:
                           'comparison_version': max((os.stat(p).st_mtime_ns for p in comparisons), default=None),
                           "zip": has_zip, "zip_path": f["zip"],
                           "download": "/download/%s" % cl.name if has_zip and package else None}
+        bst = st["background"]
+        bcmp = glob.glob(os.path.join(f["bg_submit"], "comparison", "*.mp4"))
+        brep = read_json(os.path.join(f["bg_work"], "report.json"), {}) or {}
+        import assets_lib                                                   # pipeline
+        out["background"] = dict(bst, zip_path=f["bg_zip"] if bst["zip"] else None,
+                                 download="/download/%s?bg=1" % cl.name if bst["zip"] and package else None,
+                                 comparison=bool(bcmp), comparison_version=max((os.stat(p).st_mtime_ns for p in bcmp), default=None),
+                                 preview=os.path.exists(os.path.join(f["bg_work"], "preview.jpg")),
+                                 objects=brep.get("objects", []), warnings=brep.get("warnings", []),
+                                 assets=sorted(assets_lib.catalog(c)), assets_folder=assets_lib.folder(c))
         if job:
             lp = job.get("log") or os.path.join(f["work"], "job_%s.log" % job["stage"])
             txt = ""
@@ -275,6 +285,21 @@ class Workspace:
         self.runner.resume()                                   # asked for explicitly: the queue runs
         return jid
 
+    def run_background(self, cl):
+        """Stage 2 for one clip (its button): needs Stage 1's up-to-date zip and at least one object model"""
+        import assets_lib                                      # pipeline
+        st = status(self.c, cl, self.app.store.latest_for(cl.id))
+        if not st["done"]:
+            raise HttpError(409, "run Movement (Stage 1) for this clip first: Background adds objects to its finished scene")
+        if st["job"] and st["job"]["state"] in ("queued", "running"):
+            raise HttpError(409, "%s is already waiting or being processed" % cl.name)
+        if not assets_lib.catalog(self.c):
+            raise HttpError(409, "no object models yet: put one .blend per object type in %s (e.g. wall.blend, chair.blend)"
+                            % assets_lib.folder(self.c))
+        jid = self.enqueue(cl, "background")
+        self.runner.resume()                                   # asked for explicitly: the queue runs
+        return {"ok": True, "queued": bool(jid)}
+
     def report_rows(self):
         rows = []
         for cl, st in self.status_all():
@@ -292,6 +317,11 @@ class Workspace:
 STEPS = [("  marks:", 40, "measuring the lens"), ("  camera ...", 45, "solving the camera"),
          ("  people ...", 55, "fitting 3D people"), ("  set ...", 62, "placing the floor"), ("  floor", 62, "placing the floor"),
          ("  quality:", 66, "checking the result")]
+# the same for a Background (Stage 2) run
+BG_STEPS = [("  assets:", 3, "reading the object models"), ("  reading ", 6, "reading frames"),
+            ("  SAM 3: looking", 10, "finding objects"), ("  found:", 40, "choosing each object's best views"),
+            ("  depth on", 45, "measuring depth"), ("  placed:", 62, "placing the objects"),
+            ("  blender build", 68, "rendering")]
 
 
 def job_progress(c, cl, job):
@@ -307,20 +337,25 @@ def job_progress(c, cl, job):
     if 'waiting for model inference slot' in txt and 'model inference slot acquired' not in txt.rsplit('waiting for model inference slot', 1)[-1]:
         return {'pct': 1, 'step': 'waiting for the model inference slot; rendering can continue'}
     pct, step = 1, "starting"
+    bg = job["stage"] == "background"
     m = re.findall(r"detected (\d+) frames \(frame \d+/(\d+)", txt)      # frames done so far (the frame number jumps:
-    if m:                                                                # the detector runs over the clip in passes)
+    if m and not bg:                                                     # the detector runs over the clip in passes)
         a, b = int(m[-1][0]), int(m[-1][1])
         pct, step = 2 + 38 * min(a, b) / max(b, 1), "finding people (%d of %d frames)" % (min(a, b), b)
-    for key, p, s in STEPS:
+    for key, p, s in (BG_STEPS if bg else STEPS):
         if key in txt and p >= pct:
             pct, step = p, s
+    if bg and "  found:" not in txt:
+        m = re.findall(r'SAM 3 "([^"]+)"', txt)
+        if m:
+            step = 'finding objects (done: "%s")' % m[-1]
     shots = re.findall(r"\[shot (\d+): frames", txt)
     if shots and "  quality:" not in txt:
         step += " (shot %s)" % shots[-1]
     m = re.search(r"blender build \+ render \((\d+) frames\)", txt)
     if m:
         n = int(m.group(1))
-        done = len(glob.glob(os.path.join(f["work"], "render", "wm_*.jpg")))
+        done = len(glob.glob(os.path.join(f["bg_work"] if bg else f["work"], "render", "wm_*.jpg")))
         pct, step = 68 + 24 * min(done, n) / max(n, 1), "rendering frame %d of %d" % (min(done, n), n)
     if "videos + zip" in txt:
         pct, step = 93, "encoding the videos and packing the zip"
@@ -631,11 +666,13 @@ def make_handler(app):
                                  {"Content-Disposition": 'attachment; filename="blender_agent_report.csv"'})
             if parts[0] == "download" and len(parts) == 2:             # a package zip from the SUBMIT folder
                 name = os.path.basename(parts[1])
-                zp = os.path.join(c["submit_root"], name + ".zip")
+                bg = (q.get("bg") or ["0"])[0] == "1"                   # Stage 1 + Stage 2 (SUBMIT\_background)
+                zp = os.path.join(c["submit_root"], "_background" if bg else "", name + ".zip")
                 if not name or not os.path.isfile(zp):
-                    raise HttpError(404, "no zip for %s" % name)
-                # v2.1: the delivered zip carries the package name (SUBMIT\<clip>.zip is named after the clip)
-                return self.file(zp, "application/zip", (pkg.package_name(name, c) or name) + ".zip")
+                    raise HttpError(404, "no %szip for %s" % ("background " if bg else "", name))
+                # v2.1: the delivered zip carries the package name (SUBMIT\<clip>.zip is named after the clip); the
+                # background one is saved as <package>_background.zip so both can sit in one downloads folder
+                return self.file(zp, "application/zip", (pkg.package_name(name, c) or name) + ("_background" if bg else "") + ".zip")
             if parts[0] == "package" and len(parts) == 3 and parts[2] in ("comparison", "white_model", "target"):
                 name = os.path.basename(parts[1])
                 m = sorted(glob.glob(os.path.join(c["submit_root"], name, parts[2], "*.mp4")))
@@ -653,6 +690,11 @@ def make_handler(app):
                 if kind in ("comparison", "white_model"):
                     m = sorted(glob.glob(os.path.join(f["submit"], kind, "*.mp4")))
                     return self.file(m[0] if m else None, "video/mp4")
+                if kind in ("bg_comparison", "bg_white_model"):               # the background package's videos
+                    m = sorted(glob.glob(os.path.join(f["bg_submit"], kind[3:], "*.mp4")))
+                    return self.file(m[0] if m else None, "video/mp4")
+                if kind == "bg_preview":
+                    return self.file(os.path.join(f["bg_work"], "preview.jpg"), "image/jpeg")
             raise HttpError(404, "not found")
 
         # ---- upload: raw file body, streamed to disk (no size held in memory)
@@ -800,6 +842,8 @@ def make_handler(app):
                     if stage != "movement":
                         raise HttpError(400, "unknown job stage")
                     return self.send(200, {"ok": True, "queued": bool(ws.run(cl))})
+                if action == "background":                               # Stage 2 by hand: a second zip, Stage 1's kept
+                    return self.send(200, ws.run_background(cl))
                 if action == "cancel":
                     try:
                         return self.send(200, app.runner.interrupt(clip=cl.id))

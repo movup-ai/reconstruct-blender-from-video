@@ -27,7 +27,10 @@ rendered in other colours. Colours are never sampled from the source video.
 - **Marks**: the eye and chest bands are pure white.
 - **Floor**: the only mesh of Stage 1, one ground disc per shot, is background: grey `#B8B8B8`.
 
-## Stage 2 (Background, planned)
+## Stage 2 (Background)
+
+Each placed object (`kind` / `label` = its model's type, e.g. `chair`) gets its role from these rules; a `"role"` in
+`assets\objects\objects.json` always wins.
 
 `colour_card.role_of` keeps the rules for set pieces: lamps and lights are light sources; interactive things
 (door, cup, phone, chair, car, fridge, tv...) within 1 m of a person, or anything a hand comes within 12 cm of, are

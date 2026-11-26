@@ -283,9 +283,11 @@ def folders(c, cl):
     md = marks_dir(cl.video, c)
     work = os.path.join(c["work_root"], cl.name)
     sub = os.path.join(c["submit_root"], cl.name)
+    bg_sub = os.path.join(c["submit_root"], "_background", cl.name)      # Stage 2's package (Stage 1 + objects)
     return {"marks": md, "work": work, "submit": sub, "zip": sub + ".zip",
             "pose": os.path.join(md, "pose.json"), "preview": os.path.join(work, "preview.jpg"),
-            "scene": os.path.join(work, "scene_data.json")}
+            "scene": os.path.join(work, "scene_data.json"),
+            "bg_work": os.path.join(work, "background"), "bg_submit": bg_sub, "bg_zip": bg_sub + ".zip"}
 
 
 def prepared_paths(c, cl):
@@ -298,7 +300,9 @@ def prepared_paths(c, cl):
            (f["work"], "people, camera, floor, preview, renders and job logs"),
            (os.path.join(c['work_root'],'_thumbs',cl.id+'.jpg'), 'cached thumbnail'),
            (f["submit"], "the finished package"),
-           (f["zip"], "the finished zip")]
+           (f["zip"], "the finished zip"),
+           (f["bg_submit"], "the background package"),
+           (f["bg_zip"], "the background zip")]
     return [(p, what) for p, what in out if os.path.exists(p)]
 
 
@@ -382,4 +386,26 @@ def status(c, cl, job=None):
         label = "new"
     s["label"] = label
     s["group"] = LABELS[label]
+    s["background"] = background_status(f, job, s["done"])
     return s
+
+
+def background_status(f, job, stage1_done):
+    """Stage 2 of a clip: {state, zip}.  state: none / waiting / processing / done / outdated (Stage 1 was made
+    again after it) / failed / cancelled.  Its zip never changes Stage 1's status."""
+    has = os.path.exists(f["bg_zip"])
+    j = job if job and job.get("stage") == "background" else None
+    st = (j or {}).get("state")
+    if st == "running":
+        state = "processing"
+    elif st == "queued":
+        state = "waiting"
+    elif has:
+        state = "done" if stage1_done and os.path.getmtime(f["bg_zip"]) >= os.path.getmtime(f["zip"]) else "outdated"
+    elif st == "failed":
+        state = "failed"
+    elif st == "stopped":
+        state = "cancelled"
+    else:
+        state = "none"
+    return {"state": state, "zip": has, "error": (j or {}).get("error") if state == "failed" else None}

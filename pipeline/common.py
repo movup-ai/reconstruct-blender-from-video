@@ -94,6 +94,8 @@ def cfg():
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
         c["marks_root"] = os.path.join(sb, "output"); c["_sandbox"] = sb
+    if os.environ.get("BA_OBJECT_ASSETS"):             # test runs: another folder of Stage 2 object models
+        c["object_assets"] = os.environ["BA_OBJECT_ASSETS"]
     if os.environ.get("BA_SOURCE"):                    # a job the app runs: the app's source folder (same layout of
         c["source_root"] = os.environ["BA_SOURCE"]     # output\<film>\<clip> on both sides)
     return c

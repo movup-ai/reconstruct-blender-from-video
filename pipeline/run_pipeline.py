@@ -9,8 +9,9 @@ Stage 1 "Movement": raw video -> checked v2.1 zip, one automatic run, no manual 
                    floor disc -> scene_data.json / camera.json / clip_info.json / quality -> Blender render (colour
                    card) -> v2.1 zip -> v2.1 package check.  Any failure (package check included) fails the clip.
   stage render   : internal re-render of a saved scene_data.json: Blender render -> zip -> package check.
+  stage background: Stage 2 (background.py): Stage 1's scene + the prebuilt objects of assets\\objects found by SAM 3
+                   -> Work\\<clip>\\background\\ -> a second zip in SUBMIT\\_background\\ (Stage 1's zip is kept).
 Exit code: 0 every clip done (or skipped: zip there, no --force), 1 a clip failed.
-Stage 2 (background: objects from the saved depth + prebuilt assets) is planned and not part of this run.
 """
 import os, sys, re, glob, hashlib, json, time, shutil, subprocess, argparse, traceback
 import numpy as np, cv2
@@ -30,7 +31,7 @@ fit_all = stage("people_fit")(fit_all)
 estimate_shot = stage("camera")(estimate_shot)
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
-STAGES = ("movement", "render")
+STAGES = ("movement", "render", "background")
 PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 199], "backdrop": [205, 205, 207],
            "ridge": [160, 160, 163], "rock": [138, 138, 138], "tree": [172, 172, 170], "dark": [112, 112, 112], "light": [218, 218, 218],   # tree (vegetation) lighter than rock
            "cabin": [98, 98, 98], "roof": [133, 133, 133], "fence": [146, 146, 146], "mount": [197, 197, 199],
@@ -212,6 +213,9 @@ def run_clip(video, c, args):
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render the saved scene (no new fitting)
         return render_only(name, video, work, c, args, t0)
+    if args.stage == "background":                         # Stage 2: Stage 1's scene + prebuilt objects -> a second zip
+        import background
+        return background.run(name, video, work, marks_dir(video, c), c, render_and_pack)
     gpu_lease.acquire()
     for path in glob.glob(os.path.join(work, "metric_evidence*.npz")) + [os.path.join(work, fn) for fn in STALE]:
         if os.path.isfile(path):                           # an earlier build's files: never shipped or reused
@@ -580,7 +584,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="*")
     ap.add_argument("--stage", default="movement", choices=list(STAGES),
-                    help="movement: the whole Stage 1 run (default); render: re-render a saved scene, zip and check it")
+                    help="movement: the whole Stage 1 run (default); render: re-render a saved scene, zip and check it; "
+                         "background: Stage 2, objects from assets\\objects added to Stage 1's scene -> a second zip")
     ap.add_argument("--force", action="store_true", help="run again even when the clip's zip exists")
     ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")

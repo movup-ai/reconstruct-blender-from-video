@@ -2,7 +2,8 @@
 """Persistent job queue (SQLite), worker pool with timeouts and retries, and the autopilot.
 
 stages:  movement   - Stage 1, one automatic run: people, camera, floor, Blender render, videos and the v2.1 zip
-         background - Stage 2 (reserved: valid in the queue, nothing queues it yet)
+         background - Stage 2, started by hand on a clip whose Stage 1 is done: Stage 1's scene + the prebuilt
+                      objects -> a second zip (SUBMIT\\_background\\<clip>.zip); Stage 1's zip is kept
 A job that was running when the app stopped is queued again on the next start."""
 import logging
 import os
@@ -439,6 +440,8 @@ class Runner:
             err = last_error(txt) or "exit code %s" % rc
         if ok and job["stage"] == "movement" and not os.path.exists(f["zip"]):
             ok, err = False, "the run ended without a package (%s is missing)" % os.path.basename(f["zip"])
+        if ok and job["stage"] == "background" and not os.path.exists(f["bg_zip"]):
+            ok, err = False, "the run ended without a background package (%s is missing)" % f["bg_zip"]
         with self.cond:
             if job['id'] in self.cancelled: return
             if self.stop.is_set():

@@ -540,8 +540,9 @@ class TestApi(unittest.TestCase):
         code, body, _ = self.get("/api/clip/" + self.cid)
         self.assertEqual(code, 200)
         info = json.loads(body)
-        for gone in ("review", "suggested", "ai", "env_ai", "regions", "flagged", "prop_warnings", "limb_depth_report", "blocks", "background"):
+        for gone in ("review", "suggested", "ai", "env_ai", "regions", "flagged", "prop_warnings", "limb_depth_report", "blocks"):
             self.assertNotIn(gone, info)
+        self.assertEqual((info["background"]["state"], info["background"]["download"]), ("none", None))   # Stage 2: not run
         self.assertIn("timing", info)
         self.assertEqual((info["outputs"]["zip"], info["outputs"]["download"]), (False, None))
 
