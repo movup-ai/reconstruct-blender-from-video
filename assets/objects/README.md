@@ -2,8 +2,10 @@
 
 ## Included library
 
-This folder includes **65 simple, editable low-poly models**, one mesh per `.blend`.
-Browse [the visual catalog](catalog.jpg). The complete dimensions and polygon counts are in
+This folder includes **392 simple, editable low-poly models**, one mesh per `.blend`.
+Browse [the searchable offline catalog](catalog.html), with category filters and an individual
+preview for every object. Seven contact sheets are indexed in [catalog_index.json](catalog_index.json),
+starting with [catalog.jpg](catalog.jpg). The complete dimensions and polygon counts are in
 [manifest.json](manifest.json); models use metre units, face -Y, have applied transforms,
 and have their base at z = 0 with an origin centred on x/y. Each mesh is marked as a Blender asset.
 There are no cameras, lights, textures, external dependencies, or unapplied modifiers in the files.
@@ -22,6 +24,27 @@ There are no cameras, lights, textures, external dependencies, or unapplied modi
 | Vehicles | car, truck, van, bus |
 | Vegetation | tree, pine_tree, bush |
 
+The expanded library also covers:
+
+- Everyday household and kitchen objects: utensils, bottles, dishes, cleaning equipment,
+  bathroom fixtures, small appliances, cushions, rugs, and laundry equipment.
+- Electronics and offices: phones, laptops, computer equipment, books, stationery, security
+  cameras, switches, outlets, and detectors.
+- Streets and buildings: signs, barriers, drains, hydrants, shelters, gates, roofs, ramps,
+  scaffolds, utility fixtures, and vending/ticket machines.
+- Transport and storage: bicycles, mobility equipment, carts, work vehicles, boats,
+  containers, luggage, bags, boxes, and pallets.
+- Parks and nature: broadleaf/palm trees, flowers, rocks, hedges, fountains, playground
+  equipment, picnic furniture, tents, and simple landscape shapes.
+- Sports, music, toys, workshop tools, retail fixtures, medical equipment, basic animals,
+  and food stand-ins.
+
+These are neutral geometric stand-ins, not detailed replicas. Named variants retain simple
+recognizable silhouettes. Both common and uncommon categories remain available; no category
+is excluded from the app's asset discovery. Search prompts and placement rules stay editable
+in `objects.json`. A larger catalog means more SAM 3 prompt searches during Background;
+low polygon counts reduce geometry cost, not segmentation inference cost.
+
 The app discovers these files automatically during Stage 2. `objects.json` supplies default
 search prompts and placement rules. Bookshelves stand on the floor; shelves hang. Cups, pots,
 vases, sinks, screens, and microwaves retain their observed height rather than extending down
@@ -37,6 +60,14 @@ Rebuild missing models with Blender from the project root:
 Existing models are preserved. Add `-- --overwrite` to deliberately regenerate the whole
 supplied library. User overrides already in `objects.json` are preserved in either case.
 Individual preview images are written under `output/object_asset_previews/`.
+To regenerate only named models, use e.g. `-- --overwrite --types bicycle kettle`.
+The generator checkpoints its index after each completed asset so a partial build can resume.
+
+Refresh the searchable catalog, thumbnails, and paginated contact sheets:
+
+```powershell
+.venv/Scripts/python.exe pipeline/build_object_catalog.py
+```
 
 Validate saved assets, manifold geometry, dimensions, origins, and the actual Stage 2 export path:
 
@@ -45,6 +76,10 @@ Validate saved assets, manifold geometry, dimensions, origins, and the actual St
 ```
 
 The validation report is `output/object_asset_validation.json`.
+Add `-- --warm-cache` to also populate the ignored `_cache/` directory using validated
+exports. Stage 2 can then read the cached geometry without launching Blender once per asset.
+Changing a `.blend` invalidates only that file's export cache. The current library's cache
+has been populated locally; caches are intentionally not versioned.
 
 Put one `.blend` file per object type in this folder. The file name is the type, and it is also what SAM 3
 searches the video for:

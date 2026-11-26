@@ -1,0 +1,23 @@
+{
+  "count": 392,
+  "sheets": [
+    "catalog.jpg",
+    "catalog_02.jpg",
+    "catalog_03.jpg",
+    "catalog_04.jpg",
+    "catalog_05.jpg",
+    "catalog_06.jpg",
+    "catalog_07.jpg"
+  ],
+  "categories": {
+    "Animals and food": 15,
+    "Electronics and office": 42,
+    "Furniture": 53,
+    "Kitchen and household": 75,
+    "Park and nature": 31,
+    "Sport and leisure": 31,
+    "Street and architecture": 69,
+    "Transport and storage": 46,
+    "Workshop retail and medical": 30
+  }
+}

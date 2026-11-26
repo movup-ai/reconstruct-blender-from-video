@@ -13,6 +13,8 @@ import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'pipeline'))
+import object_asset_shapes as extra_shapes
 OUT = ROOT / 'assets/objects'
 PREVIEWS = ROOT / 'output/object_asset_previews'
 
@@ -65,6 +67,7 @@ def vessel(name, height, radius, profile=None, handle=False):
     if handle:
         bpy.ops.mesh.primitive_torus_add(major_segments=12,minor_segments=4,location=(radius*.95,0,height*.53),rotation=(math.pi/2,0,0),major_radius=height*.24,minor_radius=height*.055)
         bpy.context.object.name='Handle';bpy.context.object.data.materials.append(material())
+    return ob
 
 
 def legs(width, depth, top, count=4):
@@ -251,7 +254,7 @@ def build(kind):
         for x,y,z,s in ((0,0,.45,.65),(-.4,0,.35,.45),(.4,.08,.35,.45)):
             bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2,radius=s,location=(x,y,z))
             bpy.context.object.name='Shrub crown';bpy.context.object.scale.z=.7;bpy.context.object.data.materials.append(material())
-    else:raise ValueError(kind)
+    else:extra_shapes.build_extra(kind,globals())
 
 
 KINDS = '''sofa armchair ottoman chair office_chair stool table coffee_table pool_table desk bench bed
@@ -261,6 +264,9 @@ door window curtain blind picture mirror pillar pole streetlight traffic_light s
 tree pine_tree bush'''.split()
 
 HANGING={'shelf','sink','tv','monitor','microwave','vase','pot','cup','table_lamp','window','curtain','blind','picture','mirror','awning'}
+KINDS += extra_shapes.EXTRA_KINDS
+HANGING |= extra_shapes.FLOATING
+assert len(KINDS)==len(set(KINDS)), 'Duplicate object asset names'
 
 
 def save_asset(kind):
@@ -301,13 +307,17 @@ def save_asset(kind):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--overwrite',action='store_true')
+    parser.add_argument('--types',nargs='+',choices=KINDS,help='Build only these named assets')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     OUT.mkdir(parents=True,exist_ok=True);PREVIEWS.mkdir(parents=True,exist_ok=True)
     manifest_path=OUT/'manifest.json';manifest=json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     metadata_path=OUT/'objects.json';metadata=json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
-    for kind in KINDS:
+    for kind in args.types or KINDS:
         if args.overwrite or not (OUT/(kind+'.blend')).exists():manifest[kind]=save_asset(kind)
         metadata.setdefault(kind,{'prompt':kind.replace('_',' '),'on_floor':kind not in HANGING})
+        # Persist completed assets so a stopped build can resume without losing its index.
+        manifest_path.write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
+        metadata_path.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8')
         print('ASSET_READY',kind,flush=True)
     manifest_path.write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
     metadata_path.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8')
