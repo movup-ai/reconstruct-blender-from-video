@@ -16,8 +16,7 @@ import os, sys, re, glob, hashlib, json, time, shutil, subprocess, argparse, tra
 import numpy as np, cv2
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 from common import *
-from camera_solve import solve as solve_camera
-from ground_solve import World, solve_ground
+from ground_solve import World
 from camera_estimate import estimate_shot
 from shots import split_shots as find_shots
 from fit_people import fit_all
@@ -142,55 +141,6 @@ def preview(frames, y0, world, chars, people, meshes, path, n=6):
     rows = [np.hstack(tiles[i:i + 2]) for i in range(0, len(tiles), 2)]
     imwrite_u(path, np.vstack(rows), 85)
 
-def steady_camera(camj, c):
-    """camera rotations from frame-to-frame tracking carry small random errors (shake that is not in the film):
-    a camera that hardly turns is locked still, a moving one is smoothed over a few frames (real pans keep their shape)"""
-    from scipy.spatial.transform import Rotation
-    from scipy.ndimage import gaussian_filter1d
-    R = np.array(camj["R"], float)
-    if len(R) < 3:
-        return camj
-    rv = Rotation.from_matrix(R).as_rotvec()                          # frame-0 camera -> frame-i camera
-    total = float(np.degrees(np.max(np.linalg.norm(rv, axis=1))))
-    sm4 = gaussian_filter1d(rv, 4.0, axis=0, mode="nearest")
-    path = float(np.degrees(np.sum(np.linalg.norm(np.diff(sm4, axis=0), axis=1))))
-    net = float(np.degrees(np.linalg.norm(sm4[-1] - sm4[0])))
-    direct = net / max(path, 1e-6)                                    # 1 = turns one way (a pan), ~0 = wanders back
-    if total < c.get("camera_still_deg", 0.6) or (total < 4.0 and direct < 0.5):
-        camj["R"] = [np.eye(3).tolist() for _ in R]; camj["max_rotation_deg"] = 0.0
-        camj["steady"] = "locked (only tracking noise: %.2f deg, wandering back and forth)" % total
-        return camj
-    sig = float(c.get("camera_smooth_frames", 4.0 if direct < 0.8 else 2.0))
-    sm = gaussian_filter1d(rv, sig, axis=0, mode="nearest")
-    sm -= sm[0]                                                       # frame 0 stays the reference
-    camj["R"] = Rotation.from_rotvec(sm).as_matrix().tolist()
-    jit = float(np.degrees(np.median(np.linalg.norm(np.diff(rv, 2, axis=0), axis=1)))) if len(rv) > 3 else 0.0
-    camj["steady"] = "smoothed (%.2f deg typical jitter removed)" % jit
-    return camj
-
-
-def split_shots(frames, y0, Hp, min_len=6):
-    """hard cuts from colour-histogram jumps between neighbouring frames -> [(start, end)]"""
-    def hist(f):
-        hsv = cv2.cvtColor(cv2.resize(f[y0:y0 + Hp], (160, 90)), cv2.COLOR_BGR2HSV)
-        h = cv2.calcHist([hsv], [0, 1, 2], None, [16, 8, 8], [0, 180, 0, 256, 0, 256])
-        return cv2.normalize(h, h).flatten()
-    H = [hist(f) for f in frames]
-    G = [cv2.cvtColor(cv2.resize(f[y0:y0 + Hp], (160, 90)), cv2.COLOR_BGR2GRAY).astype(np.float32) for f in frames]
-    d = np.array([cv2.compareHist(H[i - 1], H[i], cv2.HISTCMP_BHATTACHARYYA) for i in range(1, len(H))])
-    if not len(d):
-        return [(0, len(frames))]
-    mad = np.array([float(np.mean(np.abs(G[i] - G[i - 1]))) for i in range(1, len(G))])   # the picture really changes
-    med = float(np.median(d))
-    cuts = [i + 1 for i in range(len(d)) if d[i] > max(0.35, 4 * med) and mad[i] > max(12.0, 3 * float(np.median(mad)))
-            and d[i] >= d[max(0, i - 1)] and d[i] >= d[min(len(d) - 1, i + 1)]]
-    bounds = [0]
-    for ct in cuts:
-        if ct - bounds[-1] >= min_len and len(frames) - ct >= min_len:
-            bounds.append(ct)
-    bounds.append(len(frames))
-    return list(zip(bounds[:-1], bounds[1:]))
-
 def slice_pose(pose, s0, s1):
     out = dict(pose); ppl = []
     for p in pose["people"]:
@@ -269,7 +219,7 @@ def run_clip(video, c, args):
     frames, fps = read_frames(video)
     N = len(frames); Hfull, W = frames[0].shape[:2]
     _, y0, _, Hp = pose["picture_area"]
-    shots = find_shots(frames, y0, Hp) if c.get("camera_estimator", "new") == "new" else split_shots(frames, y0, Hp)
+    shots = find_shots(frames, y0, Hp)
     log("  shots: %s" % ", ".join("%d-%d" % (a, b - 1) for a, b in shots))
     palette = dict(PALETTE)
     cam_all, chars_all, meshes_all, prep_all, warns, shot_rep, tiles = [None] * N, {}, [], [], [], [], []
@@ -308,15 +258,8 @@ def run_clip(video, c, args):
         people = {pid: (list(fs), K) for pid, (fs, K) in people.items()}
         people = quality.drop_junk(people, c, fps, log)        # short + unclear tracks: not a person worth fitting
         cam = Camera(W, Hp, c["lens_mm"])
-        if c.get("camera_estimator", "new") == "new":      # dense tracking + depth / horizon / people ground (camera_estimate.py)
-            camj, u, hc, ginfo = estimate_shot(sf, spose, people, cam, y0, Hp, c)
-            log("    camera %.1fs  %s" % (time.time() - tp0, camj.get("steady", "")))
-        else:                                              # the earlier solver
-            camj = solve_camera(sf, spose, c)
-            log("    camera %.1fs" % (time.time() - tp0))
-            camj = steady_camera(camj, c)
-            log("    camera %s" % camj.get("steady", ""))
-            u, hc, ginfo = solve_ground(people, cam, y0, Hp, c)
+        camj, u, hc, ginfo = estimate_shot(sf, spose, people, cam, y0, Hp, c)   # dense tracking + depth / horizon / people ground
+        log("    camera %.1fs  %s" % (time.time() - tp0, camj.get("steady", "")))
         z = camj.get("zoom")
         if z and lens_info and lens_info.get("frames_mm") and not lens_info.get("why"):
             # the lens was measured a quarter, half and three quarters into the shot, the zoom is from its first frame:
@@ -573,9 +516,9 @@ def render_and_pack(name, video, work, c):
     if not os.path.exists(dp):
         raise RuntimeError("no scene yet - run the movement stage for this clip first")
     data = jload(dp)
-    old = sorted(k for k, ch in data.get("chars", {}).items() if ch.get("style", "sample") == "l3")
+    old = sorted(k for k, ch in data.get("chars", {}).items() if ch.get("style", "sample") not in ("sample", "classic"))
     if old:
-        raise RuntimeError("this scene was built with the removed L3 rig (%s) - run the movement stage again" % ", ".join(old))
+        raise RuntimeError("this scene was built with a removed character rig (%s) - run the movement stage again" % ", ".join(old))
     data["submit_dir"] = os.path.join(c["submit_root"], name); data["work_dir"] = work
     data["render_scale"] = float(c.get("out_width", 3840)) / data["res"][0]     # the current output width, also for older fits
     try:                                                                        # v2.1: render at the size the 1080P canvas shows

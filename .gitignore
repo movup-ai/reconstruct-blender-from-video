@@ -89,11 +89,8 @@ data/removed.json
 data/held.json
 
 # ---------------------------------------------------------------
-# Members (login sessions hold tokens) and per-member / per-PC state
+# Per-PC app state
 # ---------------------------------------------------------------
-data/sessions.json
-data/users.json
-data/users/
 data/unzipped.json
 # Permanent package assignments are local app data; back up separately.
 data/package_names.json

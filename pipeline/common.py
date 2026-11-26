@@ -94,31 +94,14 @@ def cfg():
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
         c["marks_root"] = os.path.join(sb, "output"); c["_sandbox"] = sb
-    if os.environ.get("BA_USER"):                      # a job the app runs for one member (see member_cfg)
-        c = member_cfg(c, os.environ["BA_USER"], os.environ.get("BA_SOURCE", ""))
-    return c
-
-MEMBERS = "_users"                                     # members' own folders inside output, Work_auto and SUBMIT
-
-def member_cfg(c, user, source):
-    """the settings one member works with: their own source folder, and their own result folders
-    (output\\_users\\<user>, <work_root>\\_users\\<user>, <submit_root>\\_users\\<user>), so members never see or
-    overwrite each other's clips.  The app passes the member to its jobs as BA_USER / BA_SOURCE."""
-    if c.get("_user"):
-        raise ValueError("these settings already belong to member %s" % c["_user"])
-    c = dict(c, _user=user, source_root=source or "")
-    c["work_root"] = os.path.join(c["work_root"], MEMBERS, user)
-    c["submit_root"] = os.path.join(c["submit_root"], MEMBERS, user)
-    c["marks_root"] = os.path.join(c.get("marks_root") or os.path.join(AGENT, "output"), MEMBERS, user)
+    if os.environ.get("BA_SOURCE"):                    # a job the app runs: the app's source folder (same layout of
+        c["source_root"] = os.environ["BA_SOURCE"]     # output\<film>\<clip> on both sides)
     return c
 
 def output_dir(c=None):
-    """the folder holding output\\<clip> (sets, hints): the sandbox's when BA_SANDBOX is set, and the member's own
-    (output\\_users\\<user>) for a member's settings (c from member_cfg) or a job run for a member (BA_USER)"""
+    """the folder holding output\\<clip>: the sandbox's when BA_SANDBOX is set"""
     sb = os.environ.get("BA_SANDBOX")
-    base = os.path.join(sb, "output") if sb else os.path.join(AGENT, "output")
-    user = (c or {}).get("_user") or os.environ.get("BA_USER")
-    return os.path.join(base, MEMBERS, user) if user else base
+    return os.path.join(sb, "output") if sb else os.path.join(AGENT, "output")
 
 def log(*a):
     print(*a, flush=True)

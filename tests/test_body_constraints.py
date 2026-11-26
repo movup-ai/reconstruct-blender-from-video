@@ -16,7 +16,7 @@ import fit_people as FP
 import quality
 import dependencies
 from common import DEFAULT_CFG,jsave
-from camera_solve import Camera
+from common import Camera
 from ground_solve import World
 from rig import Rig,JOINTS
 

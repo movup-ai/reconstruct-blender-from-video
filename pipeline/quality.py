@@ -86,7 +86,7 @@ def jumps(ch, deg=6.0, acc=5.0, move=0.04):
 def foot_gap(ch):
     """median height of the lowest foot over the floor (m), visible frames"""
     from rig import Rig, JOINTS
-    rig = Rig(ch["height"], ch.get("style", "master")); gaps = []
+    rig = Rig(ch["height"], ch.get("style", "sample")); gaps = []
     for f, r in enumerate(ch["root"]):
         if ch.get("visible") and not ch["visible"][f]:
             continue

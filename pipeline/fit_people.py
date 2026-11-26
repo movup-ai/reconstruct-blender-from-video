@@ -34,11 +34,8 @@ def unpack(q, rig):
 
 def bounds(rig):
     top = float(rig.J[0][2][2] / rig.s)
-    # master: deep squats bring the pelvis down to ~0.3 m
-    lo = [-1e5, -1e5, -1e5, (0.18 if rig.style == 'master' else 0.50) * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
+    lo = [-1e5, -1e5, -1e5, 0.50 * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
     for j, _, l, h, _ in ANG:
-        if rig.style == 'master' and j.startswith("knee_"):
-            l = -165.0                                   # master: full squats (feet flat, heels under the hips)
         lo.append(l); hi.append(h)
     return np.array(lo, float), np.array(hi, float)
 

@@ -380,7 +380,7 @@ def _clean_steps(R, S, fixed=None, lost=None):
 
 
 def solve(frames, pose, c, depth=None):
-    """camera.json-style result (same keys as camera_solve.solve) + "zoom" (focal scale per frame)"""
+    """camera.json-style result (R per frame, W, H, y0, f, lens, rotation, parallax, cuts, warnings) + "zoom" (focal scale per frame)"""
     if c.get("camera_tracker", "flow") == "flow":
         t = track_flow(frames, pose, c, depth)
     else:
@@ -620,7 +620,7 @@ def picture_cues(frames, pose, y0, cam, R, depth, nf=5):
 
 
 def estimate_shot(frames, pose, people, cam, y0, Hp, c, depth="auto"):
-    """everything for one shot: (camj like camera_solve.solve after steadying, up (cam0), height, ground info)"""
+    """everything for one shot: (camj from solve() after steadying, up (cam0), height, ground info)"""
     if isinstance(depth, str):
         depth = get_depth(c) if c.get("camera_depth", True) else None
     camj = solve(frames, pose, c, depth if c.get("camera_far_weight", True) else None)
@@ -649,7 +649,7 @@ def level_roll(camj, u0, c):
 
 
 def steady(camj, c):
-    """like run_pipeline.steady_camera, plus: roll is kept only when it is large and steady (film cameras roll very
+    """lock a camera that only shows tracking noise, smooth a moving one; roll is kept only when it is large and steady (film cameras roll very
     rarely; small rolls are tracking error), and a shot whose turn is small and wandering is locked"""
     R = np.array(camj["R"], float)
     if len(R) < 3:

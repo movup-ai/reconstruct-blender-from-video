@@ -35,25 +35,18 @@ class JobStore:
                 error TEXT, log TEXT)""")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_clip ON jobs(clip, id)")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, id)")
-            try:                                                 # the member a job belongs to (older queues: none)
-                self.db.execute("ALTER TABLE jobs ADD COLUMN user TEXT")
-            except sqlite3.OperationalError:
-                pass
             # stages of the older Prepare / review / Finish app can never run again: waiting ones are cancelled
             marks = ",".join("?" * len(STAGES))
             self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE state IN ('queued','running') AND stage NOT IN (%s)"
                             % marks, (time.time(),) + STAGES)
 
     def recover(self):
-        """jobs that were running when the app stopped go back to the queue.  Waiting jobs from before members
-        existed belong to nobody: they are cancelled."""
+        """jobs that were running when the app stopped go back to the queue"""
         with self.lock:
-            self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE user IS NULL AND state IN ('queued','running')",
-                            (time.time(),))
             n = self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE state='running'").rowcount
         return n
 
-    def enqueue(self, clip, stage, force=False, user=None):
+    def enqueue(self, clip, stage, force=False):
         if stage not in STAGES:
             raise ValueError("bad stage %r" % stage)
         with self.lock:
@@ -61,17 +54,14 @@ class JobStore:
             if busy:
                 if not force or any(row['stage'] == stage for row in busy): return None
                 self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE clip=? AND state='queued'", (time.time(), clip))
-            cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, user) VALUES (?,?,?,?,?,?)",
-                                  (clip, stage, "queued", PRIORITY[stage], time.time(), user))
+            cur = self.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES (?,?,?,?,?)",
+                                  (clip, stage, "queued", PRIORITY[stage], time.time()))
             return cur.lastrowid
 
-    def take(self, users=None, limit=None, exclude=()):
-        """the next job to run; users: only jobs of these members (the ones who pressed Start), None: any job.
-        limit: no job when this many already run.  exclude: clips that must not start (an interrupted process of
-        theirs may still be exiting).  One job per clip at a time; waiting order is priority, then when the job
-        was first queued (a job put back by Pause keeps its place)."""
-        if users is not None and not users:
-            return None
+    def take(self, limit=None, exclude=()):
+        """the next job to run.  limit: no job when this many already run.  exclude: clips that must not start (an
+        interrupted process of theirs may still be exiting).  One job per clip at a time; waiting order is
+        priority, then when the job was first queued (a job put back by Pause keeps its place)."""
         with self.lock:
             if limit is not None:
                 count = self.db.execute("SELECT COUNT(*) FROM jobs WHERE state='running'").fetchone()[0]
@@ -79,8 +69,6 @@ class JobStore:
                     return None
             args = []
             q = "SELECT * FROM jobs WHERE state='queued' AND clip NOT IN (SELECT clip FROM jobs WHERE state='running')"
-            if users is not None:
-                q += " AND user IN (%s)" % ",".join("?" * len(users)); args += sorted(users)
             exclude = sorted(set(exclude))
             if exclude:
                 q += " AND clip NOT IN (%s)" % ",".join("?" * len(exclude)); args += exclude
@@ -101,29 +89,25 @@ class JobStore:
         with self.lock:
             self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE id=?", (jid,))
 
-    def cancel_queued(self, clip=None, user=None):
-        """cancel waiting jobs: one clip's, one member's, or (neither) all"""
+    def cancel_queued(self, clip=None):
+        """cancel waiting jobs: one clip's, or (None) all"""
         with self.lock:
             q, args = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'", [time.time()]
             if clip:
                 q += " AND clip=?"; args.append(clip)
-            if user:
-                q += " AND user=?"; args.append(user)
             return self.db.execute(q, args).rowcount
 
-    def clear_clip(self, clip, user):
+    def clear_clip(self, clip):
         """Forget a reset clip's job status and timing history."""
         with self.lock:
-            return self.db.execute("DELETE FROM jobs WHERE clip=? AND (user=? OR user IS NULL) AND state!='running'",
-                                   (clip, user)).rowcount
+            return self.db.execute("DELETE FROM jobs WHERE clip=? AND state!='running'", (clip,)).rowcount
 
-    def cancel_for_reset(self, user, clips, all_user=False, return_jobs=False, running_only=False):
-        """Cancel owned jobs without leaving them eligible for retry or recovery."""
+    def cancel_for_reset(self, clips, all_clips=False, return_jobs=False, running_only=False):
+        """Cancel jobs (of these clips, or all) without leaving them eligible for retry or recovery."""
         with self.lock:
             rows = self.db.execute("SELECT * FROM jobs WHERE " +
                                    ("state='running'" if running_only else "state IN ('queued','running')")).fetchall()
-            selected = [dict(r) for r in rows if (r['user'] == user and (all_user or r['clip'] in clips)) or
-                        (r['user'] is None and r['clip'] in clips)]
+            selected = [dict(r) for r in rows if all_clips or r['clip'] in clips]
             ids = [r['id'] for r in selected]
             for jid in ids:
                 self.db.execute("UPDATE jobs SET state='cancelled',ended=? WHERE id=?", (time.time(), jid))
@@ -131,7 +115,7 @@ class JobStore:
 
     def restore_paused(self, pending):
         """Pause: each interrupted job waits again, in its old place in the queue (its priority and first queue
-        time), marked paused until it runs or its member resumes.  The interrupted attempt does not count as a try.
+        time), marked paused until it runs or the queue is resumed.  The interrupted attempt does not count as a try.
         A clip that already waits for that stage is not queued twice."""
         with self.lock:
             for job in pending:
@@ -142,25 +126,25 @@ class JobStore:
                                         (job['clip'], job['stage'])).fetchone()
                 if again:
                     continue
-                self.db.execute("""INSERT INTO jobs(clip,stage,state,priority,attempts,created,user,error)
-                                   VALUES (?,?,'queued',?,?,?,?,?)""",
+                self.db.execute("""INSERT INTO jobs(clip,stage,state,priority,attempts,created,error)
+                                   VALUES (?,?,'queued',?,?,?,?)""",
                                 (job['clip'], job['stage'], job.get('priority', PRIORITY.get(job['stage'], 0)),
-                                 max(0, (job.get('attempts') or 1) - 1), job.get('created') or time.time(), job['user'], PAUSED))
+                                 max(0, (job.get('attempts') or 1) - 1), job.get('created') or time.time(), PAUSED))
 
-    def clear_paused(self, user):
-        """Resume: this member's jobs put back by Pause are ordinary waiting jobs again"""
+    def clear_paused(self):
+        """Resume: jobs put back by Pause are ordinary waiting jobs again"""
         with self.lock:
-            return self.db.execute("UPDATE jobs SET error=NULL WHERE user=? AND state='queued' AND error=?",
-                                   (user, PAUSED)).rowcount
+            return self.db.execute("UPDATE jobs SET error=NULL WHERE state='queued' AND error=?", (PAUSED,)).rowcount
 
     def mark_stopped(self, pending):
         with self.lock:
             for job in pending:
                 self.db.execute("UPDATE jobs SET state='stopped',error='Cancelled by user' WHERE id=?", (job['id'],))
 
-    def clear_user(self, user):
+    def clear_all(self):
+        """Reset all: forget every job and its timing history (running ones were stopped first)"""
         with self.lock:
-            return self.db.execute('DELETE FROM jobs WHERE user=?', (user,)).rowcount
+            return self.db.execute("DELETE FROM jobs WHERE state!='running'").rowcount
 
     def latest(self):
         """{clip: latest job (not cancelled)}"""
@@ -206,12 +190,10 @@ class JobStore:
             r = self.db.execute("SELECT * FROM jobs WHERE clip=? AND state!='cancelled' ORDER BY id DESC LIMIT 1", (clip,)).fetchone()
         return dict(r) if r else None
 
-    def counts(self, user=None):
-        """{state: number of jobs}, of one member or (None) everyone's"""
+    def counts(self):
+        """{state: number of jobs}"""
         with self.lock:
-            if user is None:
-                return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
-            return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs WHERE user=? GROUP BY state", (user,))}
+            return {r[0]: r[1] for r in self.db.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")}
 
     def running(self):
         with self.lock:
@@ -231,8 +213,8 @@ def kill_tree(proc):
 
 
 class Runner:
-    """worker pool; the number of busy workers follows the 'parallel' setting live.  One queue for every member (one
-    NVIDIA card); each member starts and pauses their own jobs."""
+    """worker pool; the number of busy workers follows the 'parallel' setting live.  One queue (one NVIDIA card);
+    nothing runs until Start, Pause stops it again."""
     MAX_WORKERS = 16
 
     def __init__(self, app):
@@ -242,18 +224,17 @@ class Runner:
         self.busy = 0
         self.procs = {}
         self.stop = threading.Event()
-        self.active = set()       # members who pressed Start: nothing of a member runs before that (even from last time)
-        self.resetting = set()
+        self.active = False       # Start pressed: nothing runs before that (not even jobs from last time)
+        self.resetting = False    # Pause / Cancel / Reset is stopping jobs
         self.inflight = {}        # job id -> job, while a worker holds it (also after Pause / Cancel, until it exits)
         self.cancelled = set()
 
     @property
     def paused(self):
-        """no member's jobs run"""
         return not self.active
 
-    def is_paused(self, user):
-        return user not in self.active
+    def is_paused(self):
+        return not self.active
 
     def start(self):
         n = self.store.recover()
@@ -267,21 +248,18 @@ class Runner:
         with self.cond:
             self.cond.notify_all()
 
-    def resume(self, user):
-        """this member's waiting jobs may run (jobs put back by Pause are no longer shown as paused)"""
+    def resume(self):
+        """waiting jobs may run (jobs put back by Pause are no longer shown as paused)"""
         with self.cond:
-            if user not in self.resetting:
-                self.active.add(user)
-                self.store.clear_paused(user)
+            if not self.resetting:
+                self.active = True
+                self.store.clear_paused()
                 self.cond.notify_all()
 
-    def pause(self, user=None):
-        """no new job of this member (None: of anyone) starts; running ones finish, queued ones wait"""
+    def pause(self):
+        """no new job starts; running ones finish, queued ones wait"""
         with self.cond:
-            if user is None:
-                self.active.clear()
-            else:
-                self.active.discard(user)
+            self.active = False
 
     def shutdown(self):
         self.stop.set()
@@ -294,21 +272,20 @@ class Runner:
         return {job['clip'] for job in self.inflight.values()}
 
     @contextmanager
-    def reset_jobs(self, user, clips, all_user=False, timeout=60., mode='reset'):
-        """Quiesce a member before deleting files; workers must finish cleanup first.
+    def reset_jobs(self, clips, all_clips=False, timeout=60., mode='reset'):
+        """Quiesce the queue before deleting files; workers must finish cleanup first.
         mode 'pause': interrupted jobs wait again (restored straight away, so a slow exit never loses them);
         'cancel': they are marked stopped; 'reset': they are only cancelled (the caller deletes the files)."""
         clips = set(clips)
         with self.cond:
-            while user in self.resetting:
+            while self.resetting:
                 self.cond.wait()
-            self.resetting.add(user)
-            was_active = user in self.active
-            self.active.discard(user)
-            pending = self.store.cancel_for_reset(user, clips, all_user, return_jobs=True, running_only=mode == 'pause')
+            self.resetting = True
+            was_active = self.active
+            self.active = False
+            pending = self.store.cancel_for_reset(clips, all_clips, return_jobs=True, running_only=mode == 'pause')
             ids = {job['id'] for job in pending}
-            ids.update(jid for jid, job in self.inflight.items() if job.get('user') == user and
-                       (all_user or job['clip'] in clips))
+            ids.update(jid for jid, job in self.inflight.items() if all_clips or job['clip'] in clips)
             known = {job['id'] for job in pending}
             pending.extend(dict(self.inflight[jid]) for jid in ids - known if jid in self.inflight and jid in self.cancelled)
             self.cancelled.update(ids)
@@ -334,11 +311,12 @@ class Runner:
             yield len(ids)
         finally:
             with self.cond:
-                self.resetting.discard(user)
+                self.resetting = False
                 self.cancelled.difference_update(jid for jid in ids if jid not in self.inflight)
-                # Reset all leaves the member paused, exactly like selecting a folder.
-                if was_active and not all_user:
-                    self.active.add(user)
+                # Pause and Reset all leave the queue paused, exactly like selecting a folder; one clip's Cancel or
+                # Reset keeps it running.
+                if was_active and not all_clips:
+                    self.active = True
                 self.cond.notify_all()
 
     def _discard_incomplete_caches(self, pending):
@@ -349,8 +327,7 @@ class Runner:
         seen = set()
         for job in pending:
             if job['state'] != 'running': continue
-            ws = self.app.ws(job.get('user')) if job.get('user') else None
-            if ws is None: continue
+            ws = self.app.ws
             cl = ws.lib.by_id.get(job['clip'])
             if cl is None: continue
             paths = folders(ws.c, cl)
@@ -365,27 +342,27 @@ class Runner:
                         except OSError: log.warning('Could not remove incomplete cache %s', path)
                     except OSError: pass
 
-    def interrupt(self, user, clip=None, pause=False):
+    def interrupt(self, clip=None, pause=False):
         """Stop active process trees without deleting completed work or timing records."""
         mode = 'pause' if pause else 'cancel'
-        with self.reset_jobs(user, [] if clip is None else [clip], all_user=clip is None, mode=mode) as stopped:
+        with self.reset_jobs([] if clip is None else [clip], all_clips=clip is None, mode=mode) as stopped:
             result = {'ok': True, 'interrupted': stopped, 'cancelled': 0 if pause else stopped, 'resumable': pause,
                       'note': 'Paused. Resume restarts the interrupted run using completed caches.' if pause else 'Processing cancelled; completed files are kept.'}
-        result['paused'] = self.is_paused(user)
+        result['paused'] = self.is_paused()
         return result
 
     # ---------------------------------------------------------------- workers
     def _worker(self):
         while not self.stop.is_set():
             with self.cond:
-                while not self.stop.is_set() and not self.active:
+                while not self.stop.is_set() and not (self.active and not self.resetting):
                     self.cond.wait(5)
                 if self.stop.is_set():
                     return
                 limit = max(1, int(self.app.c.get('parallel', 1) or 1))
                 job = None
                 if len(self.inflight) < limit:        # an interrupted job still exiting holds its place too
-                    job = self.store.take(set(self.active) - self.resetting, limit=limit, exclude=self._busy_clips())
+                    job = self.store.take(limit=limit, exclude=self._busy_clips())
                 if job is None:
                     self.cond.wait(3)
                     continue
@@ -415,10 +392,7 @@ class Runner:
     def _run(self, job):
         with self.cond:
             if job['id'] in self.cancelled: return
-        ws = self.app.ws(job["user"]) if job.get("user") else None
-        if ws is None:
-            self.store.finish(job["id"], False, "this job belongs to no member")
-            return
+        ws = self.app.ws
         c = ws.c
         try:
             cl = ws.lib.get(job["clip"])
@@ -429,8 +403,8 @@ class Runner:
         os.makedirs(f["work"], exist_ok=True)
         logp = os.path.join(f["work"], "job_%s.log" % job["stage"])
         timeout = 60 * float(c.get("timeout_movement_min") or config.APP_DEFAULTS["timeout_movement_min"])
-        # the job works in this member's folders (common.member_cfg reads these)
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_USER=ws.user, BA_SOURCE=c["source_root"],
+        # the job reads the same source folder as the app (common.cfg: BA_SOURCE), so the folder layout matches
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_SOURCE=c["source_root"],
                    BA_GPU_LOCK=os.path.join(config.DATA, 'model_inference.lock'))
         cmd = self._cmd(job, cl)
         fp = fingerprint(c, cl) if job["stage"] == "movement" else None     # what this run is made from
@@ -487,30 +461,29 @@ class Runner:
         self.wake()
 
     def autopilot_pass(self):
-        """queue Movement for every clip of a member who pressed Start that has no valid zip, unless it is taken out,
-        waiting, running, failed for good or cancelled (those wait for the member)"""
+        """after Start: queue Movement for every clip that has no valid zip, unless it is skipped, waiting, running,
+        failed for good or cancelled (those wait for Start / Re-run)"""
         queued = 0
         with self.cond:
+            if not self.active or self.resetting:
+                return 0
             latest = self.store.latest()
-            for user in sorted(self.active - self.resetting):
-                ws = self.app.ws(user)
-                if ws is None:
+            ws = self.app.ws
+            for cl in list(ws.lib.clips):
+                j = latest.get(cl.id)
+                if j and j['state'] in ('queued', 'running', 'failed', 'stopped'):
                     continue
-                for cl in list(ws.lib.clips):
-                    j = latest.get(cl.id)
-                    if j and j['state'] in ('queued', 'running', 'failed', 'stopped'):
-                        continue
-                    st = status(ws.c, cl, j)
-                    if st["held"] or st["done"]:
-                        continue
-                    if self.store.enqueue(cl.id, "movement", user=user):
-                        queued += 1
+                st = status(ws.c, cl, j)
+                if st["skipped"] or st["done"]:
+                    continue
+                if self.store.enqueue(cl.id, "movement"):
+                    queued += 1
             if queued:
                 self.cond.notify_all()
         return queued
 
     def _autopilot(self):
-        """keeps the queue fed for every member who pressed Start"""
+        """keeps the queue fed after Start"""
         while not self.stop.wait(20):
             try:
                 self.autopilot_pass()

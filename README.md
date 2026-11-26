@@ -97,12 +97,11 @@ its path set in Settings). Use one concurrent job on a 12 GB card. Model folders
 | `agent\` | the app (server, job queue, clip status, v2.1 package check) |
 | `pipeline\` | Stage 1: marks, camera, metric scene, people fitting, floor, Blender build, packaging |
 | `web\` | the pages |
-| `assets\` | the client's sample character, other supplied character definitions, the reconstruction script |
+| `assets\` | the client's sample character (`sample_character.json`) and the reconstruction script shipped in every package |
 | `models\` | SAM 3, SAM 3D Body/MHR, Depth Anything V2 Small, MoGe-2, Mask2Former weights; `trt_cache\` TensorRT engines |
 | `output\` | per clip: tracked people and joints (`pose.json`, masks) |
 | `Work_auto\` | per clip: scene, previews, saved depth, renders, reports, job logs |
 | `SUBMIT\` | finished packages and zips |
-| `tools\v21\` | stand-alone v2.1 package checker |
 | `docs\` | [project map](docs/PROJECT_MAP.md), [model flow](docs/MODEL_FLOW.md), colour card, SAM notes, client spec (`docs\v21\`) |
 | `tests\` | `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` |
 

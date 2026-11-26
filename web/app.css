@@ -268,7 +268,7 @@ table.list tr:hover td { background:#f8fafa; }
 @media (max-width:560px) {
   .navin { padding:0 8px; gap:0; } .topnav .brand { margin-right:4px; font-size:0; gap:0; } .topnav .brand img { width:20px; height:20px; }
   .topnav .nl { padding:0 6px; font-size:13.5px; } .topnav .nl.on::after { left:6px; right:6px; } .topnav .qind { display:none; }
-  .quitbtn { margin-left:6px; padding:0 9px; font-size:13px; } #logout { margin-left:auto; } .topnav .who { display:none; }
+  .quitbtn { margin-left:6px; padding:0 9px; font-size:13px; }
   .search { min-width:0; width:100%; margin-left:0; }
 }
 details.step summary span.num { color:#fff; font-size:12.5px; font-weight:600; margin:0 9px 0 0; }   /* the step number keeps its own look inside a summary */
@@ -290,23 +290,14 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
 :is(.clipcard, .table-actions) .qb.add { background:var(--accent-tint); border-color:#b9d6d8; color:var(--accent); font-weight:600; }
 .clipcard.hasq a.clip .pk { padding-right:86px; }
 .clipcard.hasq a.clip .pk .took { display:none; }
-.clipcard.held img { filter:grayscale(1); opacity:.55; }
+.clipcard.skipped img { filter:grayscale(1); opacity:.55; }
+.clipcard.skipped .n { color:var(--slate); }
 /* Start over with every clip: its own quiet block at the bottom, a clearly dangerous button */
 .resetzone { margin-top:28px; padding:14px 16px; border:1px solid var(--bad-tint); border-left:3px solid var(--bad); border-radius:10px;
              background:var(--paper); display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .resetzone p { margin:2px 0 0; max-width:560px; }
 button.dangerline { background:var(--paper); border-color:var(--bad); color:var(--bad); font-weight:600; }
 button.dangerline:hover { background:var(--bad); color:#fff; }
-/* removed videos: greyed cards with Add back */
-.removed { margin-top:26px; padding-top:6px; border-top:1px solid var(--seam); }
-.removed h2 { margin-top:16px; }
-.clipcard.off .clip { display:block; background:var(--paper); border:1px dashed var(--seam-strong); border-radius:10px; overflow:hidden; }
-.clipcard.off img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; filter:grayscale(1); opacity:.55; }
-.clipcard.off .noimg { aspect-ratio:16/9; background:var(--sunk); }
-.clipcard.off .t { padding:9px 11px 2px; display:flex; justify-content:space-between; align-items:center; gap:6px; color:var(--slate); }
-.clipcard.off .n { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.clipcard.off .addback { padding:6px 11px 11px; }
-.clipcard.off .addback button { width:100%; }
 .sub code { background:var(--sunk); padding:1px 6px; border-radius:4px; }
 .faq > .sub, .faq > section { max-width:860px; }   /* help reads as a column on the shared left edge */
 .pkchip, .chip { white-space:nowrap; }

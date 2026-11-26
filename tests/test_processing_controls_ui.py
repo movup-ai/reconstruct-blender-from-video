@@ -55,7 +55,13 @@ assert(vm.runInContext('clipActions(clip).queue',context).includes('data-cancel-
 context.clip={id:'abc',name:'film_clip',package:'film-1',status:{done:true,label:'done',job:{stage:'movement',state:'done'}}};
 assert(vm.runInContext('clipActions(clip).queue',context).includes('href="/download/film_clip"'),'a done clip offers its zip');
 context.clip={id:'abc',name:'film_clip',status:{label:'new'}};
-assert(vm.runInContext('clipActions(clip).queue',context).includes('data-hold="abc"'));
+assert(vm.runInContext('clipActions(clip).remove',context).includes('data-skip="abc"'),'one button skips a video');
+assert.equal(vm.runInContext('clipActions(clip).queue',context),'','no second "take out" button');
+context.clip={id:'abc',name:'film_clip',status:{label:'skipped',skipped:true}};
+assert(vm.runInContext('clipActions(clip).queue',context).includes('data-include="abc"'),'a skipped video offers Include');
+assert.equal(vm.runInContext('clipActions(clip).remove',context),'','a skipped video has no skip button');
+context.clip={id:'abc',name:'film_clip',status:{job:{stage:'movement',state:'running'}}};
+assert(vm.runInContext('clipActions(clip).remove',context).includes('disabled'),'a running video cannot be skipped');
 const detail=fs.readFileSync(root+'/web/clip.html','utf8');
 const begin=detail.indexOf("  const finishQueue = $('finishqueue');");
 const end=detail.indexOf("  // ---- end of the processing controls",begin);

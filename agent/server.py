@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""HTTP server: the web pages, the JSON API and the media files.  Members log in by name (agent/users.py); every
-clip page, file and action belongs to the logged-in member's workspace.  Listens on config "host" (127.0.0.1:
+"""HTTP server: the web pages, the JSON API and the media files.  One workspace (one source folder, one queue);
+there are no users and no login.  Listens on config "host" (127.0.0.1:
 this PC only; 0.0.0.0: the other PCs of the network too).
 
 The flow is automatic: Start queues Stage 1 (Movement) for every clip without a valid zip, and each run goes from
@@ -23,12 +23,10 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 from . import APP_NAME, __version__, config
-from .clips import Library, folders, status, read_json, set_held
+from .clips import Library, folders, status, read_json, set_skipped
 from .jobs import JobStore, Runner
-from .users import Users, COOKIE, token_from_cookie
 from . import media
 import package as pkg  # pipeline (on sys.path through config)
-from common import member_cfg  # pipeline
 
 log = logging.getLogger("agent.server")
 
@@ -40,36 +38,21 @@ class HttpError(Exception):
 
 
 class App:
-    """what every member shares: the settings, the job queue and its workers (one NVIDIA card), the logins"""
+    """the settings, the job queue and its workers (one NVIDIA card) and the one workspace"""
 
     def __init__(self, c=None):
         self.c = c or config.load()
         config.ensure_dirs(self.c)
-        self.users = Users(self.c.get("session_days", 30))
-        self.spaces = {}
-        self._spaces_lock = threading.Lock()
         self.store = JobStore(os.path.join(config.DATA, "jobs.db"))
         self.runner = Runner(self)
+        self.ws = Workspace(self)
         self.started = time.time()
         self.server = None
 
-    def ws(self, user):
-        """a member's workspace (their folder, clips and results), or None for an unknown member"""
-        with self._spaces_lock:
-            w = self.spaces.get(user)
-            if w is None:
-                if not self.users.get(user):
-                    return None
-                w = self.spaces[user] = Workspace(self, user)
-            return w
-
     def settings_changed(self, c):
-        """new shared settings: every member's folders follow them (work and SUBMIT live under the shared ones)"""
+        """new settings: the workspace follows them (source, work and SUBMIT folders)"""
         self.c = c
-        with self._spaces_lock:
-            spaces = list(self.spaces.values())
-        for w in spaces:
-            w.refresh()
+        self.ws.refresh()
 
     def health(self, ws=None):
         from common import blender_exe, human_model_assets
@@ -85,7 +68,7 @@ class App:
         checks = []
         if ws is not None:
             src = ws.c["source_root"]
-            checks.append({"name": "Your source folder", "ok": bool(src) and os.path.isdir(src),
+            checks.append({"name": "Source folder", "ok": bool(src) and os.path.isdir(src),
                            "detail": "%s · %d clips" % (src, len(ws.lib.clips)) if src else "not chosen yet - choose it on the Clips page"})
         checks += [
             {"name": "Blender", "ok": bool(be), "detail": be or "not found - install Blender 5.x or set its path in Settings"},
@@ -100,21 +83,18 @@ class App:
 
 
 class Workspace:
-    """one member's work: their source folder, its clips, and their results (output, Work_auto and SUBMIT
-    under _users\\<member>).  A member sees and changes only their own clips."""
+    """the work: the source folder (config source_root), its clips, and the results (output, Work_auto, SUBMIT)"""
 
-    def __init__(self, app, user):
+    def __init__(self, app):
         self.app = app
-        self.user = user
         self.store = app.store
         self.runner = app.runner
         self.lib = None
         self.refresh()
 
     def refresh(self):
-        """settings again: the member's folder, the shared ones around it"""
-        rec = self.app.users.get(self.user) or {}
-        self.c = member_cfg(self.app.c, self.user, rec.get("source_root") or "")
+        """settings again: the source folder and the result folders"""
+        self.c = dict(self.app.c)
         for k in ("work_root", "submit_root"):
             os.makedirs(self.c[k], exist_ok=True)
         if self.lib is None:
@@ -123,15 +103,11 @@ class Workspace:
             self.lib.c = self.c
             self.lib.rescan()
 
-    @property
-    def name(self):
-        return (self.app.users.get(self.user) or {}).get("name", self.user)
-
     def enqueue(self, cl, stage="movement", force=False):
         with self.runner.cond:
-            if self.user in self.runner.resetting:
+            if self.runner.resetting:
                 raise HttpError(409, 'Reset is still stopping jobs and clearing files. Wait for it to finish.')
-            return self.store.enqueue(cl.id, stage, force=force, user=self.user)
+            return self.store.enqueue(cl.id, stage, force=force)
 
     def clip(self, cid):
         try:
@@ -144,28 +120,25 @@ class Workspace:
         return [(cl, status(self.c, cl, latest.get(cl.id))) for cl in self.lib.clips]
 
     def queue_summary(self):
-        """this member's queue; the machine is shared, so other members' jobs are counted (not named)"""
-        mine, every = self.store.counts(self.user), self.store.counts()
-        run, others = [], 0
+        """the queue: running jobs (with progress), waiting and failed counts, paused or not"""
+        counts = self.store.counts()
+        run = []
         for j in self.store.running():
-            cl = self.lib.by_id.get(j["clip"]) if j.get("user") == self.user else None
-            if cl is None:
-                others += 1
+            cl = self.lib.by_id.get(j["clip"])
+            if cl is None:                                       # a clip of an earlier source folder
                 continue
             pr = job_progress(self.c, cl, j)
             run.append({"clip": j["clip"], "name": cl.name, "stage": j["stage"],
                         "since": round(time.time() - (j["started"] or time.time())), "progress": pr.get("pct"), "step": pr.get("step")})
-        return {"running": len(run), "queued": mine.get("queued", 0), "failed": mine.get("failed", 0),
-                "others": {"running": others, "queued": every.get("queued", 0) - mine.get("queued", 0)},
-                "parallel": self.app.c["parallel"], "now": run,
-                "paused": self.runner.is_paused(self.user)}
+        return {"running": len(run), "queued": counts.get("queued", 0), "failed": counts.get("failed", 0),
+                "parallel": self.app.c["parallel"], "now": run, "paused": self.runner.is_paused()}
 
     def reset(self, cls, dry=False, all_clips=False):
         """Stop writers before clearing outputs/history; Reset all restores the fresh folder list."""
         from . import clips as clipsmod
         if all_clips:
             self.lib.rescan()
-            cls = list(self.lib.clips) + list(self.lib.removed_by_id.values())
+            cls = list(self.lib.clips)
         running = {j["clip"] for j in self.store.running()}
         busy = [cl.name for cl in cls if cl.id in running]
         if dry:
@@ -173,21 +146,18 @@ class Workspace:
             return {"ok": True, "dry": True, "busy": busy, "clips": items}
         removed, failed, done = 0, [], []
         try:
-            with self.runner.reset_jobs(self.user, [cl.id for cl in cls], all_user=all_clips) as stopped:
-                restored = set()
+            with self.runner.reset_jobs([cl.id for cl in cls], all_clips=all_clips) as stopped:
                 for cl in cls:
                     with media._lock:
                         r = clipsmod.reset(self.c, cl)
-                    self.store.clear_clip(cl.id, self.user)
+                    self.store.clear_clip(cl.id)
                     removed += len(r['removed'])
                     failed += [{'clip': cl.name, 'path': p, 'reason': why} for p, why in r['failed']]
                     if not r['failed']:
-                        clipsmod.set_held(cl.id, False, self.c)
-                        restored.add(os.path.normcase(os.path.abspath(cl.video)))
+                        clipsmod.set_skipped(cl.id, False, self.c)   # back to new: skipped clips are included again
                         done.append(cl.name)
                 if all_clips:
-                    self.store.clear_user(self.user)
-                    clipsmod.save_removed(clipsmod.removed_set(self.c) - restored, self.c)
+                    self.store.clear_all()
                     for filename in ('CLAUDE_HANDOFF.json', 'CLAUDE_HANDOFF.md'):    # left by an older version
                         path = os.path.join(self.c['work_root'], filename)
                         if os.path.exists(path):
@@ -201,7 +171,7 @@ class Workspace:
                     self.lib.rescan()
         except TimeoutError as error:
             raise HttpError(409, str(error))
-        log.info('%s: reset %d clips, %d items deleted, %d jobs cancelled, %d failures', self.user, len(done), removed, stopped, len(failed))
+        log.info('reset %d clips, %d items deleted, %d jobs cancelled, %d failures', len(done), removed, stopped, len(failed))
         return {'ok': not failed, 'clips': done, 'removed': removed, 'failed': failed, 'busy': [], 'stopped': stopped}
 
     def clip_info(self, cid):
@@ -215,7 +185,7 @@ class Workspace:
         out = {"clip": cl.to_dict(), "status": st, "index": idx, "count": len(self.lib.clips),
                "prev": self.lib.clips[idx - 1].id if idx > 0 else None,
                "next": self.lib.clips[idx + 1].id if 0 <= idx < len(self.lib.clips) - 1 else None,
-               "package": package, "paused": self.runner.is_paused(self.user),
+               "package": package, "paused": self.runner.is_paused(),
                "timing": self.store.timing().get(cl.id)}
         pose = read_json(f["pose"])
         if pose:
@@ -260,38 +230,37 @@ class Workspace:
 
     # ------------------------------------------------------------ the flow: folder -> Start -> Movement -> zip
     def use_folder(self, path, title):
-        """make <path> this member's source folder, and give its videos without a delivery name one when a title is
-        given.  Nothing of a new folder starts: the member's queue pauses, their waiting jobs of the previous folder
-        are removed; they press Start."""
+        """make <path> the source folder (saved in config.json), and give its videos without a delivery name one when
+        a title is given.  Nothing of a new folder starts: the queue pauses and waiting jobs of the previous folder
+        are removed; Start runs it."""
         scan = folder_scan(self.c, path, title)
         if title.strip() and scan["unnamed"] and not scan["slug"]:
             raise HttpError(400, "type an English title for this folder (letters and numbers), e.g. the hidden blade")
         if not scan["current"]:                               # another folder: nothing of it runs before Start
-            self.runner.pause(self.user)
+            self.runner.pause()
         old = set(self.lib.by_id)
-        self.app.users.set_source(self.user, scan["path"])
-        self.refresh()
+        self.app.settings_changed(config.save({"source_root": scan["path"]}))      # refreshes this workspace
         dropped = sum(self.store.cancel_queued(cid) for cid in old - set(self.lib.by_id))
         new = pkg.assign_names([cl.name for cl in self.lib.clips], scan["title"], self.c) if scan["slug"] else {}
-        log.info("%s: source folder %s: %d videos, %d new package names", self.user, scan["path"], len(self.lib.clips), len(new))
+        log.info("source folder %s: %d videos, %d new package names", scan["path"], len(self.lib.clips), len(new))
         return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "dropped": dropped, "clashes": self.lib.clashes}
 
     def start(self):
-        """Start (also Resume): queue Movement for every video of this member without a valid zip - new, failed,
-        cancelled or out of date - except those taken out of the line or already waiting / running, then let the
-        member's queue run (jobs put back by Pause keep their place)."""
+        """Start (also Resume): queue Movement for every video without a valid zip - new, failed, cancelled or out
+        of date - except skipped ones or those already waiting / running, then let the queue run (jobs put back by
+        Pause keep their place)."""
         queued = sum(1 for cl, st in self.status_all()
-                     if not st["done"] and not st["held"] and not (st["job"] and st["job"]["state"] in ("queued", "running"))
+                     if not st["done"] and not st["skipped"] and not (st["job"] and st["job"]["state"] in ("queued", "running"))
                      and self.enqueue(cl, "movement"))
-        self.runner.resume(self.user)
-        log.info("%s: start: %d video(s) queued", self.user, queued)
+        self.runner.resume()
+        log.info("start: %d video(s) queued", queued)
         return {"ok": True, "queued": queued}
 
     def run(self, cl):
         """run one clip now (Re-run on its page): Movement again, even when its zip is up to date"""
         jid = self.enqueue(cl, "movement", force=True)
-        set_held(cl.id, False, self.c)                         # an explicit run puts the clip back in line
-        self.runner.resume(self.user)                          # the member asked for it: their queue runs
+        set_skipped(cl.id, False, self.c)                      # an explicit run includes a skipped clip again
+        self.runner.resume()                                   # asked for explicitly: the queue runs
         return jid
 
     def report_rows(self):
@@ -457,7 +426,7 @@ def submissions(c):
 
 
 def settings_out(app, ws, local=None):
-    """the shared settings the Settings page shows (plus the member's own source folder)"""
+    """the settings the Settings page shows"""
     out = {k: app.c.get(k) for k in config.EDITABLE if k not in config.SECRETS}
     out["source_root"] = ws.c["source_root"]
     if local is not None:
@@ -591,46 +560,21 @@ def make_handler(app):
             ip = self.client_address[0]
             return ip in ("127.0.0.1", "::1") or ip.startswith("::ffff:127.")
 
-        def member(self):
-            """the logged-in member's workspace, or None"""
-            user = app.users.user_for(token_from_cookie(self.headers.get("Cookie")))
-            return app.ws(user) if user else None
-
-        def need_member(self, parts):
-            """the member's workspace; without a login a page goes to the login page and anything else gets 401"""
-            ws = self.member()
-            if ws is None:
-                if parts and parts[0] in ("api", "media", "download", "package", "report.csv"):
-                    raise HttpError(401, "log in first")
-                from urllib.parse import quote
-                self.send(302, b"", "text/plain", {"Location": "/login?next=" + quote(self.path, safe="")})
-                return None
-            return ws
-
         # ---- GET
         def get(self):
             u = urlparse(self.path)
             parts = [unquote(x) for x in u.path.strip("/").split("/") if x]
             q = parse_qs(u.query)
-            # ---- open to everyone: the login page and what it needs, and the health check of the launcher
-            if parts == ["login"]:
-                return self.page("login.html")
             if parts == ["favicon.ico"] or parts == ["favicon.svg"]:
                 return self.file(os.path.join(config.WEB, "favicon.svg"), "image/svg+xml")
             if parts[:1] == ["static"] and len(parts) == 2 and re.match(r"^[\w.-]+$", parts[1]):
                 return self.file(os.path.join(config.WEB, parts[1]))
-            if parts == ["api", "members"]:
-                return self.send(200, {"members": app.users.names()})
+            ws = app.ws
             if parts == ["api", "health"]:
-                return self.send(200, app.health(self.member()))
-            ws = self.need_member(parts)
-            if ws is None:
-                return
+                return self.send(200, app.health(ws))
             c = ws.c
             if not parts:
                 return self.page("index.html")
-            if parts == ["api", "me"]:
-                return self.send(200, {"name": ws.name, "key": ws.user, "local": self.local(), "source": c["source_root"]})
             if parts[0] == "clip" and len(parts) == 2:
                 ws.clip(parts[1])
                 return self.page("clip.html")
@@ -647,10 +591,9 @@ def make_handler(app):
                 return self.send(200, {"clips": [dict(cl.to_dict(), status=st, package=names.get(cl.name), took=tm.get(cl.id))
                                                  for cl, st in ws.status_all()],
                                        "queue": ws.queue_summary(),
-                                       "me": {"name": ws.name, "local": self.local()},
+                                       "local": self.local(),
                                        "source": {"path": src, "chosen": bool(src), "exists": bool(src) and os.path.isdir(src),
-                                                  "clashes": ws.lib.clashes, "zip_problems": ws.lib.zip_problems},
-                                       "removed": ws.lib.removed})
+                                                  "clashes": ws.lib.clashes, "zip_problems": ws.lib.zip_problems}})
             if parts == ["api", "folder"]:                              # what picking a folder would do
                 return self.send(200, folder_scan(c, (q.get("path") or [""])[0], (q.get("title") or [""])[0]))
             if parts == ["api", "settings"]:
@@ -672,7 +615,7 @@ def make_handler(app):
                 w.writeheader(); w.writerows(rows)
                 return self.send(200, "﻿" + buf.getvalue(), "text/csv; charset=utf-8",
                                  {"Content-Disposition": 'attachment; filename="blender_agent_report.csv"'})
-            if parts[0] == "download" and len(parts) == 2:             # a package zip from the member's SUBMIT folder
+            if parts[0] == "download" and len(parts) == 2:             # a package zip from the SUBMIT folder
                 name = os.path.basename(parts[1])
                 zp = os.path.join(c["submit_root"], name + ".zip")
                 if not name or not os.path.isfile(zp):
@@ -683,8 +626,6 @@ def make_handler(app):
                 name = os.path.basename(parts[1])
                 m = sorted(glob.glob(os.path.join(c["submit_root"], name, parts[2], "*.mp4")))
                 return self.file(m[0] if m else None, "video/mp4")
-            if parts == ["media", "clipthumb", parts[-1]] and parts[-1].split(".")[0] in ws.lib.removed_by_id:   # a removed video's card
-                return self.file(media.clip_thumb(c, ws.lib.removed_by_id[parts[-1].split(".")[0]]), "image/jpeg")
             if parts[0] == "media" and len(parts) >= 3:
                 kind = parts[1]; cl = ws.clip(parts[2].split(".")[0]); f = folders(c, cl)
                 if kind == "video":
@@ -751,12 +692,12 @@ def make_handler(app):
                     os.remove(tmp)
             ws.lib.rescan()
             cl = next((x for x in ws.lib.clips if os.path.normcase(x.video) == os.path.normcase(os.path.abspath(dest))), None)
-            if cl and not app.runner.is_paused(ws.user):            # the member's queue runs: the new video joins it
+            if cl and not app.runner.is_paused():                   # the queue runs: the new video joins it
                 try:
                     ws.enqueue(cl, "movement"); app.runner.wake()
                 except HttpError:
                     pass                                             # a Reset is running: Start queues it later
-            log.info("%s uploaded %s (%.1f MB) to %s", ws.user, os.path.basename(dest), n / 1e6, dest_dir)
+            log.info("uploaded %s (%.1f MB) to %s", os.path.basename(dest), n / 1e6, dest_dir)
             return self.send(200, {"ok": True, "file": os.path.basename(dest), "clip": cl.to_dict() if cl else None})
 
         # ---- POST
@@ -764,20 +705,7 @@ def make_handler(app):
             u = urlparse(self.path)
             parts = [unquote(x) for x in u.path.strip("/").split("/") if x]
             q = parse_qs(u.query)
-            if parts == ["api", "login"]:                                # a name is enough: it tells members apart
-                key, token = app.users.login(self.body_json().get("name", ""))
-                age = int(app.c.get("session_days", 30)) * 86400
-                log.info("%s logged in from %s", key, self.client_address[0])
-                return self.send(200, {"ok": True, "name": app.users.get(key)["name"]},
-                                 headers={"Set-Cookie": "%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax" % (COOKIE, token, age)})
-            if parts == ["api", "logout"]:
-                app.users.logout(token_from_cookie(self.headers.get("Cookie")))
-                return self.send(200, {"ok": True}, headers={"Set-Cookie": "%s=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" % COOKIE})
-            ws = self.member()
-            if ws is None:
-                if parts == ["api", "upload"]:
-                    self.drain()
-                raise HttpError(401, "log in first")
+            ws = app.ws
             if parts == ["api", "upload"]:
                 return self.upload(ws, q)
             if parts == ["api", "open"]:                                 # opens Explorer: only on the PC running the app
@@ -794,7 +722,7 @@ def make_handler(app):
                     else:
                         os.startfile(p)
                 return self.send(200, {"ok": True})
-            if parts == ["api", "settings"]:                             # shared settings; the source folder is the member's
+            if parts == ["api", "settings"]:                             # settings (a new source folder goes through use_folder)
                 d = self.body_json()
                 src = d.pop("source_root", None)
                 if src is not None and os.path.normcase(os.path.abspath(src) if src else "") != os.path.normcase(ws.c["source_root"]):
@@ -805,24 +733,18 @@ def make_handler(app):
                 return self.send(200, {"ok": True, "settings": settings_out(app, ws)})
             if parts in (["api", "start"], ["api", "prepare_all"]):
                 return self.send(200, ws.start())
-            if parts == ["api", "restore"]:                              # put a removed video back on the list
-                path = str(self.body_json().get("path", ""))
-                if not any(os.path.normcase(r["path"]) == os.path.normcase(path) for r in ws.lib.removed):
-                    raise HttpError(400, "that video is not on the removed list")
-                ws.lib.restore(path)
-                return self.send(200, {"ok": True, "clips": len(ws.lib.clips)})
             if parts == ["api", "pause"]:
                 try:
-                    return self.send(200, app.runner.interrupt(ws.user, pause=True))
+                    return self.send(200, app.runner.interrupt(pause=True))
                 except TimeoutError as error:
                     raise HttpError(409, str(error))
             if parts == ['api', 'cancel_session']:
                 try:
-                    return self.send(200, app.runner.interrupt(ws.user))
+                    return self.send(200, app.runner.interrupt())
                 except TimeoutError as error:
                     raise HttpError(409, str(error))
             if parts == ["api", "resume"]:
-                app.runner.resume(ws.user)
+                app.runner.resume()
                 return self.send(200, {"ok": True})
             if parts == ["api", "pick_folder"]:                          # a folder window on this PC's screen
                 if not self.local():
@@ -836,22 +758,22 @@ def make_handler(app):
                 for cl, st in ws.status_all():
                     if st["label"] == "failed" and ws.enqueue(cl, "movement"):
                         n += 1
-                app.runner.resume(ws.user)
+                app.runner.resume()
                 return self.send(200, {"ok": True, "queued": n})
-            if parts == ["api", "reset_all"]:                            # Start over with every clip on the member's list
+            if parts == ["api", "reset_all"]:                            # Start over with every clip on the list
                 return self.send(200, ws.reset([], dry=(q.get("dry") or ["0"])[0] == "1", all_clips=True))
             if parts == ["api", "cancel_queued"]:
-                return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(user=ws.user)})
+                return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued()})
             if parts == ["api", "rescan"]:
                 before = set(ws.lib.by_id)
                 n = ws.lib.rescan()
                 new = [cl for cl in ws.lib.clips if cl.id not in before]
-                if new and not app.runner.is_paused(ws.user):            # the member's queue runs: new videos join it
+                if new and not app.runner.is_paused():                   # the queue runs: new videos join it
                     for cl in new:
                         ws.enqueue(cl, "movement")
                     app.runner.wake()
                 return self.send(200, {"ok": True, "clips": n, "new": len(new)})
-            if parts == ["api", "quit"]:                                 # stops the app for every member
+            if parts == ["api", "quit"]:                                 # stops the app
                 if not self.local():
                     raise HttpError(403, "Blender Agent can be stopped only on the PC running it")
                 self.send(200, {"ok": True})
@@ -864,30 +786,22 @@ def make_handler(app):
                     if stage != "movement":
                         raise HttpError(400, "unknown job stage")
                     return self.send(200, {"ok": True, "queued": bool(ws.run(cl))})
-                if action == "remove":                                   # off the list; the file stays in the folder
-                    job = app.store.latest_for(cl.id)
-                    if job and job["state"] == "running":
-                        raise HttpError(409, "%s is being processed right now: remove it when that job is done" % cl.name)
-                    app.store.cancel_queued(cl.id)
-                    ws.lib.remove(cl)
-                    return self.send(200, {"ok": True, "removed": cl.name})
                 if action == "cancel":
                     try:
-                        return self.send(200, app.runner.interrupt(ws.user, clip=cl.id))
+                        return self.send(200, app.runner.interrupt(clip=cl.id))
                     except TimeoutError as error:
                         raise HttpError(409, str(error))
-                if action == "hold":                                     # out of the waiting line (Take out on its card)
+                if action == "skip":                                     # ✕ on its card: stays listed, Start leaves it out
                     job = app.store.latest_for(cl.id)
                     if job and job["state"] == "running":
-                        raise HttpError(409, "%s is being processed right now" % cl.name)
+                        raise HttpError(409, "%s is being processed right now: cancel it first, then skip it" % cl.name)
                     n = app.store.cancel_queued(cl.id)
-                    if not status(ws.c, cl, job)["done"]:
-                        set_held(cl.id, True, ws.c)                      # Start and autopilot leave it until it is added back
+                    set_skipped(cl.id, True, ws.c)                      # the video file and finished results are not touched
                     return self.send(200, {"ok": True, "cancelled": n})
-                if action == "unhold":                                   # back in line (Add back on its card)
-                    set_held(cl.id, False, ws.c)
+                if action == "include":                                  # Include on a skipped card: back in line
+                    set_skipped(cl.id, False, ws.c)
                     st = status(ws.c, cl, app.store.latest_for(cl.id))
-                    queued = bool(not st["done"] and not app.runner.is_paused(ws.user) and ws.enqueue(cl, "movement"))
+                    queued = bool(not st["done"] and not app.runner.is_paused() and ws.enqueue(cl, "movement"))
                     if queued:
                         app.runner.wake()
                     return self.send(200, {"ok": True, "queued": queued})
@@ -906,7 +820,7 @@ class Server(ThreadingHTTPServer):
 def serve(app, port, host="127.0.0.1"):
     app.server = Server((host, port), make_handler(app))
     app.runner.start()
-    log.info("%s %s on http://%s:%d  (%d members)", APP_NAME, __version__, host, port, len(app.users.names()))
+    log.info("%s %s on http://%s:%d", APP_NAME, __version__, host, port)
     try:
         app.server.serve_forever(poll_interval=0.5)
     finally:

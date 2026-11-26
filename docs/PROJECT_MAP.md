@@ -11,12 +11,9 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 | `web\` | The app's pages | yes |
 | `pipeline\` | Stage 1 processing and a few command-line tools | yes |
 | `tests\` | Unit tests (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`) | yes |
-| `tools\v21\` | Stand-alone checker for v2.1 delivery packages | yes |
 | `docs\` | These notes; `docs\v21\` holds the client's delivery spec | yes |
-| `assets\` | Character definitions used by the fit and Blender, their source `.blend` files, the reconstruction script shipped in every package | yes |
-| `samples\` | The client's original trial `.blend` files (reference only, nothing reads them) | yes |
-| `inputs\test\` | Three short test clips | yes |
-| `data\` | Package-name and task tables; `jobs.db` (the job queue) is not in git | partly |
+| `assets\` | The client's sample character (`sample_character.json`), the reconstruction script shipped in every package | yes |
+| `data\` | App state, not in git: `jobs.db` (the job queue), `package_names.json`, skipped clips | no |
 | `.venv\` | Python environment, made by `Setup.bat` | no |
 | `models\` | Model weights (see MODEL_FLOW.md); `trt_cache\` TensorRT engines | no |
 | `third_party\` | MoGe, SAM 3 and SAM 3D Body source code | no |
@@ -36,13 +33,13 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 | `shots.py` | Hard-cut detection |
 | `lens_auto.py` | The clip's lens from the picture (MoGe-2) |
 | `camera_estimate.py` | Camera rotation, zoom, steadying, level roll, pitch and height from people and picture cues |
-| `camera_solve.py`, `ground_solve.py` | Earlier camera solver (config `camera_estimator`), the `World` camera/ground model |
+| `ground_solve.py` | The `World` camera/ground model (per-frame rotation, travel and zoom) |
 | `scene_depth.py` | Depth Anything V2 Small (camera depth cues) and Stage 1's ground disc (`flat_set`) |
 | `get_model.py` | Downloads Depth Anything V2 Small (Setup.bat) |
 | `metric_scene.py`, `metric_observe.py`, `semseg.py` | MoGe-2 + Mask2Former observation (cached, Stage 1's saved depth), gravity, world yaw, camera height, body-proxy scale |
 | `sam3d_body.py` | SAM 3D Body worker, mesh raster, depth calibration, metric placement |
 | `body_constraints.py`, `fit_people.py`, `motion_prior.py` | Character fit to the joints with SAM 3D Body priors (motion prior opt-in) |
-| `rig.py` | numpy copy of the Blender character rig (`sample` mesh; `master` / `base21` supplied definitions kept dormant) |
+| `rig.py` | numpy copy of the Blender character rig (`sample` mesh; `classic` box mannequin as the fallback) |
 | `quality.py` | Junk-track filter, quality numbers, half-body floor shift, human alignment numbers |
 | `validation.py`, `dependencies.py` | Content digests and cached reports |
 | `source_exposure.py` | Optional relative brightness matching (config `source_exposure`, off by default) |
@@ -52,7 +49,6 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 | `package.py` | v2.1 package and zip, package names |
 | `profiling.py`, `gpu_lease.py` | Step timings, the shared GPU lease |
 | `compare.py` | Tool: film next to the render for chosen frames |
-| `extract_sample_character.py`, `extract_base_character.py`, `dump_base_character.py` | One-time asset extraction tools |
 
 ## Removed in the restructure (in git history)
 
@@ -65,3 +61,7 @@ multiview_check, lzhd_review, render_lzhd`, `assets\l3\`, `docs\ai_skill3.1\`. O
 deliver, foot_gaps, jerk_check, all_frames, extract_human_master, dump_human_master`. The Depth Anything 3 camera
 backend (`da3_camera, da3_infer`, `requirements-da3.txt`). Grounding DINO, CLIP and the Anthropic package are no longer
 installed; their model folders can be deleted by hand.
+Dormant code: the earlier camera solver (`camera_solve`, `solve_ground`, `steady_camera`, config `camera_estimator`),
+the `master` / `base21` character styles with `assets\human_master*`, `assets\base_v21\`, `base_character_v21.json`
+and the extract / dump scripts, `tools\v21\` (the app's package check replaces it), `package.zip_gbk`,
+`samples\*.blend`, `inputs\test\`, `data\package_tasks.json`.

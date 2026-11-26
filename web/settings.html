@@ -9,7 +9,7 @@
 <body>
 <div class="wrap">
   <h1>Settings</h1>
-  <p class="sub">Changes here are saved straight away (folders with their own button) and used by the next job. Except your source folder, these settings are shared by every member.</p>
+  <p class="sub">Changes here are saved straight away (folders with their own button) and used by the next job. </p>
 
   <section class="step">
     <h2>Processing</h2>
@@ -55,9 +55,9 @@
   <section class="step">
     <h2>Folders</h2>
     <div class="form" style="margin-top:12px">
-      <label class="k">Your source videos</label>
+      <label class="k">Source videos</label>
       <div class="row" style="margin:0"><code class="fpath" id="srcpath" style="flex:1;margin:0"></code><button id="opensrc">Open</button></div>
-      <div class="help">Your own folder: only you see its clips. Copy videos into it and they appear on the <a href="/">Clips page</a> by themselves; change the folder there.</div>
+      <div class="help">Copy videos into this folder and they appear on the <a href="/">Clips page</a> by themselves; change the folder there.</div>
     </div>
     <div class="form" style="margin-top:12px" id="folders"></div>
     <div class="row"><button id="savefolders">Save SUBMIT, Work and Blender</button><span class="small muted" id="fmsg"></span></div>
@@ -86,8 +86,8 @@
 <script src="/static/common.js"></script>
 <script>
 nav('settings');
-const FOLDERS = [['submit_root', 'Submissions (SUBMIT)', 'Finished packages and their zips, one folder per member inside (_users\\<name>).'],
-                 ['work_root', 'Work files', 'Processing results, previews and logs, one folder per member inside. Clearing it makes every member\'s clips "new" again: only do it when everything is delivered.'],
+const FOLDERS = [['submit_root', 'Submissions (SUBMIT)', 'Finished packages and their zips, one folder per clip.'],
+                 ['work_root', 'Work files', 'Processing results, previews and logs, one folder per clip. Clearing it makes every clip "new" again: only do it when everything is delivered.'],
                  ['blender_exe', 'Blender (optional)', 'Leave empty to find Blender automatically.']];
 const TEXT = ['sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python'];
 const NUMBER = ['person_height', 'lens_mm', 'sam3d_stride'];
@@ -115,7 +115,7 @@ for (const key of TEXT) $(key).onchange = e => set({ [key]: e.target.value.trim(
 for (const key of NUMBER) $(key).onchange = e => { if (e.target.value === '') { load(); return; } set({ [key]: +e.target.value }, 'Processing setting saved'); };
 for (const key of CHECK) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
 $('savefolders').onclick = async () => { const o = {}; FOLDERS.forEach(([k]) => o[k] = $('f_' + k).value.trim()); if (!o.blender_exe) delete o.blender_exe;
-  if ((o.submit_root !== S.submit_root || o.work_root !== S.work_root) && !(await ask('Every member\'s clips, results and packages are looked for in the new folders from now on. Nothing is moved.', 'Change the folders', { title: 'Change the shared folders?' }))) return;
+  if ((o.submit_root !== S.submit_root || o.work_root !== S.work_root) && !(await ask('Clips, results and packages are looked for in the new folders from now on. Nothing is moved.', 'Change the folders', { title: 'Change the folders?' }))) return;
   await set(o, 'Folders saved'); health(); };
 $('opensrc').onclick = () => openFolder(S.source_root);
 $('openlogs').onclick = () => openFolder('logs');

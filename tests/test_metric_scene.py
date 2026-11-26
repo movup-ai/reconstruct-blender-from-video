@@ -13,7 +13,7 @@ sys.path[:0] = [ROOT, os.path.join(ROOT, "pipeline")]
 import metric_scene as MS
 from sam3d_body import rasterize
 from camera_model import Cam
-from camera_solve import Camera
+from common import Camera
 from ground_solve import World
 from rig import Rig, JOINTS
 

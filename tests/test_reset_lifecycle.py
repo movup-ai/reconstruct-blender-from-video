@@ -23,11 +23,10 @@ class ResetLifecycleTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
         source=self.root/'source';source.mkdir()
         for name in ('one','two'):(source/(name+'.mp4')).write_bytes(b'synthetic source')
-        c={**config.DEFAULT_CFG,**config.APP_DEFAULTS,'source_root':'','work_root':str(self.root/'work'),
+        c={**config.DEFAULT_CFG,**config.APP_DEFAULTS,'source_root':str(source),'work_root':str(self.root/'work'),
            'submit_root':str(self.root/'submit'),'marks_root':str(self.root/'marks'),'max_attempts':3}
         self.app=App(c);self.addCleanup(self.app.store.db.close)
-        user,_=self.app.users.login('reset-tester')
-        self.app.users.set_source(user,str(source));self.ws=self.app.ws(user)
+        self.ws=self.app.ws
         self.runner=self.app.runner;self.runner.after=Mock();self.threads=[]
 
     def tearDown(self):
@@ -42,7 +41,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def start_worker(self):
         thread=threading.Thread(target=self.runner._worker,daemon=True)
-        self.threads.append(thread);thread.start();self.runner.resume(self.ws.user)
+        self.threads.append(thread);thread.start();self.runner.resume()
 
     def fill(self,cl):
         f=clips.folders(self.ws.c,cl)
@@ -61,7 +60,7 @@ class ResetLifecycleTests(unittest.TestCase):
         jid=self.ws.enqueue(cl,'movement');self.start_worker()
         self.wait_for(lambda:heartbeat.exists() and jid in self.runner.procs)
         process=self.runner.procs[jid]
-        self.app.store.enqueue(cl.id,'background',force=True,user=self.ws.user)
+        self.app.store.enqueue(cl.id,'background',force=True)
         result=self.ws.reset([],all_clips=True)
         self.assertTrue(result['ok']);self.assertGreaterEqual(result['stopped'],2)
         self.assertIsNotNone(process.poll())
@@ -69,41 +68,34 @@ class ResetLifecycleTests(unittest.TestCase):
         last=heartbeat.read_text();threading.Event().wait(.15)
         self.assertEqual(heartbeat.read_text(),last,'Child process must also stop')
         self.assertFalse(Path(f['work']).exists(),'A late writer must not recreate the folder')
-        self.assertEqual(self.app.store.counts(self.ws.user),{})
+        self.assertEqual(self.app.store.counts(),{})
         self.assertNotIn(cl.id,self.app.store.timing())
-        self.assertTrue(self.runner.is_paused(self.ws.user))
+        self.assertTrue(self.runner.is_paused())
         self.runner.after.assert_not_called()
 
-    def test_reset_covers_removed_and_taken_out_clips_but_preserves_other_members(self):
+    def test_reset_covers_skipped_clips(self):
         selected=list(self.ws.lib.clips)
         for cl in selected:self.fill(cl)
-        clips.set_held(selected[0].id,True,self.ws.c)
-        self.ws.lib.remove(selected[1])
-        jid=self.app.store.enqueue(selected[1].id,'movement',user=self.ws.user)
-        self.app.store.take({self.ws.user});self.app.store.finish(jid,True)
-        other_source=self.root/'other-source';other_source.mkdir();(other_source/'one.mp4').write_bytes(b'other')
-        other,_=self.app.users.login('another-member');self.app.users.set_source(other,str(other_source))
-        other_ws=self.app.ws(other);other_clip=other_ws.lib.clips[0]
-        other_work=Path(clips.folders(other_ws.c,other_clip)['work']);other_work.mkdir(parents=True)
-        (other_work/'keep').write_text('keep')
-        other_jid=other_ws.enqueue(other_clip,'movement');self.runner.resume(other)
+        clips.set_skipped(selected[0].id,True,self.ws.c)
+        clips.set_skipped(selected[1].id,True,self.ws.c)
+        jid=self.app.store.enqueue(selected[1].id,'movement')
+        self.app.store.take();self.app.store.finish(jid,True)
         Path(self.ws.c['work_root'],'CLAUDE_HANDOFF.json').write_text('{}')
         result=self.ws.reset([],all_clips=True)
         self.assertTrue(result['ok']);self.assertEqual(len(result['clips']),2)
-        self.assertEqual(len(self.ws.lib.clips),2);self.assertFalse(self.ws.lib.removed)
-        self.assertFalse(clips.held_set(self.ws.c))
+        self.assertEqual(len(self.ws.lib.clips),2)
+        self.assertFalse(clips.skipped_set(self.ws.c))
         for cl in selected:
             self.assertEqual(clips.prepared_paths(self.ws.c,cl),[])
             self.assertEqual(clips.status(self.ws.c,cl)['label'],'new')
             self.assertTrue(Path(cl.video).exists())
         self.assertFalse(Path(self.ws.c['work_root'],'CLAUDE_HANDOFF.json').exists())
-        self.assertTrue((other_work/'keep').exists())
-        self.assertEqual(self.app.store.latest_for(other_clip.id)['id'],other_jid)
-        self.assertFalse(self.runner.is_paused(other))
+        self.assertIsNone(self.app.store.latest_for(selected[1].id),'its job history is gone too')
+        self.assertEqual(self.app.store.timing(),{})
 
     def test_timing_only_reset_and_dry_run_do_not_need_work_files(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');self.app.store.take({self.ws.user});self.app.store.finish(jid,True)
+        jid=self.ws.enqueue(cl,'movement');self.app.store.take();self.app.store.finish(jid,True)
         preview=self.ws.reset([],dry=True,all_clips=True)
         self.assertEqual(len(preview['clips']),2)
         self.assertIn(cl.id,self.app.store.timing())
@@ -121,27 +113,27 @@ class ResetLifecycleTests(unittest.TestCase):
         reset_thread=threading.Thread(target=lambda:results.append(self.ws.reset([],all_clips=True)))
         reset_thread.start()
         try:
-            self.wait_for(lambda:self.ws.user in self.runner.resetting)
+            self.wait_for(lambda:self.runner.resetting)
             with self.assertRaises(HttpError):self.ws.enqueue(cl,'movement')
-            self.runner.resume(self.ws.user)
-            self.assertTrue(self.runner.is_paused(self.ws.user))
+            self.runner.resume()
+            self.assertTrue(self.runner.is_paused())
             with patch.object(jobs.subprocess,'Popen',side_effect=AssertionError('Cancelled worker launched')):
                 release.set();reset_thread.join(3)
             self.assertFalse(reset_thread.is_alive());self.assertTrue(results[0]['ok'])
             self.assertFalse(Path(clips.folders(self.ws.c,cl)['work']).exists())
-            self.assertEqual(self.app.store.counts(self.ws.user),{})
+            self.assertEqual(self.app.store.counts(),{})
         finally:
             release.set();reset_thread.join(3)
 
     def test_timeout_keeps_files_and_leaves_reset_all_paused(self):
         cl=self.ws.lib.clips[0];f=self.fill(cl)
-        self.runner.inflight[99]={'id':99,'user':self.ws.user,'clip':cl.id}
+        self.runner.inflight[99]={'id':99,'clip':cl.id}
         try:
             with self.assertRaises(TimeoutError):
-                with self.runner.reset_jobs(self.ws.user,[cl.id],all_user=True,timeout=.01):
+                with self.runner.reset_jobs([cl.id],all_clips=True,timeout=.01):
                     self.fail('Must not delete files while a worker can write')
             self.assertTrue(Path(f['work']).exists())
-            self.assertTrue(self.runner.is_paused(self.ws.user))
+            self.assertTrue(self.runner.is_paused())
         finally:self.runner.inflight.clear()
 
     def test_pause_stops_active_work_then_resume_reuses_completed_cache(self):
@@ -156,7 +148,7 @@ class ResetLifecycleTests(unittest.TestCase):
         self.wait_for(lambda:checkpoint.exists() and jid in self.runner.procs)
         self.app.store.db.execute('UPDATE jobs SET started=? WHERE id=?',(time.time()-20,jid))
         process=self.runner.procs[jid]
-        result=self.runner.interrupt(self.ws.user,pause=True)
+        result=self.runner.interrupt(pause=True)
         self.assertTrue(result['resumable']);self.assertTrue(result['paused'])
         self.assertIsNotNone(process.poll());self.runner.after.assert_not_called()
         self.assertEqual(valid.read_bytes(),before);self.assertFalse(broken.exists())
@@ -164,7 +156,7 @@ class ResetLifecycleTests(unittest.TestCase):
         queued=self.app.store.latest_for(cl.id)
         self.assertEqual(queued['state'],'queued');self.assertNotEqual(queued['id'],jid)
         self.assertGreaterEqual(self.app.store.timing()[cl.id]['machine'],20)
-        self.runner.resume(self.ws.user)
+        self.runner.resume()
         self.wait_for(lambda:done.exists() and self.app.store.latest_for(cl.id)['state']=='done')
         self.assertEqual(done.read_text(),'reused checkpoint')
         self.assertEqual(self.app.store.latest_for(cl.id)['attempts'],1,'Pause does not consume a retry')
@@ -177,10 +169,10 @@ class ResetLifecycleTests(unittest.TestCase):
         jid=self.ws.enqueue(cl,'movement');self.start_worker()
         self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
         process=self.runner.procs[jid]
-        result=self.runner.interrupt(self.ws.user)
+        result=self.runner.interrupt()
         self.assertTrue(result['paused']);self.assertFalse(result['resumable'])
         self.assertIsNotNone(process.poll())
-        self.assertEqual(self.app.store.counts(self.ws.user).get('queued',0),0)
+        self.assertEqual(self.app.store.counts().get('queued',0),0)
         self.assertEqual(self.app.store.latest_for(cl.id)['state'],'stopped')
         self.assertTrue(Path(f['work'],'old.json').exists());self.assertTrue(Path(f['zip']).exists())
         self.assertEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'done',
@@ -192,15 +184,15 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_pause_restarts_interrupted_stage_before_later_finish_on_same_clip(self):
         cl=self.ws.lib.clips[0]
-        fit=self.ws.enqueue(cl,'movement');self.app.store.take({self.ws.user})
-        finish=self.app.store.enqueue(cl.id,'background',force=True,user=self.ws.user)
-        self.runner.interrupt(self.ws.user,pause=True)
-        resumed=self.app.store.take({self.ws.user})
+        fit=self.ws.enqueue(cl,'movement');self.app.store.take()
+        finish=self.app.store.enqueue(cl.id,'background',force=True)
+        self.runner.interrupt(pause=True)
+        resumed=self.app.store.take()
         self.assertEqual(resumed['stage'],'movement')
         self.assertNotEqual(resumed['id'],fit)
-        self.assertIsNone(self.app.store.take({self.ws.user}))
+        self.assertIsNone(self.app.store.take())
         self.app.store.finish(resumed['id'],True)
-        self.assertEqual(self.app.store.take({self.ws.user})['id'],finish)
+        self.assertEqual(self.app.store.take()['id'],finish)
 
     def test_pause_only_interrupts_active_job_and_keeps_ready_clip_and_waiting_row(self):
         active,ready_clip=self.ws.lib.clips
@@ -219,7 +211,7 @@ class ResetLifecycleTests(unittest.TestCase):
         def waiting_row():
             return dict(self.app.store.db.execute('SELECT * FROM jobs WHERE id=?',(waiting_id,)).fetchone())
         before_waiting=waiting_row()
-        result=self.runner.interrupt(self.ws.user,pause=True)
+        result=self.runner.interrupt(pause=True)
         self.assertEqual(result['interrupted'],1)
         self.assertEqual(waiting_row(),before_waiting,'Pause must not rewrite waiting jobs')
         self.assertEqual(clips.status(self.ws.c,ready_clip),before_status)
@@ -230,34 +222,30 @@ class ResetLifecycleTests(unittest.TestCase):
         cl=self.ws.lib.clips[0]
         self.ws.enqueue(cl,'movement')
         before=self.app.store.latest_for(cl.id)
-        self.runner.resume(self.ws.user)
-        result=self.runner.interrupt(self.ws.user,pause=True)
+        self.runner.resume()
+        result=self.runner.interrupt(pause=True)
         self.assertEqual(result['interrupted'],0)
         self.assertEqual(self.app.store.latest_for(cl.id),before)
 
     def test_cancel_one_clip_does_not_cancel_other_waiting_work(self):
         first,second=self.ws.lib.clips
         self.ws.enqueue(first,'movement');self.ws.enqueue(second,'movement')
-        self.runner.resume(self.ws.user)
-        result=self.runner.interrupt(self.ws.user,clip=first.id)
+        self.runner.resume()
+        result=self.runner.interrupt(clip=first.id)
         self.assertFalse(result['paused'],'Other clips may continue')
         self.assertEqual(self.app.store.latest_for(first.id)['state'],'stopped')
         self.assertEqual(self.app.store.latest_for(second.id)['state'],'queued')
         with patch.object(self.runner.stop,'wait',side_effect=[False,True]):self.runner._autopilot()
         self.assertEqual(self.app.store.latest_for(first.id)['state'],'stopped','Autopilot must not restart a cancelled clip')
 
-    def test_authenticated_api_pauses_resumes_and_cancels_a_live_job(self):
+    def test_api_pauses_resumes_and_cancels_a_live_job(self):
         import urllib.request
-        import urllib.error
         from agent.server import Server,make_handler
-        from agent.users import COOKIE
         server=Server(('127.0.0.1',0),make_handler(self.app))
         service=threading.Thread(target=server.serve_forever,daemon=True);service.start()
-        _,token=self.app.users.login('reset-tester')
         base='http://127.0.0.1:%d'%server.server_address[1]
-        def post(path,authenticated=True):
-            headers={'Cookie':COOKIE+'='+token} if authenticated else {}
-            request=urllib.request.Request(base+path,data=b'{}',headers=headers,method='POST')
+        def post(path):
+            request=urllib.request.Request(base+path,data=b'{}',method='POST')     # no login, no cookie
             with urllib.request.urlopen(request,timeout=5) as response:return json.load(response)
         cl=self.ws.lib.clips[0];f=self.fill(cl);ready=self.root/'api-ready'
         code="from pathlib import Path;import sys,time;Path(sys.argv[1]).write_text('ready');\nwhile True:time.sleep(.02)"
@@ -266,8 +254,7 @@ class ResetLifecycleTests(unittest.TestCase):
         try:
             self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
             process=self.runner.procs[jid]
-            with self.assertRaises(urllib.error.HTTPError) as denied:post('/api/cancel_session',False)
-            self.assertEqual(denied.exception.code,401);self.assertIsNone(process.poll())
+            self.assertIsNone(process.poll())
             self.assertTrue(post('/api/pause')['resumable'])
             self.assertIsNotNone(process.poll());self.assertTrue(Path(f['work'],'old.json').exists())
             next_id=self.app.store.latest_for(cl.id)['id']
@@ -282,11 +269,11 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_pause_timeout_still_queues_the_interrupted_job_and_keeps_its_clip_waiting(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take({self.ws.user})
+        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take()
         self.runner.inflight[jid]=job                        # a worker that does not let go in time
         try:
             with self.assertRaises(TimeoutError):
-                with self.runner.reset_jobs(self.ws.user,[],all_user=True,timeout=.05,mode='pause'):
+                with self.runner.reset_jobs([],all_clips=True,timeout=.05,mode='pause'):
                     self.fail('Must not continue while the worker still runs')
             waiting=self.app.store.latest_for(cl.id)
             self.assertNotEqual(waiting['id'],jid)
@@ -294,25 +281,25 @@ class ResetLifecycleTests(unittest.TestCase):
             self.assertEqual(clips.status(self.ws.c,cl,waiting)['label'],'paused')
             self.assertIn(jid,self.runner.cancelled,'its old process still counts as cancelled')
             with self.assertRaises(TimeoutError):            # a second Pause does not queue it twice
-                with self.runner.reset_jobs(self.ws.user,[],all_user=True,timeout=.05,mode='pause'):pass
-            self.assertEqual(self.app.store.counts(self.ws.user).get('queued'),1)
-            self.runner.resume(self.ws.user)
+                with self.runner.reset_jobs([],all_clips=True,timeout=.05,mode='pause'):pass
+            self.assertEqual(self.app.store.counts().get('queued'),1)
+            self.runner.resume()
             with self.runner.cond:
                 self.assertIn(cl.id,self.runner._busy_clips())
-                self.assertIsNone(self.app.store.take({self.ws.user},exclude=self.runner._busy_clips()),
+                self.assertIsNone(self.app.store.take(exclude=self.runner._busy_clips()),
                                   'no new job for the clip while the old process may still run')
         finally:
             self.runner.inflight.pop(jid,None);self.runner.cancelled.discard(jid)
-        resumed=self.app.store.take({self.ws.user},exclude=self.runner._busy_clips())
+        resumed=self.app.store.take(exclude=self.runner._busy_clips())
         self.assertEqual((resumed['clip'],resumed['error']),(cl.id,None))
 
     def test_cancel_timeout_still_marks_the_job_stopped(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take({self.ws.user})
+        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take()
         self.runner.inflight[jid]=job
         try:
             with self.assertRaises(TimeoutError):
-                with self.runner.reset_jobs(self.ws.user,[cl.id],timeout=.05,mode='cancel'):pass
+                with self.runner.reset_jobs([cl.id],timeout=.05,mode='cancel'):pass
         finally:
             self.runner.inflight.pop(jid,None);self.runner.cancelled.discard(jid)
         self.assertEqual(self.app.store.latest_for(cl.id)['state'],'stopped','autopilot must not pick a cancelled clip up again')
@@ -322,15 +309,15 @@ class ResetLifecycleTests(unittest.TestCase):
         self.runner._cmd=lambda *_:[sys.executable,'-c',"from pathlib import Path;import sys,time;Path(sys.argv[1]).touch();time.sleep(60)",str(ready)]
         jid=self.ws.enqueue(cl,'movement');self.start_worker()
         self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
-        self.runner.interrupt(self.ws.user,pause=True)
+        self.runner.interrupt(pause=True)
         self.assertEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'paused')
         ready.unlink()
-        self.runner.resume(self.ws.user)
+        self.runner.resume()
         self.assertNotEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'paused',
                             'resumed: the job is waiting or running, not paused')
         self.wait_for(lambda:ready.exists())
         self.assertEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'processing')
-        self.runner.interrupt(self.ws.user)
+        self.runner.interrupt()
 
 
 if __name__=='__main__':unittest.main()

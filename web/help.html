@@ -14,7 +14,7 @@
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Copy the videos into your source folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays where it is, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
+      <li><b>Copy the videos into the source folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays where it is, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
       <li><b>Start</b> on the Clips page. Nothing runs until you press it, also after restarting the app. Every video without a finished zip (new, failed, cancelled or out of date) then runs <b>Stage 1 · Movement</b> by itself, one straight run with no review step:
         <ul>
           <li>people and their joints (SAM 3 tracking, RTMPose, SAM 3D Body), the camera with its zoom, the metric scale and a grey floor;</li>
@@ -22,7 +22,7 @@
           <li>the v2.1 zip in SUBMIT, checked against the delivery spec before the clip counts as <span class="chip g-done">done</span>.</li>
         </ul>
         Videos added while your queue runs join it by themselves. The Clips page shows each video's progress and how long it took.</li>
-      <li><b>Pause, Resume, Cancel</b>: <i>Pause processing</i> stops active jobs and keeps completed caches; <i>Resume processing</i> (or Start) restarts the interrupted run where the caches allow, in its old place in the queue. <i>Cancel pipeline</i> stops your running and waiting jobs without retries; completed files stay. Each active clip also has its own Cancel. <i>Take out</i> on a card keeps a video out of the line until you add it back.</li>
+      <li><b>Pause, Resume, Cancel</b>: <i>Pause processing</i> stops active jobs and keeps completed caches; <i>Resume processing</i> (or Start) restarts the interrupted run where the caches allow, in its old place in the queue. <i>Cancel pipeline</i> stops your running and waiting jobs without retries; completed files stay. Each active clip also has its own Cancel. <b>&#10005;</b> on a card <i>skips</i> a video: it stays on the list, greyed, and Start leaves it out (the file and any finished zip are kept). <i>Include</i> brings it back.</li>
       <li><b>Deliver</b>: download each zip with its <i>Download</i> button (on the card, the clip page or the Submissions page). It is saved under its delivery name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. <i>Check packages</i> on the Submissions page checks every zip again.</li>
     </ol>
     <p><b>Stage 2 · Background</b> is coming later: it will place objects and the set from the depth Stage 1 already saved, then render and pack the zip again.</p>
@@ -35,7 +35,7 @@
     <h3>A clip says "out of date"</h3>
     <p>Its zip was made from an older video, delivery name or Stage 1 settings. <i>Start</i> (or <i>Re-run</i> on the clip) makes it again.</p>
     <h3>When can I add videos?</h3>
-    <p>Any time, even while others are being processed. Copy them into your source folder: within a few seconds they appear on the Clips page, and while your queue runs they are queued by themselves. Otherwise press <i>Start</i>.</p>
+    <p>Any time, even while others are being processed. Copy them into the source folder: within a few seconds they appear on the Clips page, and while the queue runs they are queued by themselves. Otherwise press <i>Start</i>.</p>
     <h3>Where are the results?</h3>
     <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Processing results, previews and logs are in the Work folder (Settings).</p>
     <h3>What do the colours mean?</h3>

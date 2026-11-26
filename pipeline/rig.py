@@ -7,25 +7,10 @@ JOINTS = ["pelvis", "spine", "chest", "neck", "head",
           "shoulder_L", "elbow_L", "wrist_L", "shoulder_R", "elbow_R", "wrist_R",
           "hip_L", "knee_L", "ankle_L", "hip_R", "knee_R", "ankle_R"]
 
-_ASSETS = {}
-ASSET_FILES = {"base21": "base_character_v21.json",     # v2.1 supplied base model (extract_base_character.py)
-               "master": "human_master.json"}           # official human_master.blend (dormant: Stage 1 uses "sample")
-def style_asset(style):
-    if style not in _ASSETS:
-        import json, os
-        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", ASSET_FILES[style])
-        with open(p, encoding="utf-8") as fh:
-            _ASSETS[style] = json.load(fh)
-    return _ASSETS[style]
-
 def joint_defs(height, style="sample"):
-    """style "base21": the v2.1 supplied base model (character-base.blend): torso block, sphere head on the torso,
-    upper / lower arm and leg blocks, white eye and chest bands; proportions from the asset.
-    style "sample": the client's sample character (11_2 blend; the default): one torso block, head on the torso, no neck / hands / feet.
-    style "classic": the earlier mannequin (neck, hands, feet)."""
+    """style "sample": the client's sample character (11_2 blend; the default): one torso block, head on the torso, no neck / hands / feet.
+    style "classic": the earlier mannequin (neck, hands, feet; the fallback when the sample mesh asset is missing)."""
     s = height / 1.75
-    if style in ASSET_FILES:
-        return [(n, p, np.array(o, float) * s) for n, p, o in style_asset(style)["joints"]], s
     if style == "sample":
         J = [("pelvis", "root", (0, 0, 0.94)), ("spine", "pelvis", (0, 0, 0)), ("chest", "spine", (0, 0, 0)),
              ("neck", "chest", (0, 0, 0.52)), ("head", "neck", (0, 0, 0))]
@@ -55,24 +40,20 @@ COCO_ON_RIG = {
   "classic": [("head", (0, 0.120, 0.07)), ("head", (-0.035, 0.110, 0.11)), ("head", (0.035, 0.110, 0.11)),
               ("head", (-0.125, 0.0, 0.09)), ("head", (0.125, 0.0, 0.09))],
   "sample":  [("head", (0, 0.140, 0.125)), ("head", (-0.040, 0.125, 0.165)), ("head", (0.040, 0.125, 0.165)),
-              ("head", (-0.135, 0.02, 0.145)), ("head", (0.135, 0.02, 0.145))],
-  # base21: sphere centre 0.168 above the head joint, radius 0.168, eye band at the centre's height
-  "base21":  [("head", (0, 0.155, 0.140)), ("head", (-0.040, 0.150, 0.168)), ("head", (0.040, 0.150, 0.168)),
-              ("head", (-0.155, 0.0, 0.160)), ("head", (0.155, 0.0, 0.160))],
-  # master (human_master.blend): sphere centre 0.080 above the head joint, radius 0.132, eye band at the centre's height
-  "master":  [("head", (0, 0.128, 0.050)), ("head", (-0.036, 0.122, 0.080)), ("head", (0.036, 0.122, 0.080)),
-              ("head", (-0.130, 0.004, 0.075)), ("head", (0.130, 0.004, 0.075))]}
+              ("head", (-0.135, 0.02, 0.145)), ("head", (0.135, 0.02, 0.145))]}
 BODY_ON_RIG = [("shoulder_L", (0, 0, 0)), ("shoulder_R", (0, 0, 0)), ("elbow_L", (0, 0, 0)), ("elbow_R", (0, 0, 0)),
                ("wrist_L", (0, 0, 0)), ("wrist_R", (0, 0, 0)), ("hip_L", (-0.03, 0, 0)), ("hip_R", (0.03, 0, 0)),
                ("knee_L", (0, 0, 0)), ("knee_R", (0, 0, 0)), ("ankle_L", (0, 0, 0)), ("ankle_R", (0, 0, 0))]
 
 class Rig:
     def __init__(self, height, style="sample"):
+        if style not in COCO_ON_RIG:
+            raise ValueError("unknown character style %r (Stage 1 uses 'sample')" % style)
         self.style = style
         self.J, self.s = joint_defs(height, style)
-        face = COCO_ON_RIG.get(style)
+        face = COCO_ON_RIG[style]
         self.coco = [(j, np.array(o) * self.s) for j, o in face + BODY_ON_RIG]
-        self.sole = (style_asset(style)["sole"] if style == 'master' else (0.063 if style in ("sample", "base21") else 0.065)) * self.s    # ankle joint height when standing
+        self.sole = (0.063 if style == "sample" else 0.065) * self.s    # ankle joint height when standing
 
     def fk(self, loc, yaw, rot, pelvis_z):
         """world (R, t) of every joint.  rot: {joint: (rx,ry,rz) deg}"""

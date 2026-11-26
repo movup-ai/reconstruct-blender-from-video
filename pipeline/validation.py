@@ -28,11 +28,9 @@ def implementation(files=()):
 
 
 def rig_assets(data):
-    from rig import ASSET_FILES
     root=Path(__file__).resolve().parents[1]/'assets'
     styles={c.get('style','sample') for c in data.get('chars',{}).values()}
-    paths={ASSET_FILES[s] for s in styles if s in ASSET_FILES}
-    if 'sample' in styles:paths.add('sample_character.json')
+    paths={'sample_character.json'} if 'sample' in styles else set()
     return {p:file_digest(root/p) for p in sorted(paths)}
 
 

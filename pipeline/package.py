@@ -151,39 +151,6 @@ def encode(ff, c, w, h, inp, filt, audio_src, D, out):
     return "libx264"
 
 
-class GBKInfo(zipfile.ZipInfo):
-    """file names stored as GBK bytes with the UTF-8 flag off, like zips made on Chinese Windows (the sample);
-    names GBK cannot hold fall back to UTF-8 with the flag on"""
-    def _encodeFilenameFlags(self):
-        try:
-            return self.filename.encode("gbk"), self.flag_bits & ~0x800
-        except UnicodeEncodeError:
-            return self.filename.encode("utf-8"), self.flag_bits | 0x800
-
-
-def zip_gbk(src_dir, name, zp):
-    """zip like the sample: <name>/<sub>/ folder entries + files, deflate, names in GBK when possible"""
-    tmp = zp + ".part"
-
-    def info(arc, is_dir=False):
-        zi = GBKInfo(arc)
-        zi.compress_type = zipfile.ZIP_STORED if is_dir else zipfile.ZIP_DEFLATED
-        if is_dir:
-            zi.external_attr = 0o40775 << 16 | 0x10
-        return zi
-
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
-        for d in SUBDIRS:
-            z.writestr(info("%s/%s/" % (name, d), True), b"")
-            for fn in sorted(os.listdir(os.path.join(src_dir, d))):
-                if fn.endswith((".blend1", ".tmp")):
-                    continue
-                zi = info("%s/%s/%s" % (name, d, fn))
-                with open(os.path.join(src_dir, d, fn), "rb") as fh, z.open(zi, "w", force_zip64=True) as out:
-                    shutil.copyfileobj(fh, out, 1 << 20)
-    os.replace(tmp, zp)
-
-
 def pulldown_drops(video, N, fps, ofps):
     """frames to drop so a 30 fps source made from 24 fps film (every 5th frame repeated) plays back as its original
     24 frames: the repeated frames, detected from the picture. [] when the source has no such pattern (then the
@@ -234,20 +201,16 @@ def _all_names():
         return {}
 
 
-def _member(c):
-    """the member these names belong to ("" outside the app's logins): their entries are "<member>/<clip name>"
-    in the one shared file, so two members' clips with the same name keep their own delivery names"""
-    return (c or {}).get("_user") or os.environ.get("BA_USER") or ""
-
-
 def package_names(c=None):
-    """{clip name: "english_title-N"} of this member (c from common.member_cfg, or a job's BA_USER), or the
-    entries without a member when there is none ({} when the file is missing)"""
-    m = _member(c)
-    if not m:
-        return {k: v for k, v in _all_names().items() if "/" not in k}
-    p = m + "/"
-    return {k[len(p):]: v for k, v in _all_names().items() if k.startswith(p)}
+    """{clip name: "english_title-N"} ({} when the file is missing).  Entries an older version kept per member as
+    "<member>/<clip name>" count as that clip's name too (an entry without a member wins), so a name already
+    delivered is never lost or given out again."""
+    allnames = _all_names()
+    out = {k: v for k, v in allnames.items() if "/" not in k}
+    for k, v in allnames.items():
+        if "/" in k:
+            out.setdefault(k.split("/", 1)[1], v)
+    return out
 
 
 def package_name(clip, c=None):
@@ -263,8 +226,8 @@ def title_slug(title):
 
 def propose_names(clips, title, names=None, c=None):
     """clips: clip names in file-name order.  Clips that already have a package name keep it; the others get
-    <slug>-N, numbered after the highest N already used for that title - by any member, so two members naming
-    clips of the same film never get the same name.  -> {clip: (package name, is_new)}"""
+    <slug>-N, numbered after the highest N already used for that title anywhere in the file (also by entries of
+    older versions), so a delivered name is never given out twice.  -> {clip: (package name, is_new)}"""
     if names is None:
         names = package_names(c)
         used = set(names.values()) | set(_all_names().values())
@@ -292,18 +255,16 @@ _NAMES_LOCK = threading.Lock()
 
 
 def assign_names(clips, title, c=None):
-    """write the new names of propose_names() into data/package_names.json (this member's entries); never renames
-    a clip"""
-    with _NAMES_LOCK:                               # two members naming at once must not both take the same number
+    """write the new names of propose_names() into data/package_names.json; never renames a clip"""
+    with _NAMES_LOCK:                               # two namings at once must not both take the same number
         plan = propose_names(clips, title, c=c)
         new = {cl: pkg for cl, (pkg, is_new) in plan.items() if is_new and pkg}
         for pkg in new.values():
             if not PKG_RE.match(pkg):
                 raise ValueError("%r is not a valid v2.1 package name" % pkg)
         if new:
-            m = _member(c)
             allnames = _all_names()
-            allnames.update({(m + "/" if m else "") + cl: pkg for cl, pkg in new.items()})
+            allnames.update(new)
             tmp = NAMES_P + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(allnames, fh, ensure_ascii=False, indent=1)
@@ -312,15 +273,14 @@ def assign_names(clips, title, c=None):
 
 
 def register_names(names, c=None):
-    """{clip: package name} given from outside (a task zip's own name) -> this member's entries in
-    data/package_names.json; a clip that already has a name keeps it.  -> the names written"""
+    """{clip: package name} given from outside (a task zip's own name) -> data/package_names.json; a clip that
+    already has a name keeps it.  -> the names written"""
     with _NAMES_LOCK:
         have = package_names(c)
         new = {cl: p for cl, p in names.items() if p and PKG_RE.match(p) and not have.get(cl)}
         if new:
-            m = _member(c)
             allnames = _all_names()
-            allnames.update({(m + "/" if m else "") + cl: p for cl, p in new.items()})
+            allnames.update(new)
             tmp = NAMES_P + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(allnames, fh, ensure_ascii=False, indent=1)

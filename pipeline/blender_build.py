@@ -114,7 +114,8 @@ def chest_mesh(sx, sy, sz, c, mw, mz0, mz1):
 
 _ASSET = []
 def sample_asset():
-    """client sample character pieces, extracted once by extract_sample_character.py (None = use the box mannequin)"""
+    """client sample character pieces (assets/sample_character.json, extracted once from the client's trial .blend;
+    None = use the box mannequin)"""
     if not _ASSET:
         p = DATA.get("character_asset") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                                         "assets", "sample_character.json")
@@ -132,22 +133,6 @@ def rig(kind, height):
     s = height / 1.75
     S = lambda *a: tuple(x * s for x in a)
     col = DATA["chars"][kind]["colour"]
-    if DATA["chars"][kind].get("style") == "master":
-        # official human_master.blend: joints from assets/human_master.json; the meshes are the rig's own pieces,
-        # appended and driven in build_blender (add_master), so no geometry here
-        return [(n, par, S(*o)) for n, par, o in master_asset()["joints"]], []
-    if DATA["chars"][kind].get("style") == "base21":
-        # v2.1 supplied base model (assets/base_character_v21.json): its own joints and blocks, white eye + chest bands
-        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "base_character_v21.json")
-        with open(p, encoding="utf-8") as fh:
-            asset = json.load(fh)
-        J = [(n, par, S(*o)) for n, par, o in asset["joints"]]
-        P = []
-        for j in ["chest", "head", "shoulder_L", "elbow_L", "shoulder_R", "elbow_R", "hip_L", "knee_L", "hip_R", "knee_R"]:
-            part = asset["parts"][j]
-            P.append((j, ([(x * s, y * s, z * s) for x, y, z in part["v"]], [tuple(f) for f in part["f"]]), col,
-                      part.get("smooth", False), {i: "marker" for i in part["marker_faces"]}))
-        return J, P
     if DATA["chars"][kind].get("style", "classic") == "sample":
         # the client's sample character (11_2 blend): one torso block with the chest band, sphere head on the torso,
         # upper / lower arm and leg blocks, no neck, hands or feet
@@ -212,68 +197,6 @@ def rig(kind, height):
     return J, P
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_MASTER = []
-def master_asset():
-    """joint table of the official human_master.blend (assets/human_master.json; a dormant style, not used by Stage 1)"""
-    if not _MASTER:
-        with open(os.path.join(ROOT_DIR, "assets", "human_master.json"), encoding="utf-8") as fh:
-            _MASTER.append(json.load(fh))
-    return _MASTER[0]
-
-def add_master(kind, E, cc, mats, colour, height):
-    """Append the official rig + its 10 skinned pieces from human_master.blend (unchanged skeleton), paint the body in
-    the palette colour and the rig's own head / chest marker faces white, and drive each piece's deform bone from the
-    fitted joint: bone world = joint world @ [R | 0] * model_scale (Copy Transforms, world space).  The bones' Rigify
-    constraints are replaced by that one constraint and their B-Bone segments set to 1 so the rigid blocks never bend."""
-    import bpy
-    from mathutils import Matrix
-    A = master_asset()
-    blend = DATA.get("master_blend") or os.path.join(ROOT_DIR, "assets", "human_master", "human_master.blend")
-    pieces = sorted({p["piece"] for p in A["parts"].values()})
-    with bpy.data.libraries.load(blend, link=False) as (src, dst):
-        dst.objects = ["rig"] + pieces
-    objs = [o for o in dst.objects if o is not None]
-    rig = next(o for o in objs if o.type == "ARMATURE")
-    for o in objs:
-        cc.objects.link(o)
-    ms = height / 1.75 * A["scale_to_1_75"]                 # one uniform model_scale (spec 2.4)
-    rig.name = kind + "_human_master_rig"
-    if rig.animation_data:
-        rig.animation_data.action = None
-    rig.parent = E["root"]; rig.location = (0, 0, 0); rig.rotation_euler = (0, 0, math.pi); rig.scale = (ms, ms, ms)
-    rig.hide_render = True
-    for o in objs:
-        if o is rig:
-            continue
-        o.name = "%s_%s" % (kind, o.name)
-        mm = o.data.materials
-        mm[0] = mats[colour]
-        if len(mm) > 1:
-            mm[1] = mats["marker"]
-    # a connected bone keeps its head on the parent's tail whatever its constraints say: free the driven bones
-    # (hierarchy and rest positions unchanged)
-    vl = bpy.context.view_layer
-    for o in vl.objects:
-        o.select_set(False)
-    vl.objects.active = rig; rig.select_set(True)
-    bpy.ops.object.mode_set(mode="EDIT")
-    for b in A["bones"].values():
-        rig.data.edit_bones[b["bone"]].use_connect = False
-    bpy.ops.object.mode_set(mode="OBJECT")
-    rig.select_set(False)
-    for j, b in A["bones"].items():
-        bn = b["bone"]
-        rig.data.bones[bn].bbone_segments = 1
-        pb = rig.pose.bones[bn]
-        for con in list(pb.constraints):
-            pb.constraints.remove(con)
-        t = bpy.data.objects.new("%s_%s_bone" % (kind, j), None)
-        t.empty_display_size = 0.05; t.empty_display_type = "ARROWS"; cc.objects.link(t)
-        t.parent = E[j]; t.location = (0, 0, 0)
-        t.rotation_mode = "QUATERNION"; t.rotation_quaternion = Matrix(b["R"]).to_quaternion(); t.scale = (ms, ms, ms)
-        con = pb.constraints.new("COPY_TRANSFORMS"); con.target = t
-        con.target_space = "WORLD"; con.owner_space = "WORLD"
-    return rig
 
 def fk(J, rot, root_M, pelvis_z=None):
     W = {"root": root_M}
@@ -454,8 +377,6 @@ def build_blender():
         for name, parent, off in J:
             e = bpy.data.objects.new(kind + "_" + name, None); e.empty_display_size = 0.06; e.empty_display_type = "SPHERE"
             cc.objects.link(e); e.parent = E[parent]; e.location = off; E[name] = e
-        if cdat.get("style") == "master":
-            add_master(kind, E, cc, mats, cdat["colour"], cdat["height"])
         for i, part in enumerate(P):
             j, (v, f), colour, smooth = part[:4]
             ob = mesh_obj("%s_%s_geo%d" % (kind, j, i), v, f, colour, cc, smooth, part[4] if len(part) > 4 else None); ob.parent = E[j]

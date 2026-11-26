@@ -50,33 +50,73 @@ class TestPackageNames(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
-class TestMemberNames(unittest.TestCase):
-    def test_members_keep_their_own_names_and_never_share_a_number(self):
+class TestOldMemberNames(unittest.TestCase):
+    """package names the older multi-member app kept as "<member>/<clip>" still count: read as the clip's name (an
+    entry without a member wins), their numbers are never given out again, and new names are written unprefixed"""
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = os.path.join(self.d, "names.json")
+        with open(self.p, "w", encoding="utf-8") as fh:
+            json.dump({"x": "film-1", "anna/a": "film-2", "anna/b": "film-3", "ben/a": "film-4", "ben/x": "film-9",
+                       "ben/c": "other-5"}, fh)
+        self.patch = mock.patch.object(pkg, "NAMES_P", self.p); self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_old_prefixed_entries_are_read_and_an_unprefixed_entry_wins(self):
+        names = pkg.package_names()
+        self.assertEqual(names["x"], "film-1", "the unprefixed entry wins over ben/x")
+        self.assertEqual(names["a"], "film-2", "the first old entry of a clip is kept")
+        self.assertEqual((names["b"], names["c"]), ("film-3", "other-5"))
+        self.assertFalse([k for k in names if "/" in k], "no member prefixes in what the app sees")
+        self.assertEqual(pkg.package_name("b"), "film-3")
+        self.assertEqual(pkg.assign_names(["a", "b", "x"], "film"), {}, "a clip named by an older version keeps it")
+
+    def test_numbers_are_never_reused_and_new_names_are_written_unprefixed(self):
+        new = pkg.assign_names(["d", "e"], "film")
+        self.assertEqual(new, {"d": "film-10", "e": "film-11"}, "after the highest number used anywhere (ben/x: film-9)")
+        self.assertEqual(pkg.assign_names(["f"], "other"), {"f": "other-6"})
+        with open(self.p, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        for k in ("d", "e", "f"):
+            self.assertIn(k, saved)
+        self.assertEqual(saved["ben/x"], "film-9", "old entries stay in the file")
+        self.assertEqual(pkg.register_names({"g": "task_zip-1", "a": "film-99"}), {"g": "task_zip-1"},
+                         "a registered name is written unprefixed; a clip that has a name keeps it")
+        with open(self.p, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        self.assertEqual(saved["g"], "task_zip-1")
+        self.assertNotIn("a", saved)
+        self.assertEqual(pkg.package_name("a"), "film-2")
+
+
+class TestFolders(unittest.TestCase):
+    """one workspace: no member folders; a job reads the app's source folder (BA_SOURCE), a test run its sandbox"""
+    def test_output_dir_and_cfg(self):
+        import common
         d = tempfile.mkdtemp()
         try:
-            p = os.path.join(d, "names.json")
-            with open(p, "w", encoding="utf-8") as fh:
-                json.dump({"x": "film-1"}, fh)                                  # from before members: stays
-            anna, ben = {"_user": "anna"}, {"_user": "ben"}
-            with mock.patch.object(pkg, "NAMES_P", p):
-                self.assertEqual(pkg.assign_names(["a", "b"], "film", anna), {"a": "film-2", "b": "film-3"})
-                self.assertEqual(pkg.assign_names(["a"], "film", ben), {"a": "film-4"}, "Ben's clip a is not Anna's")
-                self.assertEqual(pkg.package_names(anna), {"a": "film-2", "b": "film-3"})
-                self.assertEqual(pkg.package_name("a", ben), "film-4")
-                self.assertEqual(pkg.package_names(), {"x": "film-1"})
-                with mock.patch.dict(os.environ, {"BA_USER": "ben"}):          # inside a job run for Ben
-                    self.assertEqual(pkg.package_name("a"), "film-4")
+            cfg_path = os.path.join(d, "config.json")
+            with open(cfg_path, "w", encoding="utf-8") as fh:
+                json.dump({"source_root": r"D:\SOURCE"}, fh)
+            with mock.patch.object(common, "CFG_PATH", cfg_path), mock.patch.dict(os.environ):
+                for k in ("BA_SANDBOX", "BA_SOURCE", "BA_USER"):
+                    os.environ.pop(k, None)
+                self.assertEqual(common.output_dir(), os.path.join(rp.AGENT, "output"))
+                self.assertEqual(common.output_dir({"work_root": r"D:\w"}), os.path.join(rp.AGENT, "output"))
+                self.assertEqual(common.cfg()["source_root"], r"D:\SOURCE")
+                sb = os.path.join(d, "sandbox")
+                os.environ.update(BA_SANDBOX=sb, BA_SOURCE=r"E:\shoot", BA_USER="anna")   # BA_USER is ignored now
+                c = common.cfg()
+                self.assertEqual(common.output_dir(c), os.path.join(sb, "output"))
+                self.assertEqual((c["source_root"], c["work_root"], c["submit_root"], c["marks_root"]),
+                                 (r"E:\shoot", os.path.join(sb, "Work_auto"), os.path.join(sb, "SUBMIT"), os.path.join(sb, "output")))
+                self.assertFalse([k for k in ("work_root", "submit_root", "marks_root") if "_users" in c[k]])
+            self.assertFalse(hasattr(common, "member_cfg"))
         finally:
             shutil.rmtree(d, ignore_errors=True)
-
-    def test_member_folders(self):
-        import common
-        c = common.member_cfg({"work_root": r"D:\w", "submit_root": r"D:\s", "source_root": r"D:\SOURCE"}, "anna", r"E:\anna")
-        self.assertEqual((c["source_root"], c["work_root"], c["submit_root"]), (r"E:\anna", r"D:\w\_users\anna", r"D:\s\_users\anna"))
-        self.assertEqual(c["marks_root"], os.path.join(rp.AGENT, "output", "_users", "anna"))
-        self.assertEqual(common.output_dir(c), os.path.join(rp.AGENT, "output", "_users", "anna"))
-        with self.assertRaises(ValueError):
-            common.member_cfg(c, "ben", "")
 
 
 class TestMarksFolder(unittest.TestCase):
@@ -105,24 +145,26 @@ class TestClipIds(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
-class TestRemoveFromList(unittest.TestCase):
-    def test_remove_and_put_back_keeps_the_file_and_the_names(self):
+class TestSkip(unittest.TestCase):
+    def test_skip_keeps_the_file_and_the_list_and_old_removed_videos_become_skipped(self):
         d = tempfile.mkdtemp(); data = config.DATA
         try:
-            config.DATA = os.path.join(d, "data")
+            config.DATA = os.path.join(d, "data"); os.makedirs(config.DATA)
             src = os.path.join(d, "src", "FilmA"); os.makedirs(src)
             for n in ("a.mp4", "b.mp4"):
                 make_video(os.path.join(src, n), n=5)
-            lib = clipsmod.Library(dict(config.load(), source_root=os.path.join(d, "src"), work_root=os.path.join(d, "w")))
-            names = sorted(cl.name for cl in lib.clips)
-            a = next(cl for cl in lib.clips if cl.video.endswith("a.mp4"))
-            lib.remove(a)
-            self.assertEqual([cl.video for cl in lib.clips], [os.path.join(src, "b.mp4")])
+            a_path = os.path.join(src, "a.mp4")
+            with open(os.path.join(config.DATA, "removed.json"), "w", encoding="utf-8") as fh:   # an earlier version's Remove
+                json.dump([os.path.normcase(a_path)], fh)
+            c = dict(config.load(), source_root=os.path.join(d, "src"), work_root=os.path.join(d, "w"))
+            lib = clipsmod.Library(c)
+            self.assertEqual(sorted(os.path.basename(cl.video) for cl in lib.clips), ["a.mp4", "b.mp4"], "nothing is hidden")
+            a = next(cl for cl in lib.clips if cl.video == a_path)
+            self.assertEqual(clipsmod.status(c, a)["label"], "skipped", "a removed video is now a skipped one")
+            self.assertFalse(os.path.exists(os.path.join(config.DATA, "removed.json")), "the old list is gone")
+            clipsmod.set_skipped(a.id, False, c)
+            self.assertEqual(clipsmod.status(c, a)["label"], "new")
             self.assertTrue(os.path.exists(a.video), "the file stays where it is")
-            self.assertEqual([r["path"] for r in lib.removed], [a.video])
-            lib.restore(a.video)
-            self.assertEqual(sorted(cl.name for cl in lib.clips), names)
-            self.assertEqual(lib.removed, [])
         finally:
             config.DATA = data
             shutil.rmtree(d, ignore_errors=True)
@@ -269,7 +311,7 @@ class TestJobResult(unittest.TestCase):
         lib = clipsmod.Library(c)
         self.cl = lib.clips[0]
         app = mock.Mock(c=c, store=self.store)
-        app.ws = lambda user: mock.Mock(user=user, c=c, lib=lib)          # the member's workspace
+        app.ws = mock.Mock(c=c, lib=lib)                                  # the one workspace
         self.r = jobs.Runner(app)
         self.r.after = lambda *a: None
 
@@ -285,21 +327,23 @@ class TestJobResult(unittest.TestCase):
     def run_job(self, code, stage="movement"):
         make = self.zip_maker() if code == 0 else ""
         self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('working'); raise SystemExit(%d)" % code]
-        jid = self.store.enqueue(self.cl.id, stage, user="anna")
+        jid = self.store.enqueue(self.cl.id, stage)
         self.r._run(self.store.take())
         return jid
 
-    def test_job_runs_in_the_members_folders(self):
-        """the job's program gets the member and their folder (BA_USER / BA_SOURCE)"""
+    def test_job_reads_the_apps_source_folder(self):
+        """the job's program gets the app's source folder (BA_SOURCE) and the GPU lock, and no member (BA_USER)"""
         make = self.zip_maker()
-        self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('member=' + os.environ['BA_USER'] + '|' + os.environ['BA_SOURCE'])"]
-        self.store.enqueue(self.cl.id, "movement", user="anna")
-        self.r._run(self.store.take())
+        self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('source=' + os.environ['BA_SOURCE'] + "
+                                       "'|user=' + str(os.environ.get('BA_USER')) + '|lock=' + str(bool(os.environ.get('BA_GPU_LOCK'))))"]
+        jid = self.store.enqueue(self.cl.id, "movement")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("BA_USER", None)
+            self.r._run(self.store.take())
         with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_movement.log"), encoding="utf-8") as fh:
-            self.assertIn("member=anna|" + self.r.app.c["source_root"], fh.read())
-        self.store.enqueue(self.cl.id, "movement")                            # no member: refused, not run as someone
-        self.r._run(self.store.take())
-        self.assertIn("no member", self.store.latest_for(self.cl.id)["error"])
+            self.assertIn("source=%s|user=None|lock=True" % self.r.app.c["source_root"], fh.read())
+        self.assertEqual((self.store.latest_for(self.cl.id)["id"], self.store.latest_for(self.cl.id)["state"]), (jid, "done"),
+                         "a job runs without any member")
 
     def test_exit_codes(self):
         self.run_job(0)

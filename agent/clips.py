@@ -20,7 +20,7 @@ _UNZIP_LOCK = threading.Lock()
 
 
 def _unzipped_p(c):
-    return os.path.join(config.user_data(c), "unzipped.json")
+    return os.path.join(config.DATA, "unzipped.json")
 
 
 def _zip_video(names):
@@ -128,8 +128,6 @@ class Clip:
         key = self.rel.lower()                              # stable across restarts; the project's SOURCE keeps its old ids,
         if os.path.normcase(root) != os.path.normcase(os.path.join(config.ROOT, "SOURCE")):   # other folders mix in
             key = os.path.normcase(root) + "|" + key       # their path, so their clips never share jobs with SOURCE's
-        if c.get("_user"):                                  # a member's clip: never the same id as another member's,
-            key = "member:" + c["_user"] + "|" + os.path.normcase(root) + "|" + self.rel.lower()   # even in one folder
         self.id = hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
         self.name = clip_name(self.video, c)
         self.film = self.rel.split(os.sep)[0] if os.sep in self.rel else ""
@@ -154,8 +152,6 @@ class Library:
         self.zip_problems = []
         self.clips = []
         self.clashes = []
-        self.removed = []
-        self.removed_by_id = {}
         self.by_id = {}
         self.scanned = 0
         self.rescan()
@@ -187,24 +183,12 @@ class Library:
                 cl.name = "%s_%s" % (cl.name, cl.id[:4])
         if not self.preview:                                # a task zip's name is the clip's delivery name
             pkg.register_names({cl.name: os.path.splitext(os.path.basename(cl.zip))[0].lower() for cl in clips if cl.zip}, self.c)
-        gone = removed_set(self.c)                         # taken off the list by the person (files stay where they are)
-        off = [cl for cl in clips if os.path.normcase(cl.video) in gone]
-        self.removed = [{"id": cl.id, "path": cl.video, "name": cl.name, "rel": cl.rel} for cl in off]
-        self.removed_by_id = {cl.id: cl for cl in off}                  # for their cards' thumbnails
-        clips = [cl for cl in clips if os.path.normcase(cl.video) not in gone]
+        if not self.preview:
+            migrate_removed(clips, self.c)                 # videos removed by an earlier version: now skipped (still listed)
         self.clips = clips
         self.by_id = {cl.id: cl for cl in clips}
         self.scanned = time.time()
         return len(clips)
-
-    def remove(self, cl):
-        """take a video off the list: it is not processed; the file is not touched"""
-        gone = removed_set(self.c); gone.add(os.path.normcase(cl.video)); save_removed(gone, self.c)
-        self.rescan()
-
-    def restore(self, path):
-        gone = removed_set(self.c); gone.discard(os.path.normcase(os.path.abspath(path))); save_removed(gone, self.c)
-        self.rescan()
 
     def get(self, cid):
         cl = self.by_id.get(cid)
@@ -219,39 +203,40 @@ class Library:
         return -1
 
 
-def _held_p(c=None):
-    return os.path.join(config.user_data(c or {}), "held.json")
+def _skipped_p(c=None):
+    return os.path.join(config.DATA, "held.json")       # (file name kept from the earlier "take out")
 
 
-def held_set(c=None):
-    """clips taken out of the waiting line on the Clips page (clip ids): Start and autopilot leave them until added back.
-    c: a member's settings (their own list)"""
-    return set(read_json(_held_p(c), []) or [])
+def skipped_set(c=None):
+    """clips skipped on the Clips page (clip ids): they stay on the list, Start and autopilot leave them out until
+    they are included again; the video file is never touched"""
+    return set(read_json(_skipped_p(c), []) or [])
 
 
-def set_held(cid, on, c=None):
-    ids = held_set(c)
+def set_skipped(cid, on, c=None):
+    ids = skipped_set(c)
     if (cid in ids) == bool(on):
         return
     ids.add(cid) if on else ids.discard(cid)
-    os.makedirs(os.path.dirname(_held_p(c)), exist_ok=True)
-    with open(_held_p(c), "w", encoding="utf-8") as fh:
+    os.makedirs(os.path.dirname(_skipped_p(c)), exist_ok=True)
+    with open(_skipped_p(c), "w", encoding="utf-8") as fh:
         json.dump(sorted(ids), fh, indent=1)
 
 
-def _removed_p(c=None):
-    return os.path.join(config.user_data(c or {}), "removed.json")
-
-
-def removed_set(c=None):
-    """videos taken off the list in the app (normcased full paths); c: a member's settings (their own list)"""
-    return set(read_json(_removed_p(c), []) or [])
-
-
-def save_removed(gone, c=None):
-    os.makedirs(os.path.dirname(_removed_p(c)), exist_ok=True)
-    with open(_removed_p(c), "w", encoding="utf-8") as fh:
-        json.dump(sorted(gone), fh, ensure_ascii=False, indent=1)
+def migrate_removed(clips, c=None):
+    """earlier versions also had "Remove", which hid a video from the list (removed.json, by path): those videos
+    become skipped clips, still listed, and removed.json goes"""
+    p = os.path.join(config.DATA, "removed.json")
+    gone = set(read_json(p, []) or [])
+    if not gone:
+        return
+    for cl in clips:
+        if os.path.normcase(cl.video) in gone:
+            set_skipped(cl.id, True, c)
+    try:
+        os.remove(p)
+    except OSError:
+        pass
 
 
 # the settings Stage 1 (Movement) output depends on; a setting the pipeline no longer has reads as None (stable)
@@ -360,7 +345,7 @@ def read_json(p, default=None):
 PAUSED = "Paused by user"     # the error text of a job put back in the queue by Pause (cleared when it runs / on Resume)
 LABELS = {  # label -> group used by the Clips page
     "new": "new", "waiting": "busy", "paused": "busy", "processing": "busy", "done": "done",
-    "outdated": "old", "failed": "fail", "cancelled": "new", "taken out": "new"}
+    "outdated": "old", "failed": "fail", "cancelled": "new", "skipped": "skip"}
 
 
 def status(c, cl, job=None):
@@ -375,7 +360,7 @@ def status(c, cl, job=None):
         last = finished_fp(c, cl)
         s["done"] = last is None or last == fingerprint(c, cl)    # None: a zip made outside the app is taken as it is
     s["outdated"] = has_zip and not s["done"]
-    s["held"] = cl.id in held_set(c)
+    s["skipped"] = cl.id in skipped_set(c)
     s["job"] = job and {k: job[k] for k in ("id", "stage", "state", "attempts", "error") if k in job}
     state = (job or {}).get("state")
     s["stage"] = (job or {}).get("stage") if state in ("queued", "running") else None
@@ -383,10 +368,10 @@ def status(c, cl, job=None):
         label = "processing"
     elif state == "queued":
         label = "paused" if (job or {}).get("error") == PAUSED else "waiting"
+    elif s["skipped"]:                                     # chosen by the person: shown even over an older finished zip
+        label = "skipped"
     elif s["done"]:
         label = "done"
-    elif s["held"]:
-        label = "taken out"
     elif state == "failed":
         label = "failed"
     elif state == "stopped":

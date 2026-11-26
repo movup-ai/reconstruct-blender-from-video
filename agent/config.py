@@ -13,13 +13,12 @@ LOGS = os.path.join(ROOT, "logs")
 if PIPELINE not in sys.path:
     sys.path.insert(0, PIPELINE)
 
-from common import DEFAULT_CFG, CFG_PATH, member_cfg, normalize_backends  # noqa: E402  (pipeline module)
+from common import DEFAULT_CFG, CFG_PATH, normalize_backends  # noqa: E402  (pipeline module)
 
 APP_DEFAULTS = {
     "port": 8765,
-    "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app (members log in by name)
-    "session_days": 30,               # a login lasts this long on one browser
-    "parallel": 1,                    # clips processed at once; model inference shares one GPU lease
+    "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app too (there is no login)
+    "parallel": 1,                  # clips processed at once; model inference shares one GPU lease
     "timeout_movement_min": 220,      # Stage 1 Movement: people, camera, floor, Blender render and the v2.1 zip
     "max_attempts": 2,                # a failed job is tried once more automatically
     "open_browser": True,
@@ -54,8 +53,7 @@ def migrate(saved):
 
 
 def load():
-    """pipeline defaults + app defaults + config.json; inside a job the app runs for a member (BA_USER), that
-    member's own folders (common.member_cfg)"""
+    """pipeline defaults + app defaults + config.json"""
     c = dict(DEFAULT_CFG)
     c.update(APP_DEFAULTS)
     if os.path.exists(CFG_PATH):
@@ -66,10 +64,7 @@ def load():
                 c.update(migrate(saved))
         except (OSError, ValueError):
             pass
-    c = normalize_backends(c)
-    if os.environ.get("BA_USER"):
-        c = member_cfg(c, os.environ["BA_USER"], os.environ.get("BA_SOURCE", ""))
-    return c
+    return normalize_backends(c)
 
 
 def save(updates):
@@ -107,11 +102,6 @@ def save(updates):
             json.dump(cur, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, CFG_PATH)
     return load()
-
-
-def user_data(c):
-    """where a member's own lists live (removed / taken-out clips): data\\users\\<user>; data\\ without a member"""
-    return os.path.join(DATA, "users", c["_user"]) if c.get("_user") else DATA
 
 
 def ensure_dirs(c):

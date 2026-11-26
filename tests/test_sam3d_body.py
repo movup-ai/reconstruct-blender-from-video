@@ -11,7 +11,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [ROOT,os.path.join(ROOT,'pipeline')]
 import sam3d_body as BODY
-from camera_solve import Camera
+from common import Camera
 from ground_solve import World
 from fit_people import p3_target,_P3A,_P3B
 
