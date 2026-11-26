@@ -29,7 +29,8 @@ DEFAULT_CFG = {
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
     "pose_backend": "rtmpose",               # joints measured inside SAM 3 masks
     "foot_contact": True,
-    "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
+    "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps (SAM 3 memory); pieces it
+                                             # still splits are joined by track_clean.py when the actor is alone
     "tracker_backend": "sam3",              # persistent video masks and identities
     "sam3_checkpoint": os.path.join(AGENT, "models", "sam3", "sam3.pt"),
     "sam3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),

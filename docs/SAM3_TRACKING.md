@@ -24,8 +24,30 @@ the previous marks stay active.
   order does not change the persistent ID; the app keeps the SAM ID beside its size-ranked display ID (P1 = biggest).
 - Each pose crop sees only the pixels inside its person's mask. Joints outside the mask are downweighted; frames
   without a mask create no detections. At least four frames are needed for the 3D fitter.
-- Fitted character visibility follows the observed mask frames. The metric scene observation reuses the tracked
-  masks to exclude people from the floor and wall evidence.
+- Fitted character visibility follows the observed mask frames, plus gaps of up to half a second
+  (`fill_gap_seconds`, 0.5) where the tracker missed a mask for a moment: the pose there is interpolated, so a
+  character no longer blinks out. Longer gaps stay hidden (the person is really out of sight). The metric scene
+  observation reuses the tracked masks to exclude people from the floor and wall evidence.
+
+## Track cleaning (pipeline/track_clean.py)
+
+Stage 1 has no human review, so the raw SAM 3 tracks are cleaned before they become characters. Every decision is
+written to `tracking_report.json` (`cleaning`) and the job log (`tracks: ...`).
+
+- **Joined:** one actor whom SAM 3 lost and found again under a new id. Two pieces are joined only when they never
+  overlap in time, lie in the same shot, the second starts where a walk could have taken the first in the time
+  hidden, the size change fits that time, the clothes colour is compatible, no other piece matches almost as well,
+  and **nobody else is in the shot around the hand-over**. Clothes colour alone cannot tell people apart (on the
+  SOURCE clips 18 of 70 simulated hand-overs between different people were joined on colour), so with other people
+  present the pieces stay separate. A missed join leaves two characters, which is safer than merging two actors.
+  Joined pieces share one id in `sam3_masks.npz`.
+- **Left out:** fragments with no reliable head, shoulders or hips (a hand or arm reaching in, a blob); weak joints
+  that jump around; weak joints that never move while the track is not cut off at the side or bottom of the frame
+  (a poster, painting, statue); a second id on someone already tracked; tracks under four frames.
+
+Thresholds were set on the SOURCE clips: every real person there is kept (including a man sitting still and a
+seated person's legs at the frame edge), and the eight non-people found there are left out (arm and hand fragments,
+two blobs, a poster). Simulated splits of real tracks were rejoined with no wrong join.
 
 Further config options: `sam3_mask_side` (saved-mask maximum dimension, default 640), `sam3_max_objects` (16),
 `sam3_probability` (output threshold, 0.35), `sam3_timeout_min` (40) and `track_occlusion_seconds` (tracker

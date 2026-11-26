@@ -842,6 +842,23 @@ def assemble(rig, Q, N, smooth, span=None, confidence=None, fps=30.):
         out["visible"].append(bool(first <= f <= last))
     return out, B
 
+def visible_frames(fs, N, fps, fill_seconds=0.5):
+    """frames a character is shown: every frame it was seen, plus short gaps between them (a mask the tracker
+    missed for a moment - the pose there is interpolated, so the character no longer blinks out).  Longer gaps
+    stay hidden: the person is really out of sight (behind a door, a pillar, another person)."""
+    seen = sorted(set(int(f) for f in fs))
+    out = [False] * N
+    for f in seen:
+        if 0 <= f < N:
+            out[f] = True
+    limit = max(3, int(round(float(fill_seconds) * float(fps))))
+    for a, b in zip(seen, seen[1:]):
+        if 1 < b - a <= limit + 1:
+            for g in range(a + 1, min(b, N)):
+                out[g] = True
+    return out
+
+
 def cached_fit_track(world, y0, fs, K, height, c, style, hint, lift, p3):
     """Cache each numeric fit independently of character names, colours and other people."""
     import tempfile
@@ -950,8 +967,7 @@ def fit_all(world, y0, people, N, c):
         keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)),
                             confidence=arm_confidence,fps=c.get('_fps',30.))
         if c.get('_persistent_tracks'):
-            observed = set(fs)
-            keys['visible'] = [f in observed for f in range(N)]
+            keys['visible'] = visible_frames(fs, N, c.get('_fps', 30.), c.get('fill_gap_seconds', 0.5))
         if c.get("motion_prior") or (c.get("_hints") or {}).get("motion_prior"):   # opt-in: real-world movement, soft
             try:
                 import motion_prior

@@ -19,7 +19,12 @@ import numpy as np
 
 from common import AGENT, imwrite_u, jload, jsave
 
-VERSION = 1
+VERSION = 2                    # 2: track cleaning (track_clean.py) - clips are tracked again
+
+
+def memory_frames(c, fps):
+    """how many frames SAM 3 keeps a hidden person in memory"""
+    return max(30, round(fps * float(c.get('track_occlusion_seconds', 2.))))
 
 
 def signature(c):
@@ -116,7 +121,7 @@ def run_masks(frames, y0, y1, shots, out, c, fps=30.):
         job, result = os.path.join(work,'job.json'),os.path.join(work,'masks.npz')
         jsave(job,{'shots':paths,'checkpoint':os.path.abspath(checkpoint),'mask_side':int(c.get('sam3_mask_side',640)),
                    'max_objects':int(c.get('sam3_max_objects',16)), 'probability':float(c.get('sam3_probability',.35)),
-                   'keep_alive':max(30,round(fps*float(c.get('track_occlusion_seconds',2.))))})
+                   'keep_alive':memory_frames(c,fps)})
         timeout = max(60,float(c.get('sam3_timeout_min',40))*60)
         flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         subprocess.run([python,os.path.abspath(__file__),'--worker',job,result],check=True,timeout=timeout,

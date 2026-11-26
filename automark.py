@@ -144,16 +144,24 @@ def _generate_marks(path, out, args, marker, settings):
     # The SAM 3 process exits before loading RTMPose on the GPU.
     marker = marker or Marker(args.mode, args.device, args.engine)
     tr = measure_poses(bundle, frames, y0, y1, marker)
+    found = len(tr)
+    # one actor hidden longer than SAM 3's memory -> joined again; fragments, posters / statues, duplicate ids and
+    # too-short tracks -> dropped (track_clean.py).  Joined pieces share one id in the saved masks too.
+    from track_clean import clean
+    good, cleaned, report = clean(tr, bundle, frames, y0, y1, shots, fps, args.min_track)
+    if report['joined']:
+        tmp = os.path.join(out, 'sam3_masks.tmp.npz')
+        np.savez_compressed(tmp, **cleaned)
+        os.replace(tmp, os.path.join(out, 'sam3_masks.npz'))
+    for line in report['join_notes']:
+        log('  tracks: ' + line)
+    for pid, why in report['dropped'].items():
+        log('  tracks: left out %s - %s' % (pid, why))
     jsave(os.path.join(out, 'tracking_report.json'), {
-        'backend': 'sam3', 'version': 1, 'mask_records': len(bundle['frames']),
-        'identities': len(tr), 'peak_vram_mb': float(bundle.get('peak_vram_mb', 0.)),
-        'shots': [[int(a), int(b)] for a, b in shots]})
-    # drop short / weak tracks, then number people by size (P1 = biggest on screen)
-    good = {}
-    for t, d in tr.items():
-        if len(d) < args.min_track:
-            continue
-        good[t] = d
+        'backend': 'sam3', 'version': 2, 'mask_records': len(bundle['frames']),
+        'identities': found, 'people': len(good), 'peak_vram_mb': float(bundle.get('peak_vram_mb', 0.)),
+        'shots': [[int(a), int(b)] for a, b in shots], 'cleaning': report})
+    # number people by size (P1 = biggest on screen)
     order = sorted(good, key=lambda t: -np.mean([b[3] - b[1] for k, s, b in good[t].values()]))
     people = []
     for new_id, t in enumerate(order, 1):

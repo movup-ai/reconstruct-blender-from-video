@@ -232,6 +232,8 @@ def recover(frames, pose, cam, y0, camj, depth_samples, c):
     summary = align_depth(body)
     summary['peak_vram_mb'] = float(body.get('peak_vram_mb',0.))
     summary['tracks'] = sum(k.endswith('_j') for k in body)
+    summary['skipped_estimates'] = int(body.get('rejected_estimates',0))      # failed the per-frame camera check
+    summary['checked_estimates'] = int(body.get('checked_estimates',0))
     path = os.path.join(c['_work'],'sam3d_body%s.npz'%c.get('_shot_tag',''))
     np.savez_compressed(path,**body)
     jsave(os.path.join(c['_work'],'sam3d_body_report%s.json'%c.get('_shot_tag','')),summary)
@@ -257,6 +259,7 @@ def worker(job_path, output):
         for key in source.files:
             name,f = key.rsplit('_',1); samples[int(f)][name] = source[key].copy()
     data,ratios,count = {},[],0
+    checked,rejected = 0,[]
     with torch.inference_mode():
         for person in job['pose']['people']:
             pid,native = str(person['id']),person.get('sam3_id')
@@ -278,7 +281,10 @@ def worker(job_path, output):
                 if not np.isfinite(camera).all() or np.any(camera[mapping,2]<=.01): continue
                 projected = camera @ K.T; projected = projected[:,:2]/projected[:,2:]
                 error = float(np.median(np.linalg.norm(projected-np.asarray(pred['pred_keypoints_2d']),axis=1)))
-                if error>max(5.,.02*max(w,h)): raise RuntimeError('SAM 3D Body camera convention check failed')
+                checked += 1
+                if error>max(5.,.02*max(w,h)):           # one bad estimate is skipped; the shot fails only when most
+                    rejected.append([pid,int(f),round(error,1)])   # frames fail (then the camera set-up is wrong)
+                    continue
                 fs.append(f); joints.append(camera[mapping]); necks.append(camera[neck_index]); errors.append(error)
                 if len(fs)==1:
                     data['p'+pid+'_mesh_frame'] = np.asarray(f,np.int32)
@@ -309,7 +315,14 @@ def worker(job_path, output):
                 data.update({prefix+'_f':np.asarray(fs,np.int32),prefix+'_j':np.asarray(joints,np.float32),
                     prefix+'_n':np.asarray(necks,np.float32),prefix+'_neck_depth':np.asarray(neck_depths,np.float32),
                     prefix+'_reprojection_px':np.asarray(errors,np.float32)})
+    if checked and len(rejected) > .5*checked:
+        raise RuntimeError('SAM 3D Body camera convention check failed on %d of %d frames (the camera set-up is wrong, '
+                           'not one bad frame)'%(len(rejected),checked))
+    if rejected:
+        print('SAM 3D Body: skipped %d of %d estimates that did not match their picture (person, frame, px): %s'%
+              (len(rejected),checked,rejected[:8]),flush=True)
     np.savez_compressed(output,**data,surface_ratios=np.asarray(ratios,np.float32),
+                        checked_estimates=np.asarray(checked,np.int32),rejected_estimates=np.asarray(len(rejected),np.int32),
                         peak_vram_mb=torch.cuda.max_memory_allocated()/1024**2)
     print('SAM 3D Body finished: %d estimates, %d surface instances, %.0f MB peak VRAM'%
           (count,len(ratios),torch.cuda.max_memory_allocated()/1024**2),flush=True)
