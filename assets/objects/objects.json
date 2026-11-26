@@ -1,0 +1,262 @@
+{
+  "sofa": {
+    "prompt": "sofa",
+    "on_floor": true
+  },
+  "armchair": {
+    "prompt": "armchair",
+    "on_floor": true
+  },
+  "ottoman": {
+    "prompt": "ottoman",
+    "on_floor": true
+  },
+  "chair": {
+    "prompt": "chair",
+    "on_floor": true
+  },
+  "office_chair": {
+    "prompt": "office chair",
+    "on_floor": true
+  },
+  "stool": {
+    "prompt": "stool",
+    "on_floor": true
+  },
+  "table": {
+    "prompt": "table",
+    "on_floor": true
+  },
+  "coffee_table": {
+    "prompt": "coffee table",
+    "on_floor": true
+  },
+  "pool_table": {
+    "prompt": "pool table",
+    "on_floor": true
+  },
+  "desk": {
+    "prompt": "desk",
+    "on_floor": true
+  },
+  "bench": {
+    "prompt": "bench",
+    "on_floor": true
+  },
+  "bed": {
+    "prompt": "bed",
+    "on_floor": true
+  },
+  "cabinet": {
+    "prompt": "cabinet",
+    "on_floor": true
+  },
+  "wardrobe": {
+    "prompt": "wardrobe",
+    "on_floor": true
+  },
+  "chest_of_drawers": {
+    "prompt": "chest of drawers",
+    "on_floor": true
+  },
+  "fireplace": {
+    "prompt": "fireplace",
+    "on_floor": true
+  },
+  "arcade_machine": {
+    "prompt": "arcade machine",
+    "on_floor": true
+  },
+  "shelf": {
+    "prompt": "shelf",
+    "on_floor": false
+  },
+  "bookshelf": {
+    "prompt": "bookshelf",
+    "on_floor": true
+  },
+  "counter": {
+    "prompt": "counter",
+    "on_floor": true
+  },
+  "kitchen_island": {
+    "prompt": "kitchen island",
+    "on_floor": true
+  },
+  "sink": {
+    "prompt": "sink",
+    "on_floor": false
+  },
+  "stove": {
+    "prompt": "stove",
+    "on_floor": true
+  },
+  "oven": {
+    "prompt": "oven",
+    "on_floor": true
+  },
+  "fridge": {
+    "prompt": "fridge",
+    "on_floor": true
+  },
+  "tv": {
+    "prompt": "tv",
+    "on_floor": false
+  },
+  "monitor": {
+    "prompt": "monitor",
+    "on_floor": false
+  },
+  "lamp": {
+    "prompt": "lamp",
+    "on_floor": true
+  },
+  "floor_lamp": {
+    "prompt": "floor lamp",
+    "on_floor": true
+  },
+  "table_lamp": {
+    "prompt": "table lamp",
+    "on_floor": false
+  },
+  "box": {
+    "prompt": "box",
+    "on_floor": true
+  },
+  "bathtub": {
+    "prompt": "bathtub",
+    "on_floor": true
+  },
+  "microwave": {
+    "prompt": "microwave",
+    "on_floor": false
+  },
+  "washer": {
+    "prompt": "washer",
+    "on_floor": true
+  },
+  "dishwasher": {
+    "prompt": "dishwasher",
+    "on_floor": true
+  },
+  "radiator": {
+    "prompt": "radiator",
+    "on_floor": true
+  },
+  "shower": {
+    "prompt": "shower",
+    "on_floor": true
+  },
+  "booth": {
+    "prompt": "booth",
+    "on_floor": true
+  },
+  "bin": {
+    "prompt": "bin",
+    "on_floor": true
+  },
+  "barrel": {
+    "prompt": "barrel",
+    "on_floor": true
+  },
+  "vase": {
+    "prompt": "vase",
+    "on_floor": false
+  },
+  "pot": {
+    "prompt": "pot",
+    "on_floor": false
+  },
+  "cup": {
+    "prompt": "cup",
+    "on_floor": false
+  },
+  "door": {
+    "prompt": "door",
+    "on_floor": true
+  },
+  "window": {
+    "prompt": "window",
+    "on_floor": false
+  },
+  "curtain": {
+    "prompt": "curtain",
+    "on_floor": false
+  },
+  "blind": {
+    "prompt": "blind",
+    "on_floor": false
+  },
+  "picture": {
+    "prompt": "picture",
+    "on_floor": false
+  },
+  "mirror": {
+    "prompt": "mirror",
+    "on_floor": false
+  },
+  "pillar": {
+    "prompt": "pillar",
+    "on_floor": true
+  },
+  "pole": {
+    "prompt": "pole",
+    "on_floor": true
+  },
+  "streetlight": {
+    "prompt": "streetlight",
+    "on_floor": true
+  },
+  "traffic_light": {
+    "prompt": "traffic light",
+    "on_floor": true
+  },
+  "stairs": {
+    "prompt": "stairs",
+    "on_floor": true
+  },
+  "railing": {
+    "prompt": "railing",
+    "on_floor": true
+  },
+  "fence": {
+    "prompt": "fence",
+    "on_floor": true
+  },
+  "awning": {
+    "prompt": "awning",
+    "on_floor": false
+  },
+  "car": {
+    "prompt": "car",
+    "on_floor": true
+  },
+  "truck": {
+    "prompt": "truck",
+    "on_floor": true
+  },
+  "van": {
+    "prompt": "van",
+    "on_floor": true
+  },
+  "bus": {
+    "prompt": "bus",
+    "on_floor": true
+  },
+  "wall": {
+    "prompt": "wall",
+    "on_floor": true
+  },
+  "tree": {
+    "prompt": "tree",
+    "on_floor": true
+  },
+  "pine_tree": {
+    "prompt": "pine tree",
+    "on_floor": true
+  },
+  "bush": {
+    "prompt": "bush",
+    "on_floor": true
+  }
+}

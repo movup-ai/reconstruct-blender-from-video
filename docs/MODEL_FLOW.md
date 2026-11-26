@@ -13,7 +13,7 @@ v2.1 package check.
 | SAM 3 | Persistent person masks and IDs | `models/sam3/sam3.pt` |
 | RTMPose | COCO-17 joints inside each tracked mask (camera, floor and fitting evidence) | rtmlib checkpoint cache; TensorRT engine in `models/trt_cache` |
 | SAM 3D Body / DINOv3 + MHR | Metric body joints and mesh, visible-surface depth scale, neck placement | `models/sam3d_body/model.ckpt`, `model_config.yaml`, `assets/mhr_model.pt` |
-| MoGe-2 | The clip's lens; per-shot metric point maps | `models/moge2/model.pt` |
+| MoGe-2 | The clip's lens; per-shot metric point maps (MoGe-3 ViT-L is an option: `config.json` `"moge_version": "v3"`, `models/moge3/model.pt`, needs `flex_gemm` + `triton-windows`; on Friends clips it matched MoGe-2 for depth, read a 2–8% longer lens, 2× slower) | `models/moge2/model.pt` |
 | Mask2Former ADE20K | Floor / wall / ceiling labels: gravity, world yaw, camera height | `models/mask2former_ade/` |
 | Depth Anything V2 Small | Depth cues for the optical-flow camera (pitch, far background weighting) | `models/depth_anything_v2_small.onnx` |
 | Blender 5.x | Builds the `.blend` and renders the white model | Blender install |

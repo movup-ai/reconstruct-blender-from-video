@@ -258,6 +258,8 @@ def fingerprint(c, cl):
         h.update(b"missing|")
     h.update(("%s|" % pkg.package_name(cl.name, c)).encode("utf-8"))
     settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in STAGE1_SETTINGS}
+    if str(c.get("moge_version", "v2")).lower() != "v2":      # MoGe-2 runs keep their fingerprint
+        settings.update(moge_version=str(c["moge_version"]).lower(), moge_refine_steps=c.get("moge_refine_steps", 3))
     h.update(json.dumps({"pipeline_version": "stage1-movement-1", **settings}, sort_keys=True, default=str).encode("utf-8"))
     return h.hexdigest()
 

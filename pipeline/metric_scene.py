@@ -1,4 +1,4 @@
-"""Metric scene evidence for Stage 1: MoGe-2 depth + Mask2Former floor/wall/ceiling labels (metric_observe.py).
+"""Metric scene evidence for Stage 1: MoGe depth (MoGe-2 or MoGe-3, moge_model.py) + Mask2Former floor/wall/ceiling labels (metric_observe.py).
 
 observe() caches metric_observation<shot>.npz in the clip's work folder - Stage 1's saved depth, kept for the
 planned Stage 2 (background).  align() / camera_height() give gravity and the camera height; body_scale() is the
@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 from scipy.optimize import least_squares
 from profiling import stage
+import moge_model
 
 
 VERSION = 1
@@ -80,7 +81,9 @@ def observe(frames, pose, cam, y0, camj, c):
     images = np.asarray([cv2.cvtColor(cv2.resize(frames[f][y0:y0+cam.H], (width, height)), cv2.COLOR_BGR2RGB) for f in fs])
     zoom = camj.get("zoom", [1.] * len(frames))
     fovs = [math.degrees(2 * math.atan(cam.W / (2 * cam.f * zoom[f]))) for f in fs]
-    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs).tobytes() + str(VERSION).encode()).hexdigest()
+    mv = moge_model.version(c); refine = int(c.get("moge_refine_steps", 3))
+    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs).tobytes() + str(VERSION).encode() +
+                            (b"" if mv == "v2" else ("%s/%d" % (mv, refine)).encode())).hexdigest()
     path = os.path.join(c["_work"], "metric_observation%s.npz" % c.get("_shot_tag", ""))
     source = None
     if os.path.isfile(path):
@@ -92,7 +95,7 @@ def observe(frames, pose, cam, y0, camj, c):
             inp, out = os.path.join(tmp, "input.npz"), os.path.join(tmp, "result.npz")
             np.savez_compressed(inp, images=images, fov=fovs)
             proc = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "metric_observe.py"),
-                                   "--input", inp, "--output", out], capture_output=True, text=True,
+                                   "--input", inp, "--output", out, "--moge", mv, "--refine", str(refine)], capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=600)
             if proc.returncode:
                 raise RuntimeError("metric observation failed: " + (proc.stderr or proc.stdout)[-600:])
@@ -123,7 +126,7 @@ def observe(frames, pose, cam, y0, camj, c):
             if name in ("sky", "water", "sea", "mirror", "windowpane"):
                 source["valid"][len(groups)][label == i] = False
         people.append(mask); groups.append(group)
-    source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source="MoGe-2")
+    source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source=moge_model.name(c))
     return source
 
 
@@ -213,7 +216,7 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
             if strength > .65:
                 yaw = float(np.angle(vote) / 4)
     camj["world_yaw"] = yaw
-    return up, {"source": "MoGe-2 + semantic floor/ceiling/wall normals", "world_yaw_deg": math.degrees(yaw),
+    return up, {"source": "%s + semantic floor/ceiling/wall normals" % observation.get("source", "MoGe"), "world_yaw_deg": math.degrees(yaw),
                 "manhattan_confidence": strength, "ground_samples": len(ground), "scale_source": observation["scale_source"]}
 
 

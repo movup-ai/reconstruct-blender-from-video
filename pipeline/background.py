@@ -11,7 +11,9 @@
   4. scale       each frame's depth is matched to Stage 1's floor: the floor pixels must land on z = 0 of the scene,
                  so objects stand on the floor the people stand on
   5. place       the object's pixels -> 3D points (Stage 1's camera of that frame, with its zoom) -> a box on the
-                 floor (or on the wall, when it hangs) facing the camera -> the asset stretched into that box
+                 floor (or on the wall, when it hangs) facing the camera -> the asset stretched into that box.
+                 Checked first (object_checks.py): Mask2Former must agree on what it is, the box must have a real
+                 size for its type (too wide: split by its 3D points), and people must not stand inside it
   6. build       Stage 1's scene_data.json + the objects -> Work\\<clip>\\background\\scene_data.json -> Blender
                  (colour card) -> SUBMIT\\_background\\<clip>.zip -> the v2.1 package check
 
@@ -37,6 +39,7 @@ if HERE not in sys.path:
 from common import jload, jsave, log, read_frames_at, imwrite_u
 from camera_model import Cam, cam_mats
 import assets_lib
+import object_checks
 
 VERSION = 1
 FLOOR_ROLES = ("floor", "ground")
@@ -379,28 +382,46 @@ def run(name, video, work, marks, c, render_and_pack):
                 return float(np.median(list(scales.values()))), "floor of other shots"
             return 1.0, "depth model's own metres (no floor seen)"
         idx = {f: k for k, f in enumerate(key_frames)}
-        # 5. place
+        # 5. place (object_checks.py: each detection is checked against Mask2Former, real sizes and the people)
+        checks = object_checks.enabled(c)
+        extra = object_checks.extras(c) if checks else {}
         boxes = []
         for oid, t in tracks.items():
-            P, cams, how = [], [], set()
+            ty = t["type"]; ex = extra.get(ty, {})
+            acc = object_checks.accepted_ids(ty, names, ex) if checks else None
+            P, cams, how, agree, seen_as = [], [], set(), [], []
             for f in views[oid]:
                 row = t["rows"][t["frames"].index(f)]
                 m = sam3_objects.mask_of(bundle, row, cam.W, cam.H) & ~people_mask(f, (cam.H, cam.W))
                 k = idx[f]; s, why = scale_at(f); how.add(why)
+                if acc is not None:
+                    a, top = object_checks.agreement(m, depth["labels"][k], acc, names)
+                    agree.append(a); seen_as.append(top)
                 P.append(object_points(cam, f, depth["depth"][k], depth["valid"][k], m, s))
                 cams.append(cam_mats(data["cam"][f])[1])
+            if agree and max(agree) < object_checks.AGREE_MIN:
+                warns.append("%s #%d: the picture shows %s there, not a %s (left out)"
+                             % (ty, oid, max(set(seen_as), key=seen_as.count), ty.replace("_", " "))); continue
             P = np.vstack(P) if P else np.zeros((0, 3))
-            box = fit_box(P, cams, models[t["type"]], cat[t["type"]]["on_floor"])
-            if box is None:
-                warns.append("%s #%d: too little depth to place it (left out)" % (t["type"], oid)); continue
-            dist = float(np.linalg.norm(np.asarray(box["centre"][:2]) - np.mean(np.asarray(cams)[:, :2], 0)))
-            if box["size"][2] > 40 or dist > 0.6 * float(c.get("far_distance", 1500.0)):
-                warns.append("%s #%d: measured out of range (left out)" % (t["type"], oid)); continue
-            box.update(type=t["type"], id=oid, frames=[t["frames"][0], t["frames"][-1]], seen=len(t["frames"]),
-                       views=views[oid], prob=float(np.mean(t["probs"])), scale=sorted(how), shot=shot_of(t["frames"][0]), pts=P)
-            boxes.append(box)
+            fit = lambda Q: fit_box(Q, cams, models[ty], cat[ty]["on_floor"])
+            parts = object_checks.split_if_too_wide(ty, P, fit, ex) if checks else [P]
+            for j, Pj in enumerate(parts):
+                box = fit(Pj)
+                if box is None:
+                    warns.append("%s #%d: too little depth to place it (left out)" % (ty, oid)); continue
+                dist = float(np.linalg.norm(np.asarray(box["centre"][:2]) - np.mean(np.asarray(cams)[:, :2], 0)))
+                if box["size"][2] > 40 or dist > 0.6 * float(c.get("far_distance", 1500.0)):
+                    warns.append("%s #%d: measured out of range (left out)" % (ty, oid)); continue
+                bad = object_checks.size_problem(ty, box, ex) if checks else None
+                if bad:
+                    warns.append("%s #%d: %s (left out)" % (ty, oid, bad)); continue
+                box.update(type=ty, id=oid * 100 + j if len(parts) > 1 else oid, frames=[t["frames"][0], t["frames"][-1]],
+                           seen=len(t["frames"]), views=views[oid], prob=float(np.mean(t["probs"])), scale=sorted(how),
+                           shot=shot_of(t["frames"][0]), pts=Pj, agree=max(agree) if agree else None)
+                boxes.append(box)
         # one object found twice (SAM 3 lost and found it again, or two names for one thing): keep one
-        boxes.sort(key=lambda b: -(b["prob"] * b["seen"]))
+        # (the one Mask2Former agrees with wins: a round table SAM 3 also called "chair" stays a table)
+        boxes.sort(key=lambda b: -(b["prob"] * b["seen"] * ((b["agree"] if b.get("agree") is not None else .5) + .1)))
         kept = []
         for b in boxes:
             dup = None
@@ -422,6 +443,10 @@ def run(name, video, work, marks, c, render_and_pack):
                 warns.append("%s #%d is where %s #%d is: kept the %s" % (b["type"], b["id"], dup["type"], dup["id"], dup["type"]))
         count = {}
         for b in kept:
+            through = walk_through(b, data)
+            bad = object_checks.people_inside_problem(b["type"], through, N) if checks else None
+            if bad:
+                warns.append("%s #%d: %s (left out)" % (b["type"], b["id"], bad)); continue
             count[b["type"]] = count.get(b["type"], 0) + 1
             nm = "%s_%d" % (b["type"], count[b["type"]]) + ("_s%d" % (b["shot"] + 1) if len(shots) > 1 else "")
             V = assets_lib.place(models[b["type"]], b["centre"], b["yaw"], b["size"])
@@ -430,8 +455,7 @@ def run(name, video, work, marks, c, render_and_pack):
             if cat[b["type"]].get("role"):
                 mesh["role"] = cat[b["type"]]["role"]
             meshes.append(mesh)
-            through = walk_through(b, data)
-            if through:
+            if through and not (checks and object_checks.is_seat(b["type"])):     # sitting on a seat is expected
                 warns.append("%s: a person stands inside it in %d frame(s) - check its place" % (nm, through))
             objects.append({"name": nm, "type": b["type"], "asset": models[b["type"]]["source"],
                             "position_m": [round(x, 3) for x in b["centre"]], "yaw_deg": round(math.degrees(b["yaw"]), 1),

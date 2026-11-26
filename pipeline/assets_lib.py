@@ -7,7 +7,8 @@
                                       prompt = the words SAM 3 searches for; role = a colour-card role that always
                                       wins (bg, fg, near, far_i, lamp, special); on_floor = false for a thing that
                                       hangs (default: paintings, mirrors, windows, clocks, shelves... hang, the rest
-                                      stands on the floor)
+                                      stands on the floor); "labels" (Mask2Former classes that count as the type)
+                                      and "size" ([[w0, w1], [h0, h1]] m) are read by object_checks.py, not here
 
 How a model should be made: it stands on the ground (its lowest point is the floor), its front faces -Y (Blender's
 front view looks at it), any size (it is stretched to the size measured in the video).  Every visible mesh in the
