@@ -1,4 +1,4 @@
-"""Validation policy and content-based caches, independent of inference dependencies."""
+"""Content-based caches for the checks (quality.cached_alignment), independent of inference dependencies."""
 import hashlib
 import json
 import os
@@ -6,12 +6,6 @@ import tempfile
 from pathlib import Path
 
 VERSION = 1
-
-
-def mode(config=None):
-    value=(config or {}).get('validation_mode','normal')
-    if value not in ('normal','audit'):raise ValueError('validation_mode must be normal or audit')
-    return value
 
 
 def digest(value):
@@ -39,7 +33,6 @@ def rig_assets(data):
     styles={c.get('style','sample') for c in data.get('chars',{}).values()}
     paths={ASSET_FILES[s] for s in styles if s in ASSET_FILES}
     if 'sample' in styles:paths.add('sample_character.json')
-    if 'l3' in styles:paths.update(('l3/L3_standard.blend','l3/model-profile.json'))
     return {p:file_digest(root/p) for p in sorted(paths)}
 
 
@@ -54,45 +47,6 @@ def geometry(data, people_only=False):
         value['props']=[{k:v for k,v in p.items() if k not in presentation} for p in data.get('props',[])]
         value['shots']=[s.get('frames') for s in data.get('shots',[])]
     return value
-
-
-def sampled_bundles(bundles, limit=3):
-    """Keep shot coverage, then endpoints/middle, with a fixed total view budget."""
-    import numpy as np
-    entries=[(i,j) for i,b in enumerate(bundles) for j in range(len(b['frames']))]
-    if len(entries)<=limit:return bundles
-    selected=[]
-    for i,b in enumerate(bundles):
-        if len(selected)>=limit:break
-        if len(b['frames']):selected.append((i,0))
-    for ix in [len(entries)-1,len(entries)//2,*np.linspace(0,len(entries)-1,limit,dtype=int)]:
-        if len(selected)>=limit:break
-        candidate=entries[int(ix)]
-        if candidate not in selected:selected.append(candidate)
-        if len(selected)>=limit:break
-    result=[]
-    frame_keys={'frames','depth','K','R','C','person','valid','labels','groups'}
-    for i,b in enumerate(bundles):
-        ids=[j for bi,j in selected if bi==i]
-        if ids:result.append({k:v[ids] if k in frame_keys and hasattr(v,'shape') and len(v)==len(b['frames']) else v for k,v in b.items()})
-    return result
-
-
-def ensure_scene(data):
-    """Reject unusable animation arrays before any repair or rendering."""
-    import numpy as np
-    count=int(data['frames'])
-    def finite_rows(value,shape,label):
-        rows=np.asarray(value,float)
-        if rows.shape!=shape or not np.isfinite(rows).all():raise ValueError('Invalid '+label+' animation; prepare the clip again')
-    if count<1:raise ValueError('Scene has no frames')
-    finite_rows(data['cam'],(count,6),'camera')
-    for name,ch in data.get('chars',{}).items():
-        finite_rows(ch['root'],(count,4),name+' root')
-        finite_rows(ch['pelvis_z'],(count,),name+' pelvis')
-        for joint,values in ch['rot'].items():finite_rows(values,(count,3),name+' '+joint)
-        if not np.isfinite(ch['height']) or ch['height']<=0:raise ValueError('Invalid actor height: '+name)
-        if 'visible' in ch and len(ch['visible'])!=count:raise ValueError('Visibility length does not match scene: '+name)
 
 
 def load_cache(path, key):
@@ -129,6 +83,3 @@ def cached_report(path, key, compute):
     write_json(path,result)
     return result
 
-
-def review_enabled(config):
-    return mode(config)=='audit' and config.get('frame_review',True) is not False

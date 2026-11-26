@@ -11,7 +11,7 @@ One lens per clip: the Blender camera and every tool here use one.  Shots that d
 
 The model runs in its own python process (torch stays out of the fitting process) and the answer is kept in
 Work_auto\\<clip>\\lens_auto.json, so a refit does not measure again.  About 15 s to load + 13 s a frame on a
-processor.  config.json "lens_auto": false keeps the fixed "lens_mm"; a lens set in hints.json or in the review wins."""
+processor.  config.json "lens_auto": false keeps the fixed "lens_mm" (the only way to set the lens by hand)."""
 import os, sys, json, math, subprocess, tempfile, shutil
 import numpy as np
 from profiling import stage

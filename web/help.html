@@ -9,77 +9,43 @@
 <body>
 <div class="wrap faq">
   <h1>Help</h1>
-  <p class="sub">Blender Agent turns film clips into white-model packages in the client's v2.1 format. Everything runs on this PC.</p>
+  <p class="sub">Blender Agent turns film clips into white-model packages in the client's v2.1 format, automatically. Everything runs on this PC.</p>
 
   <section class="step">
     <h2>The workflow</h2>
     <ol>
-      <li><b>Copy the videos into the SOURCE folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays in SOURCE, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
-      <li><b>Start</b>: step 1 on the Clips page. Nothing runs until you press <i>Start</i>, also after restarting the app. The local models then find people, joints, lens, camera, cuts, ground and set; the Clips page shows each video's step and progress. <i>Pause processing</i> stops active jobs and preserves completed caches. <i>Resume processing</i> restarts the interrupted stage using those caches. <i>Cancel pipeline</i> stops your running and waiting jobs without retries; completed files stay. Each active clip also has its own Cancel action.</li>
-      <li><b>Review</b> each clip marked <span class="chip g-ready">ready for review</span> (step 2, <i>Review next clip</i>):
+      <li><b>Copy the videos into your source folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays where it is, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
+      <li><b>Start</b> on the Clips page. Nothing runs until you press it, also after restarting the app. Every video without a finished zip (new, failed, cancelled or out of date) then runs <b>Stage 1 · Movement</b> by itself, one straight run with no review step:
         <ul>
-          <li><b>1 Who is who</b>: give each person a role. A card saying <i>Not a person?</i> looks like a statue, a picture or a false detection: one click, then <i>Re-check</i>.</li>
-          <li><b>2 Joints</b>: the editor opens on the frames where the 3D person moved suddenly. Drag wrong dots into place.</li>
-          <li><b>3 Objects</b>: drag a box around each thing a viewer should recognise (door, shelf, tree…).</li>
+          <li>people and their joints (SAM 3 tracking, RTMPose, SAM 3D Body), the camera with its zoom, the metric scale and a grey floor;</li>
+          <li>a Blender scene with the sample character, the white-model video and the comparison video;</li>
+          <li>the v2.1 zip in SUBMIT, checked against the delivery spec before the clip counts as <span class="chip g-done">done</span>.</li>
         </ul>
-        Then press <b>✓ Mark reviewed</b> (finish later, together with others) or <b>▶ Finish now</b>. Camera, set, held objects and the description are filled in automatically; change them under <i>More</i> only if they are wrong.</li>
-      <li><b>Finish</b>: <i>Finish all reviewed</i> on the Clips page (or <i>Finish now</i> on a clip) runs the final fit, set, Blender, videos and the v2.1 zip into SUBMIT. A clip with no changes since its last Finish is skipped, so nothing renders twice.</li>
-      <li><b>Deliver</b>: on the Submissions page, press <i>Check packages</i>. Then download each zip with its <i>Zip</i> button: it is saved under its delivery name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. For a whole batch with the manifest, run <code>pipeline\deliver.py</code>; it writes the correctly named zips to <code>DELIVERY\UPLOAD</code>.</li>
+        Videos added while your queue runs join it by themselves. The Clips page shows each video's progress and how long it took.</li>
+      <li><b>Pause, Resume, Cancel</b>: <i>Pause processing</i> stops active jobs and keeps completed caches; <i>Resume processing</i> (or Start) restarts the interrupted run where the caches allow, in its old place in the queue. <i>Cancel pipeline</i> stops your running and waiting jobs without retries; completed files stay. Each active clip also has its own Cancel. <i>Take out</i> on a card keeps a video out of the line until you add it back.</li>
+      <li><b>Deliver</b>: download each zip with its <i>Download</i> button (on the card, the clip page or the Submissions page). It is saved under its delivery name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. <i>Check packages</i> on the Submissions page checks every zip again.</li>
     </ol>
-    <p>Settings → Autopilot <b>Full auto</b> does steps 3–4 by itself after Start, <span class="warn">without your review</span>. With a DeepSeek key saved, DeepSeek checks the people and the set first.</p>
-  </section>
-
-  <section class="step">
-    <h2>Keyboard shortcuts</h2>
-    <h3>Clip page</h3>
-    <table class="list">
-      <tr><td><kbd>Tab</kbd> / click a card</td><td>select a person</td></tr>
-      <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>role: Main (red) · Second (blue) · Third (green) · Fourth (yellow)</td></tr>
-      <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Other (purple) / Not a person</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr>
-      <tr><td><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>Alt</kbd>+<kbd>→</kbd></td><td>previous / next clip</td></tr>
-      <tr><td><kbd>?</kbd></td><td>show the shortcuts</td></tr>
-    </table>
-    <h3>Joint editor (step 2)</h3>
-    <table class="list">
-      <tr><td>drag a dot</td><td>move a joint · mouse wheel zooms, dragging empty space moves the view</td></tr>
-      <tr><td><kbd>F</kbd></td><td>next flagged frame (orange line)</td></tr>
-      <tr><td><kbd>Enter</kbd></td><td>this frame is OK (the fit trusts it), go to the next. Only frames you fix or mark OK are used as corrections.</td></tr>
-      <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>previous / next frame</td></tr>
-      <tr><td><kbd>H</kbd> or right-click a dot</td><td>this joint is / is not visible in the video</td></tr>
-      <tr><td>the eye beside a person</td><td>stop showing that person on the picture (every frame; their joints are not changed), for people standing in front of each other</td></tr>
-      <tr><td><kbd>V</kbd></td><td>show only the selected person / everyone again</td></tr>
-      <tr><td><kbd>S</kbd></td><td>swap left and right of the selected person</td></tr>
-      <tr><td><kbd>D</kbd> / <kbd>A</kbd></td><td>delete a wrong person / add a missed person</td></tr>
-      <tr><td><kbd>C</kbd></td><td>copy the dots of the previous key frame</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>undo</td></tr>
-      <tr><td><kbd>R</kbd></td><td>reset the view</td></tr>
-    </table>
+    <p><b>Stage 2 · Background</b> is coming later: it will place objects and the set from the depth Stage 1 already saved, then render and pack the zip again.</p>
   </section>
 
   <section class="step">
     <h2>Questions</h2>
     <h3>A clip says "no delivery name"</h3>
-    <p>The client's delivery rules (v2.1) require every zip to be named after the film's English title and a number, for example <code>the_hidden_blade-3</code>. A video without one cannot be finished. On the Clips page, press <i>Name videos…</i> and type the film's English title: only videos without a name get one, and existing names never change.</p>
-    <h3>A clip says "changed since Finish"</h3>
-    <p>Its roles, joints, objects or description changed after its last Finish, so its package is out of date. <i>Finish all reviewed</i> makes it again.</p>
+    <p>The client's delivery rules (v2.1) require every zip to be named after the film's English title and a number, for example <code>the_hidden_blade-3</code>. A video without one cannot be packed. On the Clips page, press <i>Name videos…</i> and type the film's English title: only videos without a name get one, and existing names never change.</p>
+    <h3>A clip says "out of date"</h3>
+    <p>Its zip was made from an older video, delivery name or Stage 1 settings. <i>Start</i> (or <i>Re-run</i> on the clip) makes it again.</p>
     <h3>When can I add videos?</h3>
-    <p>Any time, even while others are being prepared. Copy them into the SOURCE folder: within a few seconds they appear on the Clips page. Then press <i>Start</i>.</p>
+    <p>Any time, even while others are being processed. Copy them into your source folder: within a few seconds they appear on the Clips page, and while your queue runs they are queued by themselves. Otherwise press <i>Start</i>.</p>
     <h3>Where are the results?</h3>
-    <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Preparation results, previews and logs are in the Work folder (Settings).</p>
+    <p>Packages and zips are in the SUBMIT folder (Submissions page → <i>Open SUBMIT folder</i>). Processing results, previews and logs are in the Work folder (Settings).</p>
     <h3>What do the colours mean?</h3>
-    <p>People: Main red, Second blue, Third green, Fourth yellow, Other purple. The set is light grey like the client samples; <i>More → Set</i> can switch it to the video's own colours. The colours in <i>More → Held objects</i> (touched or held orange, far interactive pink, special purple, foreground brown, light source white) are for objects people hold or touch, not for the objects of step 3.</p>
+    <p>People use the colour card: red, blue, green, yellow, then cyan, magenta… The floor is grey.</p>
     <h3>A clip shows "failed"</h3>
-    <p>Open it: the red box says what went wrong and what to do. <i>Retry failed</i> in step 1 on the Clips page tries all failed clips again.</p>
-    <h3>How do I get recognisable objects (doors, shelves, cars…)?</h3>
-    <p>On a clip page, step <b>3 Objects</b>: drag a box around an object on the background picture, pick its type (door, cabinet, shelf, counter, table, chair, car, tree, lamp post…), whether it stands on the floor or hangs on a wall, and which way it faces. <i>Save</i> keeps your boxes; <i>Re-check</i> builds them into the set, each as a simple model of its type at the right size. With a DeepSeek key saved, the list is filled in for you and you only correct it.</p>
-    <h3>The set looks wrong</h3>
-    <p>On the clip page, open <i>More → Set</i> and look at the set picture (green = ground, blue = sky, red lines = where walls stand). Fix people's joints if needed and press <i>Re-check</i>, or let DeepSeek check the set (Settings → AI suggestions).</p>
+    <p>Open it: the red box says what went wrong and what to do, and the technical log is below. <i>Retry failed</i> on the Clips page, or <i>Start</i>, tries all failed clips again.</p>
     <h3>Can I close the window?</h3>
     <p>Yes. Unfinished jobs wait in the queue; press <i>Start</i> after you open Blender Agent again. If it ever crashes, the launcher restarts it after 5 seconds, also paused.</p>
     <h3>Is anything sent over the internet?</h3>
-    <p>Only when DeepSeek AI suggestions are on: then frames of the clips go to DeepSeek. Everything else stays on this PC.</p>
+    <p>No. The models run on this PC's NVIDIA card.</p>
   </section>
 </div>
 <script src="/static/common.js"></script>

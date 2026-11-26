@@ -2,7 +2,7 @@
 # GPU only: every model runs on the NVIDIA card. There is no processor build.
 #
 # Installed by Setup.bat before this file, from the wheels saved in downloads\ when they are there:
-#   torch 2.8.0+cu126, torchvision 0.23.0+cu126   (MoGe-2, CLIP; SAM 3 / Body use the isolated worker)
+#   torch 2.8.0+cu126, torchvision 0.23.0+cu126   (MoGe-2, Mask2Former; SAM 3 / SAM 3D Body use the isolated worker)
 #   tensorrt-cu12-libs 10.14.1.48                 (TensorRT fp16 engines for the pose models)
 # rtmlib is installed after it with --no-deps, because it would pull in the processor build of onnxruntime.
 #
@@ -20,13 +20,10 @@ scipy==1.18.1
 tqdm
 requests==2.34.2
 imageio-ffmpeg==0.8.1
-# Scene models: CLIP names (models\clip), MoGe-2 (third_party\MoGe); SAM 3 uses requirements-sam3.txt
-open_clip_torch==4.2.2
+# Scene models: MoGe-2 (third_party\MoGe, the lens and metric depth); SAM 3 / SAM 3D Body use requirements-sam3*.txt
 timm==1.0.31
 safetensors==0.8.0
 huggingface_hub==2.4.0
 pillow==13.0.0
-# Claude builds the background set (pipeline\claude_set.py, optional: needs an Anthropic API key in Settings)
-anthropic==2.13.0
-# objects people carry (pipeline\held_objects.py): Grounding DINO, models\grounding_dino
+# Mask2Former (pipeline\semseg.py, models\mask2former_ade): floor / wall / ceiling labels for gravity and camera height
 transformers==5.24.0

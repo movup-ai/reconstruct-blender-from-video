@@ -9,7 +9,7 @@
 <body>
 <div class="wrap">
   <div class="topline">
-    <div><h1>Clips</h1><p class="sub" id="srcline">Every video in your folder <a href="#" id="opensrc" title="Open the folder"><code id="srcpath"></code></a> is listed here (<a href="#" id="chsrc">change</a>). Only you see these clips. Prepare them, review each clip, then finish.</p></div>
+    <div><h1>Clips</h1><p class="sub" id="srcline">Every video in your folder <a href="#" id="opensrc" title="Open the folder"><code id="srcpath"></code></a> is listed here (<a href="#" id="chsrc">change</a>). Only you see these clips. Press Start: each one runs by itself to a finished v2.1 zip.</p></div>
   </div>
   <div class="banner note" id="nosrc" style="display:none"><span><b>Choose the folder with your videos.</b> Only you see its clips and their results.</span><button class="primary" id="pick1">Choose your folder…</button></div>
   <div class="banner fail" id="healthbanner" style="display:none"></div>
@@ -17,52 +17,53 @@
 
   <div class="flow">
     <section class="fstep" id="st2">
-      <div class="fh"><span class="num">1</span><b>Prepare</b></div>
-      <p class="fdesc">Finds people, joints, lens, camera and set in every video. About 3–5 minutes each. Nothing runs until you press Start.</p>
+      <div class="fh"><span class="num">1</span><b>Movement</b></div>
+      <p class="fdesc">Stage 1 runs by itself for every video: people, joints, camera and floor, the white-model and comparison videos, and a checked v2.1 zip. Nothing runs until you press Start.</p>
       <div class="actions"><button id="startbtn" data-processing-control>Start</button><button id="cancel-session" class="dangerline" data-processing-control hidden>Cancel pipeline</button></div>
       <div class="q" id="queue"></div>
       <div class="minor" id="minor2"></div>
     </section>
     <section class="fstep" id="st3">
-      <div class="fh"><span class="num">2</span><b>Review and finish</b></div>
-      <p class="fdesc" id="revdesc"></p>
+      <div class="fh"><span class="num">2</span><b>Delivered</b></div>
+      <p class="fdesc" id="deldesc"></p>
       <p class="fdesc warn" id="noname" style="display:none"></p>
-      <div class="q" id="finq"></div>
-      <div class="actions"><a class="btn" id="nextreview" href="#">Review next clip</a><button id="nameall" style="display:none" title="Give every video without a delivery name one, from the film's English title. The client requires a delivery name for each zip: the film's English title and a number, e.g. the_hidden_blade-1.">Name videos…</button><button id="renderall" title="Final fit, set, Blender, videos and the v2.1 zip for every reviewed clip. Clips unchanged since their last Finish are skipped.">Finish all reviewed</button></div>
+      <div class="q" id="dellist"></div>
+      <div class="actions"><button id="nameall" style="display:none" title="Give every video without a delivery name one, from the film's English title. The client requires a delivery name for each zip: the film's English title and a number, e.g. the_hidden_blade-1.">Name videos…</button><a class="btn" id="subslink" href="/submissions">Submissions</a></div>
     </section>
   </div>
   <div class="bar" id="bar" role="img"></div>
 
   <div class="tabs" id="tabsrow"><span id="tabs" class="contents"></span>
-    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip's Prepare and Finish: where it is and how long each took">Table</button></span>
+    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip's Movement run: where it is and how long it took">Table</button></span>
     <input type="text" class="search" id="search" placeholder="Search clips" aria-label="Search clips" autocomplete="off" spellcheck="false"></div>
   <div id="progsum" class="progsum" style="display:none"></div>
   <div id="list"><div class="empty">Loading…</div></div>
   <section class="removed" id="removedbox" style="display:none">
     <h2 id="removedsum">Removed from the list</h2>
-    <p class="hint">These videos are not prepared or finished. Their files are still in your folder; <b>Add back</b> puts one on the list again.</p>
+    <p class="hint">These videos are not processed. Their files are still in your folder; <b>Add back</b> puts one on the list again.</p>
     <div class="grid" id="removedlist"></div>
   </section>
   <section class="resetzone" id="csv">
     <div><b>Reset all</b><p class="small muted">Stops running processes, cancels waiting jobs, and clears all generated work, renders,
-      packages, processing logs and recorded times for this folder. Roles, joint fixes and objects are cleared too.
-      Every clip returns to <i>not prepared</i>, including taken-out and removed clips. The queue stays paused.
+      packages, processing logs and recorded times for this folder.
+      Every clip returns to <i>new</i>, including taken-out and removed clips. The queue stays paused.
       Your original videos, task zips and delivery names stay. Use it to start fresh. You are asked first.</p></div>
-    <button id="resetall" class="dangerline" title="Delete what Prepare and Finish made for every clip (asks first)">Reset all…</button>
+    <button id="resetall" class="dangerline" title="Delete what processing made for every clip (asks first)">Reset all…</button>
   </section>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/static/common.js"></script>
 <script>
 nav('clips');
-const GROUPS = [['ready', 'Needs review', '#e0a83a'], ['busy', 'Queued or working', '#6f97d6'], ['conf', 'Reviewed', '#5fa3a7'],
-                ['done', 'Finished', '#3a9a62'], ['fail', 'Failed', '#d0574f'], ['new', 'Not prepared', '#c6cdd3']];
+const GROUPS = [['busy', 'Waiting or working', '#6f97d6'], ['done', 'Done', '#3a9a62'], ['old', 'Out of date', '#5fa3a7'],
+                ['fail', 'Failed', '#d0574f'], ['new', 'New', '#c6cdd3']];
 let FILTER = 'all', DATA = null;
 let VIEW = (() => { try { return localStorage.getItem('clipsView') || 'cards'; } catch (e) { return 'cards'; } })();
 segInit($('viewsw'), v => { VIEW = v; try { localStorage.setItem('clipsView', v); } catch (e) {} render(); });
+const downloadUrl = c => '/download/' + encodeURIComponent(c.name);
 
-// ---- progress table: each clip's Prepare and Finish - where it is and how long it took
-const STEP_OF = { fit: 'prepare', all: 'finish', render: 'finish', blend: 'finish' };
+// ---- progress table: each clip's Movement run - where it is and how long it took
+const STEP_OF = { movement: 'movement', background: 'background' };
 function stepCell(c, step, p) {
   const s = ((c.took || {}).steps || {})[step], j = c.status.job, mine = j && STEP_OF[j.stage] === step;
   const at = t => t ? ` <span class="muted">· ${new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : '';
@@ -71,21 +72,20 @@ function stepCell(c, step, p) {
     return `<div class="pst run">running${ran != null ? ' ' + fmtDur(ran) : ''}</div>` + (p && p.progress != null ? progressBar(p.progress, p.step) : '');
   }
   if (mine && j.state === 'queued') return `<div class="pst wait">${j.error === 'Paused by user' ? 'paused' : 'waiting'}</div>`;
+  if (c.status.done) return s && s.state === 'done' ? `<div class="pst ok">&#10003; ${fmtDur(s.ran)}${at(s.ended)}</div>` : '<div class="pst ok">&#10003; done</div>';
   if (mine && j.state === 'stopped') return `<div class="pst muted">cancelled${s && s.state === 'stopped' ? ' after ' + fmtDur(s.ran) : ''}</div>`;
   if (s && s.state === 'failed') return `<div class="pst bad">failed after ${fmtDur(s.ran)}</div>`;
-  if (s && s.state === 'done') return `<div class="pst ok">&#10003; ${fmtDur(s.ran)}${at(s.ended)}</div>`;
-  if (step === 'prepare' && c.status.fit) return '<div class="pst ok">&#10003; done</div>';
-  if (step === 'finish' && c.status.done) return '<div class="pst ok">&#10003; done</div>';
-  if (step === 'finish' && c.status.fit) return `<div class="pst muted">${c.status.confirmed ? 'reviewed, not finished' : 'needs review first'}</div>`;
+  if (c.status.outdated) return '<div class="pst muted">out of date</div>';
   return '<div class="pst muted">–</div>';
 }
 function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
   const running = c.status.job?.state === 'running', waiting = c.status.job?.state === 'queued';
   const held = c.status.held && c.status.label === 'taken out';
-  const queue = running ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control>Cancel</button>` : waiting || (!c.status.fit && !held)
+  const queue = running ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control>Cancel</button>` : waiting || (!c.status.done && !held)
     ? `<button class="qb" data-hold="${c.id}" data-name="${short}">Take out</button>`
-    : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${short}">Add back</button>` : '';
+    : held ? `<button class="qb add" data-unhold="${c.id}" data-name="${short}">Add back</button>`
+    : c.status.done && c.package ? `<a class="qb btn" href="${downloadUrl(c)}" title="Download the zip as ${esc(c.package)}.zip">Download</a>` : '';
   const remove = `<button class="rm" data-rm="${c.id}" data-name="${short}" ${running ? 'disabled title="Being processed: remove it when the job is done"' : 'title="Remove from the list (the file stays in SOURCE)"'} aria-label="Remove ${short} from the list">&#10005;</button>`;
   return {held, queue, remove};
 }
@@ -96,27 +96,23 @@ function renderTable(list, clips, prog) {
     return `<tr><td class="pname"><a href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt=""><span><b title="${esc(c.name)}">${esc(short)}</b>
         <span class="small muted">${c.package ? esc(c.package) : 'no delivery name'}</span></span></a></td>
       <td data-k="Status">${chip(c.status)}</td>
-      <td data-k="Prepare">${stepCell(c, 'prepare', prog[c.id])}</td>
-      <td data-k="Finish">${stepCell(c, 'finish', prog[c.id])}</td>
-      <td data-k="Computer time" class="r nowrap" title="Total recorded processing time since reset, including repeated jobs; excludes queue waits and review time">${tot != null ? fmtDur(tot) : '–'}</td>
+      <td data-k="Movement">${stepCell(c, 'movement', prog[c.id])}</td>
+      <td data-k="Computer time" class="r nowrap" title="Total recorded processing time since reset, including repeated jobs; excludes queue waits">${tot != null ? fmtDur(tot) : '–'}</td>
       <td data-k="Actions"><div class="table-actions">${actions.queue}${actions.remove}</div></td></tr>`; }).join('');
-  list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th><th>Status</th><th>Prepare</th><th>Finish</th>
-    <th class="r" title="Total recorded processing time since reset (all jobs), excluding queue waits and review time">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th><th>Status</th><th>Movement</th>
+    <th class="r" title="Total recorded processing time since reset (all jobs), excluding queue waits">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function progressSummary(cs, q) {
   const box = $('progsum');
   if (VIEW !== 'table' || !cs.length) { box.style.display = 'none'; return; }
-  const runs = st => cs.map(c => ((c.took || {}).steps || {})[st]).filter(s => s && s.state === 'done').map(s => s.ran);
-  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
-  const P = runs('prepare'), F = runs('finish'), aP = avg(P), aF = avg(F);
-  const prepared = cs.filter(c => c.status.fit).length, finished = cs.filter(c => c.status.done).length;
-  const toPrep = cs.filter(c => !c.status.fit && !c.status.held).length;
-  const toFin = cs.filter(c => c.status.fit && c.status.confirmed && !c.status.done).length;
-  const left = Math.max(toPrep * (aP || 0) / Math.max(1, q.parallel || 1), toFin * (aF || 0) / Math.max(1, q.finish_parallel || 1));
+  const runs = cs.map(c => ((c.took || {}).steps || {}).movement).filter(s => s && s.state === 'done').map(s => s.ran);
+  const avg = runs.length ? runs.reduce((x, y) => x + y, 0) / runs.length : null;
+  const finished = cs.filter(c => c.status.done).length;
+  const toDo = cs.filter(c => !c.status.done && !c.status.held).length;
+  const left = toDo * (avg || 0) / Math.max(1, q.parallel || 1);
   box.style.display = '';
-  box.innerHTML = `<span><b>${prepared}</b>/${cs.length} prepared${aP != null ? ` · ${fmtDur(aP)} each on average` : ''}</span>
-    <span><b>${finished}</b>/${cs.length} finished${aF != null ? ` · ${fmtDur(aF)} each on average` : ''}</span>
-    ${(toPrep || toFin) && (aP || aF) ? `<span title="Separate Prepare and Finish slots; model inference shares the GPU and may add waiting time">About <b>${fmtDur(left)}</b> of work left (${toPrep} to prepare, ${toFin} to finish)</span>` : ''}`;
+  box.innerHTML = `<span><b>${finished}</b>/${cs.length} done${avg != null ? ` · ${fmtDur(avg)} each on average` : ''}</span>
+    ${toDo && avg ? `<span title="Model inference shares the GPU and may add waiting time">About <b>${fmtDur(left)}</b> of work left (${toDo} to process)</span>` : ''}`;
 }
 
 function render() {
@@ -144,61 +140,48 @@ function render() {
   $('clashes').innerHTML = src.clashes.map(x => `<b>${esc(x.clip)}</b> is also the name of <code>${esc(x.other)}</code>, so this one got a short suffix.`)
     .concat(zp.map(x => `Task zip ${esc(x)}`)).join('<br>');
 
-  // ---- step 2: prepare
-  const todo = cs.filter(c => !c.status.fit && !c.status.held && !(c.status.job && /queued|running/.test(c.status.job.state))).length;
-  const failed = cnt.fail || 0;
-  $('startbtn').innerHTML = !q.paused || q.running ? '&#10074;&#10074; Pause processing' : q.queued ? '&#9654; Resume processing' : '&#9654; Start' + (todo ? ` · prepare ${todo} video(s)` : '');
-  $('startbtn').title = !q.paused || q.running ? 'Stop active processes and keep completed caches. Resume restarts the interrupted stage.' : q.queued ? 'Resume queued work using completed caches' : 'Prepare videos that are not prepared yet';
+  // ---- step 1: movement (Start queues every video without a valid zip, and resumes paused work)
+  const active = c => c.status.job && /queued|running/.test(c.status.job.state);
+  const todo = cs.filter(c => !c.status.done && !c.status.held && !active(c)).length;
+  const failed = cs.filter(c => c.status.label === 'failed').length;
+  const pausedJobs = cs.filter(c => c.status.label === 'paused').length;
+  $('startbtn').innerHTML = !q.paused || q.running ? '&#10074;&#10074; Pause processing' :
+    q.queued ? '&#9654; Resume processing' + (todo ? ` · ${todo} more` : '') : '&#9654; Start' + (todo ? ` · ${todo} video(s)` : '');
+  $('startbtn').title = !q.paused || q.running ? 'Stop active processes and keep completed caches. Resume restarts the interrupted run.' :
+    'Queue every video without a finished zip (new, failed, cancelled or out of date) and run the queue';
   $('startbtn').disabled = processingBusy || (q.paused && !q.running && !todo && !q.queued);
   $('cancel-session').hidden = !q.running && !q.queued;
   $('cancel-session').disabled = processingBusy;
-  // one queue runs both steps: each card shows its own jobs (stage "all" is Finish, the rest is Prepare)
-  const isFin = s => s === 'all';
-  const nowP = q.now.filter(j => !isFin(j.stage)), nowF = q.now.filter(j => isFin(j.stage));
-  const waitOf = fin => cs.filter(c => c.status.job && c.status.job.state === 'queued' && isFin(c.status.job.stage) === fin).length;
-  const waitP = waitOf(false), waitF = waitOf(true);
+  const waiting = cs.filter(c => c.status.job && c.status.job.state === 'queued').length;
   const jobLines = js => js.map(j => `<div style="margin-top:6px"><a href="/clip/${j.clip}">${esc(j.name.replace(/^[^_]+_/, ''))}</a> ${progressBar(j.progress, j.step)}</div>`).join('');
-  $('queue').innerHTML = nowP.length || waitP ? (q.paused ? 'Paused · ' : '') +
-      `<b>${nowP.length}</b> preparing, <b>${waitP}</b> waiting` + jobLines(nowP) :
-    todo ? '' : (cs.length ? 'Every video is prepared.' : '');
-  $('finq').innerHTML = nowF.length || waitF ? (q.paused ? 'Paused · ' : '') +
-      `<b>${nowF.length}</b> finishing, <b>${waitF}</b> waiting <button id="finishpause" data-processing-control ${processingBusy ? 'disabled' : ''}>${q.paused && !q.running ? 'Resume processing' : 'Pause processing'}</button>` + jobLines(nowF) : '';
-  if ($('finishpause')) $('finishpause').onclick = async () => {
-    await processingControl(q.paused && !q.running ? '/api/resume' : '/api/pause','Updating active processing…');
-    load();
-  };
+  $('queue').innerHTML = q.now.length || waiting ? (q.paused ? 'Paused · ' : '') +
+      `<b>${q.now.length}</b> processing, <b>${waiting}</b> waiting${pausedJobs ? ` (${pausedJobs} paused)` : ''}` + jobLines(q.now) :
+    todo ? '' : (cs.length ? 'Every video is done.' : '');
   const minor = [];
   if (failed) minor.push(`<a href="#" id="retry">Retry ${failed} failed</a>`);
   if (q.queued) minor.push(`<a href="#" id="cancel">Remove ${q.queued} waiting job(s)</a>`);
   $('minor2').innerHTML = minor.join(' · ');
-  if ($('retry')) $('retry').onclick = async e => { e.preventDefault(); const r = await post('/api/retry_failed'); toast(`${r.queued} failed clip(s) queued again`); load(); };
+  if ($('retry')) $('retry').onclick = async e => { e.preventDefault(); try { const r = await post('/api/retry_failed'); toast(`${r.queued} failed clip(s) queued again`); } catch (err) {} load(); };
   if ($('cancel')) $('cancel').onclick = async e => { e.preventDefault(); if (!(await ask('A job that is already running still finishes.', 'Clear the queue', { title: 'Clear all waiting jobs?' }))) return;
-    const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); load(); };
+    try { const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); } catch (err) {} load(); };
 
-  // ---- step 3: review and finish
-  const ready = cs.filter(c => c.status.group === 'ready');
-  const finishing = c => c.status.job && isFin(c.status.job.stage) && /queued|running/.test(c.status.job.state);
-  const rev = cs.filter(c => c.status.confirmed && !c.status.done && c.status.fit && !finishing(c)), nrev = rev.filter(c => c.package).length;
-  const unnamed = cs.filter(c => !c.package).length, revUnnamed = rev.length - nrev, nfin = cs.filter(finishing).length;
-  $('revdesc').innerHTML = cs.length ? `<b>${ready.length}</b> ${ready.length === 1 ? 'needs' : 'need'} review · <b>${rev.length}</b> reviewed, not finished · ` +
-    (nfin ? `<b>${nfin}</b> finishing · ` : '') + `<b>${cnt.done || 0}</b> finished` : 'Clips appear here once they are prepared.';
+  // ---- step 2: delivered
+  const done = cs.filter(c => c.status.done), working = cs.filter(active).length, unnamed = cs.filter(c => !c.package).length;
+  $('deldesc').innerHTML = cs.length ? `<b>${done.length}</b> done · <b>${working}</b> processing · <b>${failed}</b> failed` +
+    (cnt.old ? ` · <b>${cnt.old}</b> out of date` : '') : 'Finished clips appear here.';
   $('noname').style.display = unnamed ? '' : 'none';
-  $('noname').textContent = revUnnamed ? `${revUnnamed} reviewed clip(s) cannot be finished yet: they have no delivery name. Press Name videos… and type the film's English title.` :
-    unnamed ? `${unnamed} video(s) have no delivery name yet. The client needs one for each zip: press Name videos… and type the film's English title.` : '';
+  $('noname').textContent = unnamed ? `${unnamed} video(s) have no delivery name yet. The client needs one for each zip: press Name videos… and type the film's English title.` : '';
   $('nameall').style.display = unnamed ? '' : 'none';
-  $('nextreview').style.display = ready.length ? '' : 'none';
-  if (ready.length) $('nextreview').href = '/clip/' + ready[0].id;
-  $('renderall').innerHTML = `&#9654; Finish all reviewed${nrev ? ` (${nrev})` : ''}`;
-  $('renderall').disabled = !nrev;
+  const shownDone = done.slice(0, 8);
+  $('dellist').innerHTML = shownDone.map(c => `<div class="small" style="margin-top:4px"><a href="/clip/${c.id}">${esc(c.name.replace(/^[^_]+_/, ''))}</a>` +
+      (c.package ? ` · <a href="${downloadUrl(c)}" title="Downloads as ${esc(c.package)}.zip">Download ${esc(c.package)}.zip</a>` : ' · <span class="warn">no delivery name</span>') + '</div>').join('') +
+    (done.length > shownDone.length ? `<div class="small muted" style="margin-top:4px">…and ${done.length - shownDone.length} more on the Submissions page</div>` : '');
 
   // ---- one highlighted action: the next thing to do
-  const step = !src.exists || !cs.length ? 0 : (todo || q.queued) && q.paused ? 2 : ready.length ? 3 : nrev ? 4 : revUnnamed ? 5 :
-    (nowF.length || waitF) && !nowP.length && !waitP ? 6 : !q.paused ? 2 : 0;     // 6: only Finish is working
+  const step = !src.exists || !cs.length ? 0 : unnamed ? 5 : (todo || q.queued) && q.paused ? 2 : 0;
   $('nameall').className = step === 5 ? 'primary' : '';
-  $('startbtn').className = step === 2 && q.paused ? 'primary' : '';
-  $('nextreview').className = 'btn' + (step === 3 ? ' primary' : '');
-  $('renderall').className = step === 4 ? 'primary' : '';
-  $('st2').classList.toggle('active', step === 2); $('st3').classList.toggle('active', step >= 3);
+  $('startbtn').className = step === 2 ? 'primary' : '';
+  $('st2').classList.toggle('active', step === 2 || (!q.paused && !!(q.running || q.queued))); $('st3').classList.toggle('active', step === 5);
 
   // ---- clip list
   const prog = {}; q.now.forEach(j => prog[j.clip] = j);
@@ -215,8 +198,9 @@ function render() {
     const g = el('div', { class: 'grid' });
     group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, '');
       const {held, queue: qb, remove} = clipActions(c);
+      const step = p && p.step ? ` · ${p.step}` : '';
       g.insertAdjacentHTML('beforeend', `<div class="clipcard${qb ? ' hasq' : ''}${held ? ' held' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
-        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span>${chip(c.status)}</div>
+        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span title="${esc(c.status.label + step)}">${chip(c.status)}</span></div>
         <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
         ${remove}${qb}</div>`); });
@@ -229,14 +213,14 @@ function bindCardButtons(list) {
   list.querySelectorAll('[data-cancel-job]').forEach(b => b.onclick = async () => {
     await processingControl(`/api/clip/${b.dataset.cancelJob}/cancel`,'Cancelling this clip’s active process…'); load(); });
   list.querySelectorAll('[data-hold]').forEach(b => b.onclick = async () => {
-    const r = await post(`/api/clip/${b.dataset.hold}/hold`);
-    toast(r.cancelled ? `${b.dataset.name} is out of the waiting line` : `${b.dataset.name} is taken out: Start leaves it`); load(); });
+    try { const r = await post(`/api/clip/${b.dataset.hold}/hold`);
+      toast(r.cancelled ? `${b.dataset.name} is out of the waiting line` : `${b.dataset.name} is taken out: Start leaves it`); } catch (e) {} load(); });
   list.querySelectorAll('[data-unhold]').forEach(b => b.onclick = async () => {
-    const r = await post(`/api/clip/${b.dataset.unhold}/unhold`);
-    toast(r.queued ? `${b.dataset.name} is back in the waiting line` : `${b.dataset.name} is back: Start prepares it`); load(); });
+    try { const r = await post(`/api/clip/${b.dataset.unhold}/unhold`);
+      toast(r.queued ? `${b.dataset.name} is back in the waiting line` : `${b.dataset.name} is back: Start processes it`); } catch (e) {} load(); });
   list.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
-    if (!(await ask('', 'Remove', { title: 'Remove this video?', name: b.dataset.name, danger: true, points: ['It won’t be prepared or finished. Its waiting jobs are cancelled.', 'The file stays in SOURCE. Nothing is deleted.', 'You can add it back at the bottom of this page.'] }))) return;
-    await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list`); load(); });
+    if (!(await ask('', 'Remove', { title: 'Remove this video?', name: b.dataset.name, danger: true, points: ['It won’t be processed. Its waiting jobs are cancelled.', 'The file stays in SOURCE. Nothing is deleted.', 'You can add it back at the bottom of this page.'] }))) return;
+    try { await post(`/api/clip/${b.dataset.rm}/remove`); toast(`${b.dataset.name} removed from the list`); } catch (e) {} load(); });
 }
 function renderRemoved() {
   // ---- removed from the list: bring any back
@@ -249,7 +233,7 @@ function renderRemoved() {
       <div class="addback"><button data-restore="${i}">&#8634; Add back</button></div></div></div>`; }).join('');
   $('removedlist').querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
     const r = rm[+b.dataset.restore];
-    await post('/api/restore', { path: r.path }); toast(`${r.name.replace(/^[^_]+_/, '')} is back on the list. Press Start to prepare it.`); load(); });
+    try { await post('/api/restore', { path: r.path }); toast(`${r.name.replace(/^[^_]+_/, '')} is back on the list. Press Start to process it.`); } catch (e) {} load(); });
 }
 async function load() { try { DATA = await api('/api/clips'); render(); } catch (e) { toast('Cannot reach Blender Agent: ' + e.message, true); } }
 async function health() {
@@ -261,13 +245,11 @@ async function health() {
 $('search').oninput = render;
 $('startbtn').onclick = async () => {
   if (!DATA.queue.paused || DATA.queue.running) { await processingControl('/api/pause','Stopping active processes and pausing…'); load(); return; }
-  if (DATA.queue.queued) { await processingControl('/api/resume','Resuming interrupted processing…'); load(); return; }
-  const r = await post('/api/start'); toast(r.queued ? `Started · ${r.queued} video(s) queued to prepare` : 'Started'); load(); };
+  const r = await processingControl('/api/start', DATA.queue.queued ? 'Resuming processing…' : 'Starting…');
+  if (r) toast(r.queued ? `Started · ${r.queued} video(s) queued` : 'Started');
+  load(); };
 $('cancel-session').onclick = async () => { await processingControl('/api/cancel_session','Cancelling active processes and queued work…'); load(); };
-$('renderall').onclick = async () => { const r = await post('/api/finish_reviewed');
-  toast(`${r.queued} clip(s) queued to finish` + (r.unchanged ? ` · ${r.unchanged} unchanged since their last Finish, skipped` : '') +
-        (r.no_name ? ` · ${r.no_name} without a delivery name` : '') + (r.busy ? ` · ${r.busy} already working` : ''), !!r.no_name); load(); };
-$('resetall').onclick = async e => { e.preventDefault(); if (await startOver()) load(); };
+$('resetall').onclick = async e => { e.preventDefault(); try { if (await startOver()) load(); } catch (err) { load(); } };
 $('nameall').onclick = async () => {
   try { PICK = await api('/api/folder?path=' + encodeURIComponent(DATA.source.path)); } catch (e) { toast(e.message, true); return; }
   folderDialog();
@@ -291,7 +273,7 @@ function chooseFolder() {
   const close = () => bg.remove();
   bg.querySelector('.m-no').onclick = close; bg.onclick = e => { if (e.target === bg) close(); };
   bg.addEventListener('keydown', e => { if (e.key === 'Escape') close(); if (e.key === 'Enter') bg.querySelector('.m-yes').click(); });
-  if (local) $('cfbrowse').onclick = async () => { const r = await post('/api/pick_folder'); if (r.path) $('cfpath').value = r.path; };
+  if (local) $('cfbrowse').onclick = async () => { try { const r = await post('/api/pick_folder'); if (r.path) $('cfpath').value = r.path; } catch (e) {} };
   bg.querySelector('.m-yes').onclick = async () => {
     const p = $('cfpath').value.trim().replace(/^"|"$/g, '');
     if (!p) { $('cferr').textContent = 'Type the folder\'s full path.'; return; }
@@ -320,16 +302,17 @@ function folderDialog() {
       nw ? `${nw} new delivery name(s), numbered in file-name order.` : 'Every video already has a delivery name.');
     $('ftable').innerHTML = `<table class="list"><thead><tr><th>Video</th><th>Delivery name</th><th></th></tr></thead><tbody>` +
       v.map(x => `<tr><td>${esc(x.file)}</td><td>${x.package ? esc(x.package) + (x.new_name ? ' <span class="small good">new</span>' : '') : '<span class="muted">—</span>'}</td>
-        <td class="small muted">${x.prepared ? 'prepared' : ''}</td></tr>`).join('') + '</tbody></table>' +
+        <td class="small muted">${x.prepared ? 'has a zip' : ''}</td></tr>`).join('') + '</tbody></table>' +
       (PICK.clashes.length ? `<p class="small warn">${PICK.clashes.length} video(s) share a name with a clip of another folder and get a short suffix.</p>` : '');
     bg.querySelector('.m-yes').disabled = PICK.current && (!v.length || !!PICK.unnamed);   // a new folder: delivery names can come later
   };
   $('ftitle').oninput = () => { clearTimeout(PT); PT = setTimeout(async () => {
-    PICK = await api(`/api/folder?path=${encodeURIComponent(PICK.path)}&title=${encodeURIComponent($('ftitle').value)}`); fill(); }, 300); };
+    try { PICK = await api(`/api/folder?path=${encodeURIComponent(PICK.path)}&title=${encodeURIComponent($('ftitle').value)}`); fill(); } catch (e) { toast(e.message, true); } }, 300); };
   bg.querySelector('.m-yes').onclick = async () => {
-    const r = await post('/api/use_folder', { path: PICK.path, title: $('ftitle').value }); close();
+    let r; try { r = await post('/api/use_folder', { path: PICK.path, title: $('ftitle').value }); } catch (e) { return; }
+    close();
     const wasCurrent = PICK.current;
-    toast(wasCurrent ? `${r.named} new delivery name(s) saved` : `${r.clips} video(s)` + (r.named ? ` · ${r.named} new delivery name(s)` : '') + '. Press Start to prepare them.'); FILTER = 'all'; load(); };
+    toast(wasCurrent ? `${r.named} new delivery name(s) saved` : `${r.clips} video(s)` + (r.named ? ` · ${r.named} new delivery name(s)` : '') + '. Press Start to process them.'); FILTER = 'all'; load(); };
   fill(); $('ftitle').focus();
 }
 

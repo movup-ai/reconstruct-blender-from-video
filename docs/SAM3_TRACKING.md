@@ -1,71 +1,51 @@
 # SAM 3 person tracking
 
-The app uses the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs.
-RTMPose measures COCO-17 joints inside each mask. SAM 3D Body supplies metric body shape, pose and placement.
-The same SAM 3 checkpoint supplies point-grid and box-prompted masks for scene objects.
+Stage 1 uses the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs. RTMPose
+measures COCO-17 joints inside each mask. SAM 3D Body then supplies metric body pose and placement.
 
 ## Use it
 
-1. Restart the app after installing this update.
-2. In Settings, check the **SAM 3 checkpoint** location. The default path is
-   `models/sam3/sam3.pt`; the Python executable defaults to `downloads/da3-venv/Scripts/python.exe`.
-3. Prepare/Re-check the desired clip. A checkpoint/settings change regenerates its person tracks.
-4. Review the new person roles and joints, then Finish.
+1. In Settings, check the **SAM 3 checkpoint** location. The default path is `models/sam3/sam3.pt`; the Python
+   executable defaults to `downloads/da3-venv/Scripts/python.exe` (the isolated worker environment).
+2. Start the clip. Tracking runs when the clip has no marks yet, when the checkpoint or a tracking setting changed
+   (`tracking_signature`), or when the masks are missing.
 
-Completed deliveries are not automatically regenerated when settings change. Use Prepare/Re-check first.
-The previous pose, checked joints, person roles and ID-specific hints are preserved under
-`output/.../<clip>/tracking_backups/<timestamp>/`. Person-linked edits are cleared from the active annotations
-and review confirmation is reset, because the new IDs can represent different tracks. Camera and environment
-settings are retained. If inference fails, the previous marks and edits remain active. Crops refresh against
-the current pose file so the review cards show the current identities.
+When a clip is tracked again, the previous marks and any files from earlier builds (old joint corrections, reviews,
+hints, the old joint editor) are kept under `output/.../<clip>/tracking_backups/<timestamp>/`. If inference fails,
+the previous marks stay active.
 
 ## Tracking and memory
 
 - The video is split at hard cuts. One SAM 3 session runs for each complete shot; IDs are never reused between
-  shots. Frames are read lazily with a four-frame CPU cache, without resetting identity at arbitrary chunks.
+  shots. Frames are read lazily with a small CPU cache.
 - The isolated worker uses BF16 autocast, CPU video/state offloading and output-cache eviction. It exits before
-  the ONNX pose model is loaded, releasing its GPU allocations.
+  the ONNX pose model is loaded, releasing its GPU memory.
 - SAM 3's `person` prompt detects and tracks people, including people entering after the first frame. Detection
-  ordering does not change the persistent ID. The app retains the SAM ID alongside its size-ranked display ID.
-- Each pose crop sees only the pixels inside its person's SAM mask. Joints outside that mask are downweighted;
-  unobserved masks do not create fabricated detections. Geometry-based identity stitching, synthetic gap filling and
-  duplicate suppression have been removed. The short/weak pose junk filter does not discard a
-  mask-confirmed partial person. At least four frames are needed for the current 3D fitter.
-- Fitted character visibility follows the observed mask frames. Missing masks are not filled by borrowing
-  another person's pose. Short visible fragments and occluded body joints can still need manual review.
-- Metric scene observation and the SAM 3 background builder reuse tracked person masks to exclude people
-  from static geometry. Background objects use SAM 3's interactive image API with point and box prompts;
-  there is no standalone SAM 2 dependency. See [the current model flow](MODEL_FLOW.md).
+  order does not change the persistent ID; the app keeps the SAM ID beside its size-ranked display ID (P1 = biggest).
+- Each pose crop sees only the pixels inside its person's mask. Joints outside the mask are downweighted; frames
+  without a mask create no detections. At least four frames are needed for the 3D fitter.
+- Fitted character visibility follows the observed mask frames. The metric scene observation reuses the tracked
+  masks to exclude people from the floor and wall evidence.
 
-Additional config options are `sam3_mask_side` (saved-mask maximum dimension, default 640),
-`sam3_max_objects` (default 16), `sam3_probability` (output threshold, default 0.35), `sam3_timeout_min`
-(default 40), and `track_occlusion_seconds` (tracker keep-alive budget, default two seconds, minimum 30 frames).
-The saved-mask dimension does not change SAM 3's internal 1008-pixel model input resolution.
+Further config options: `sam3_mask_side` (saved-mask maximum dimension, default 640), `sam3_max_objects` (16),
+`sam3_probability` (output threshold, 0.35), `sam3_timeout_min` (40) and `track_occlusion_seconds` (tracker
+keep-alive, two seconds, at least 30 frames). The saved-mask size does not change SAM 3's 1008-pixel model input.
 
-The installed RTX 4070 completed an eight-frame test with about 6.2 GiB peak PyTorch allocation and a
-32-frame, six-ID test with about 6.7 GiB. These measurements exclude driver/display overhead. Longer or more
-crowded shots can use more memory and are not promised to run in real time. There is no silent fallback to
-geometry tracking if SAM 3 fails; the job reports the failure and preserves its previous marks.
-Use one concurrent job on a 12 GB GPU to leave memory for the other reconstruction stages.
+An RTX 4070 completed an eight-frame test with about 6.2 GiB peak PyTorch allocation and a 32-frame, six-ID test
+with about 6.7 GiB. Longer or more crowded shots can use more. There is no fallback tracker: a SAM 3 failure fails
+the job and keeps the previous marks. Use one concurrent job on a 12 GB card.
 
 ## Outputs and tests
 
-`pose.json` contains `tracker_backend`, `tracking_signature`, each person's `sam3_id`, and a reference to
-`sam3_masks.npz`. The latter holds packed masks, source frame indices and persistent IDs in cropped-picture
-coordinates. `tracking_report.json` records track counts, shots, worker VRAM allocation and the previous
-tracking backup path when a clip was replaced.
-
-```powershell
-.venv/Scripts/python.exe -m unittest discover -s tests -q
-```
+`pose.json` holds `tracker_backend`, `tracking_signature`, each person's `sam3_id`, and a reference to
+`sam3_masks.npz` (packed masks, source frame indices and persistent IDs in picture-area coordinates).
+`tracking_report.json` records track counts, shots, worker VRAM and the previous tracking backup. No editor files
+(`check.html`, `review\`) are written.
 
 Tests cover mask packing, identity preservation when detection order changes, overlap isolation, confidence
-masking, cropped coordinates, absent frames, cache invalidation, fixed-flow migration, partial-person retention and
-safe annotation backups. GPU smoke artifacts are kept separately under `downloads/sam3-smoke/` and
-`downloads/sam3-pipeline-smoke/`.
+masking, absent frames, cache invalidation, partial-person retention and safe replacement of earlier marks.
 
-For a fresh machine, use the existing Python 3.12 CUDA runtime setup described in the README, clone
-`https://github.com/facebookresearch/sam3` into `third_party/sam3`, and check out tested commit
-`31cb7e624e4fe95301b1be1d4e809111593d2e45`. Install `requirements-sam3.txt` into that runtime with
+For a fresh machine: clone `https://github.com/facebookresearch/sam3` into `third_party/sam3` at tested commit
+`31cb7e624e4fe95301b1be1d4e809111593d2e45`, then
 `uv pip install --python downloads/da3-venv/Scripts/python.exe -r requirements-sam3.txt`. Obtain the checkpoint
-from the approved Meta repository. The complete app also requires the [SAM 3D Body assets](SAM3D_BODY.md). Training code and SAM 3.1 checkpoints are not used.
+from the approved Meta repository. Stage 1 also needs the [SAM 3D Body assets](SAM3D_BODY.md).

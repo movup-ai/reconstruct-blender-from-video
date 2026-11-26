@@ -63,6 +63,55 @@ def height_of(joints):
     return float(np.median(good)) if len(good) else None
 
 
+def triangles(faces):
+    return np.asarray([(face[0], face[i], face[i+1]) for face in faces for i in range(1, len(face)-1)], int).reshape(-1, 3)
+
+
+def _clip_near(poly, near=.01):
+    out = []
+    for a, b in zip(poly, np.roll(poly, -1, axis=0)):
+        if a[2] >= near: out.append(a)
+        if (a[2] >= near) != (b[2] >= near):
+            out.append(a + (b-a) * ((near-a[2]) / (b[2]-a[2])))
+    return np.asarray(out)
+
+
+def rasterize(vertices, faces, K, R, C, shape):
+    """Near-clipped, perspective-correct software z-buffer, OpenCV camera convention."""
+    camera = (np.asarray(vertices, float)-C) @ R.T
+    depth = np.full(shape, np.inf)
+    polygons=camera[triangles(faces)]
+    finite=np.isfinite(polygons).all((1,2));front=(polygons[:,:,2]>=.01).all(1)
+    visible=finite&(polygons[:,:,2].max(1)>=.01)
+    ids=np.flatnonzero(visible&front)
+    if len(ids):
+        uv=polygons[ids]@K.T;uv=uv[:,:,:2]/uv[:,:,2,None]
+        low=uv.min(1);high=uv.max(1)
+        visible[ids]&=(high>=0).all(1)&(low<np.asarray(shape)[::-1]).all(1)
+    for poly in polygons[visible]:
+        if (poly[:,2]<.01).any():poly = _clip_near(poly)
+        for i in range(1, len(poly)-1):
+            xyz = poly[[0, i, i+1]]
+            uv = xyz @ K.T; uv = uv[:, :2] / uv[:, 2:]
+            low = np.maximum(np.floor(uv.min(0)), 0).astype(int)
+            high = np.minimum(np.ceil(uv.max(0)), [shape[1]-1, shape[0]-1]).astype(int)
+            if np.any(high < low): continue
+            x, y = np.meshgrid(np.arange(low[0], high[0]+1)+.5, np.arange(low[1], high[1]+1)+.5)
+            a, b, c = uv
+            den = (b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1])
+            if abs(den) < 1e-9: continue
+            u = ((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/den
+            v = ((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/den
+            w = 1-u-v
+            inside = (u >= -1e-7) & (v >= -1e-7) & (w >= -1e-7)
+            inverse = u/xyz[0, 2] + v/xyz[1, 2] + w/xyz[2, 2]
+            value = np.full_like(inverse, np.inf)
+            np.divide(1, inverse, out=value, where=inside & (inverse > 0))
+            region = depth[low[1]:high[1]+1, low[0]:high[0]+1]
+            np.minimum(region, value, out=region)
+    return depth
+
+
 def surface_depth(vertices, faces, K, shape):
     """Vectorized triangle z-buffer, preserving visible surfaces instead of vertex splats."""
     vertices = np.asarray(vertices,float); faces = np.asarray(faces,int)
@@ -81,7 +130,6 @@ def surface_depth(vertices, faces, K, shape):
         counts = widths*heights
         # Very near geometry can cover the image: bound each allocation.
         if counts.sum()>2_000_000:
-            from scene_verify import rasterize
             clipped = rasterize(vertices,faces[start:start+1024],K,np.eye(3),np.zeros(3),shape)
             np.minimum(result,clipped,out=result); continue
         ids = np.repeat(np.arange(len(counts)),counts)
@@ -181,7 +229,7 @@ def recover(frames, pose, cam, y0, camj, depth_samples, c):
             np.savez_compressed(cache,cache_key=key,**body)
     if selected and not any(k.endswith('_j') for k in body):
         raise RuntimeError('SAM 3D Body produced no valid body estimates for the tracked people')
-    summary = align_depth(body,c.get('da3_meters_per_unit') if camj.get('backend')=='da3' else None)
+    summary = align_depth(body)
     summary['peak_vram_mb'] = float(body.get('peak_vram_mb',0.))
     summary['tracks'] = sum(k.endswith('_j') for k in body)
     path = os.path.join(c['_work'],'sam3d_body%s.npz'%c.get('_shot_tag',''))

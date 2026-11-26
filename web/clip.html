@@ -18,649 +18,116 @@
 </header>
 <main class="page">
   <div id="banner" class="banner"></div>
-  <section class="step" id="notprepared" style="display:none">
-    <h2>Not prepared yet</h2>
-    <p class="hint">Preparing finds the people, joints, lens, camera and set (about 3–5 minutes). Then you can review the clip here.</p>
-    <button class="primary" id="prepone">&#9654; Prepare this clip</button>
-    <p class="small muted" id="oldfiles" style="display:none;margin:12px 0 0">Files from an earlier preparation are still here and would be reused.
-      <a href="#" id="resetnp">Delete them and start fresh</a></p>
+  <section class="step" id="notrun" hidden>
+    <h2>Not processed yet</h2>
+    <p class="hint">One automatic run finds the people, joints, camera and floor, renders the white model and the comparison video, and packs a checked v2.1 zip.</p>
+    <button class="primary" id="runone">&#9654; Run this clip</button>
+  </section>
+  <section class="step" id="s-steps">
+    <h2>Steps</h2>
+    <table class="list" id="steps"><tbody></tbody></table>
   </section>
   <div class="grid2" style="margin-top:14px">
     <div><video id="src" controls preload="metadata"></video><p class="cap" id="srcinfo">The source clip</p></div>
-    <div id="prevbox"><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the models found: <b class="bad">red dots</b> are the detected joints, the coloured skeleton is each 3D person, thin lines are the set.</p></div>
+    <div id="prevbox" hidden><img class="prev" id="prev" alt="What the local models found"><p class="cap">What the models found: the detected joints and each fitted 3D person.</p></div>
   </div>
-  <div id="outbox" style="display:none;margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The finished comparison video: the source on top, the white model below.</p><a id="frame-review" class="btn" target="_blank" rel="noopener" hidden>Review source and 3D frame by frame</a></div>
+  <div id="outbox" hidden style="margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The comparison video: the source and the white model.</p></div>
 
-  <section class="tocheck" id="s-check" style="display:none" aria-labelledby="chk-h">
-    <h2 id="chk-h">Things to check</h2>
-    <ul id="checklist"></ul>
-  </section>
-
-  <section class="step" id="s-people">
-    <h2><span class="num">1</span>Who is who?</h2>
-    <p class="hint">Give each person a role. Mark statues, pictures and false detections <b>Not a person</b>, then press <b>Re-check</b> (about a minute). The same character in two shots gets the same role.</p>
+  <section class="step" id="s-people" hidden>
+    <h2>People</h2>
+    <p class="hint">Found and fitted automatically.</p>
     <div class="people" id="ppl"></div>
   </section>
 
-  <details class="step" id="s-marks">
-    <summary><span class="num">2</span>Fix joints <span id="marksum">(every 8th frame)</span><span id="marksstate" class="mstate"></span></summary>
-    <p class="hint" style="margin-top:8px">Check the flagged frames first: drag wrong dots, then press <b>✓ This frame looks right</b> (<kbd>Enter</kbd>).</p>
-    <iframe id="marks" title="marks editor"></iframe>
-  </details>
-
-
-  <section class="step" id="s-objects">
-    <h2><span class="num">3</span>Objects in the set</h2>
-    <p class="hint">Choose a tool and draw on the background to add an object. Use Select to move or resize an existing selection, and <kbd>Delete</kbd> to remove it. Dashed outlines are what Prepare found. With type <i>other</i> the
-      description decides how it is built. Trees become pine prototypes, bushes become short rounded shrubs, and named furniture uses recognizable models. Use the held-object timeline below for carried objects.
-      Draw a box or outline, name the object, then press <b>Render background only</b>. It saves these object annotations and updates the background preview using the saved people and camera. Finish updates the delivery.</p>
-    <div class="row"><button type="button" id="background-only" class="primary background-render" disabled aria-busy="false"><span class="loading-spinner" aria-hidden="true"></span><span id="background-label">Render background only</span></button><span class="small muted" id="background-state" role="status" aria-live="polite">Prepare the clip first.</span></div>
-    <div id="object-tools" class="seg object-tools" role="group" aria-label="Object drawing tools">
-      <button type="button" data-v="select">Select</button>
-      <button type="button" data-v="pen" title="Trace an outline freehand">Pen</button>
-      <button type="button" data-v="rectangle">Rectangle</button>
-      <button type="button" data-v="ellipse" title="Draw a circle or oval">Circle</button>
-      <button type="button" data-v="polygon" title="Click vertices; double-click or press Enter to finish">Polygon</button>
-    </div>
-    <span class="object-history"><button type="button" id="object-undo" title="Undo object edit (Ctrl+Z)" disabled>Undo</button> <button type="button" id="object-redo" title="Redo object edit (Ctrl+Shift+Z)" disabled>Redo</button></span>
-    <p id="object-tool-hint" class="small muted">Drag to draw. Ctrl+Z undoes the last object edit.</p>
-    <div id="objshots"><div class="empty">Loading…</div></div>
-    <div id="geometry-actions" class="small muted"></div>
-    <details id="background-result" hidden><summary>Background preview</summary><img id="background-preview" class="prev" alt="Updated background placement and fitted objects"></details>
-    <p id="background-alignment" class="small muted"></p>
-    <p id="background-validation" class="small muted"></p>
-    <details id="background-timings" hidden><summary>Background timings</summary><div id="background-timing-rows" class="small"></div><p class="small muted">Loading and inference are separate. Cached work is reused. Nested timings overlap and should not be added together.</p></details>
+  <section class="step" id="s-camera" hidden>
+    <h2>Camera</h2>
+    <div class="shots" id="shots"></div>
+    <div class="small muted" id="caminfo"></div>
+    <div id="camwarn"></div>
   </section>
 
+  <details class="step" id="jobbox" hidden><summary>Technical log <span id="jobstate"></span></summary><pre class="log" id="log"></pre></details>
 
-  <section class="step" id="s-props"><h2><span class="num">4</span>Held-object timeline</h2><div id="prop-timeline"></div></section>
-  <section class="step"><h2>Limb depth timeline</h2><div id="limb-depth"></div></section>
-  <details class="step" id="s-more">
-    <summary>More <span>(camera, set, held objects, description: filled in automatically, change only if wrong)</span></summary>
-  <div class="sub" id="s-camera">
-    <h3>Camera</h3>
-    <div class="shots" id="shots"></div>
-    <div class="row"><span class="seg" id="camtype"><button data-v="static">Still</button><button data-v="pan">Pans / tilts</button><button data-v="moving">Moves (dolly / track)</button><button data-v="handheld">Handheld</button></span>
-      <label>Lens <input type="number" id="lens" step="0.1" min="10" max="200"> mm</label></div>
-    <div class="row"><label style="flex:1">Note <input type="text" id="camnote" style="flex:1" placeholder="e.g. slow push-in, pans left with the man"></label></div>
-    <div id="camwarn"></div>
-  </div>
-
-  <div class="sub" id="s-set">
-    <h3>Set and held objects</h3>
-    <p class="hint">Walls and blocks fitted to the video's depth. Left of each picture: the empty background; right: the set built from it. List objects people hold or touch.</p>
-    <div class="row">
-      <label><input type="checkbox" id="env_depth" checked> Build the set from the video</label>
-      <label>Colours <select id="env_colour"><option value="grey">Client style: light grey (like the samples)</option><option value="video">Video's own colours</option></select></label>
-      <label id="useai_l" style="display:none"><input type="checkbox" id="env_useai" checked> Use DeepSeek's set corrections</label>
-    </div>
-    <div class="muted small" id="envdet"></div>
-    <div id="envai"></div>
-    <div class="blocks" id="blocks"></div>
-    <table id="props" style="margin-top:10px"><thead><tr><th>Object</th><th>Type</th><th>Frames</th><th>Where / who holds it</th><th></th></tr></thead><tbody></tbody></table>
-    <button id="addprop" style="margin-top:6px">+ Add a held object</button>
-  </div>
-  <div class="sub" id="s-notes">
-    <h3>Description</h3>
-    <textarea id="notes" aria-label="Description" placeholder="What happens in the shot (used as the description in meta.json)"></textarea>
-  </div>
-  <div class="sub" id="s-reset">
-    <h3>Start over</h3>
-    <p class="small muted" style="margin:0 0 8px">Deletes everything prepared for this clip (joints, roles, joint fixes, objects, the set, renders and the finished package), so the next Prepare detects the people again from the video. The video and its delivery name stay.</p>
+  <section class="step" id="s-reset">
+    <h2>Start over</h2>
+    <p class="small muted" style="margin:0 0 8px">Deletes everything made for this clip (people, camera, floor, renders and the finished package), so the next run starts again from the video. The video and its delivery name stay.</p>
     <button class="danger" id="resetclip">Start over…</button>
-  </div>
-  </details>
-
-  <details class="step" id="jobbox" style="display:none"><summary>Technical log <span id="jobstate"></span></summary><pre class="log" id="log"></pre></details>
+  </section>
 </main>
 <footer class="actbar"><div class="ft">
-  <button id="save" title="Keep your changes; nothing runs">Save</button>
-  <button id="rerun" title="Save, then fit the clip again with your roles, joint fixes and objects (about a minute) and update the picture">&#8635; Re-check</button>
-  <button id="askai" style="display:none" title="Let DeepSeek check people, camera, set and description">&#10022; Ask DeepSeek</button>
+  <button id="rerun" title="Run Movement again for this clip: people, camera, floor, render and the v2.1 zip">&#8635; Re-run</button>
   <span id="msg"></span>
   <span class="grow"></span>
-  <label class="small muted" style="display:flex;gap:5px;align-items:center"><input type="checkbox" id="gonext" checked> open the next clip after</label>
-  <button id="confirm" title="Save and mark the clip reviewed. It is finished later with “Finish all reviewed” on the Clips page.">&#10003; Mark reviewed</button>
-  <button id="finish" class="primary" title="Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip">&#9654; Finish now</button>
+  <a class="btn primary" id="download" hidden>&#8681; Download zip</a>
   <button id="finishqueue" data-processing-control hidden>Pause processing</button>
   <button id="cancel-processing" class="dangerline" data-processing-control hidden>Cancel processing</button>
 </div></footer>
 <div class="toast" id="toast"></div>
-<div class="kbd-help" id="kbdhelp"><b>Shortcuts</b> <span class="small muted">(press ? to hide)</span><table>
-  <tr><td><kbd>Tab</kbd> / click</td><td>select a person</td></tr><tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Main · Second · Third · Fourth</td></tr>
-  <tr><td><kbd>5</kbd> / <kbd>0</kbd></td><td>Other / Not a person</td></tr><tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
-  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>mark reviewed</td></tr><tr><td><kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></td><td>previous / next clip</td></tr></table></div>
 <script src="/static/common.js"></script>
-<script src="/static/prop_timeline.js"></script>
-<script src="/static/limb_depth.js"></script>
 <script>
 nav('clips');
 const CID = location.pathname.split('/').pop();
-const HEX = { red:'#cd3e3c', blue:'#3a68c9', green:'#46aa5a', yellow:'#e1c83c', purple:'#965abe', pink:'#dc6eaa', orange:'#dd8732', cyan:'#50cdeb', brown:'#825532', white:'#f5f5f5', grey:'#969696' };
-const ROLES = [['main', 'Main', 'red'], ['second', 'Second', 'blue'], ['third', 'Third', 'green'], ['fourth', 'Fourth', 'yellow'], ['extra', 'Other', 'purple'], ['ignore', 'Not a person', null]];
-const EXTRA_COLS = ['purple', 'pink', 'orange', 'cyan', 'brown', 'white'];
-const KINDS = [['orange', 'Touched / held (orange)'], ['pink', 'Interactive, far away (pink)'], ['purple', 'Special target (purple)'], ['brown', 'Foreground (brown)'], ['white', 'Light source (white)'], ['grey', 'Background (grey)']];
-let INFO = null, lastState = null, dirty = false;
+let INFO = null, lastState = null;
 const msg = t => $('msg').textContent = t;
-const depthEditor = new LimbDepthEditor($('limb-depth'), $('src'), () => dirty = true, async () => {
-  try {
-    await sendReview(false); dirty = false;
-    const r = await post(`/api/clip/${CID}/run?stage=depth`);
-    toast(r.queued ? 'Depth correction queued. Cached tracking and bodies are reused.' : 'This clip is already being processed.'); refresh();
-  } catch (e) { toast(e.message || 'Could not apply depth corrections.'); }
-});
-const propEditor = new PropTimelineEditor($('prop-timeline'), $('src'), () => dirty = true);
 
 function quality(px) {                                // how well the 3D person lines up with the video
   if (px == null) return '';
-  const [cls, word] = px < 6 ? ['good', 'good'] : px < 14 ? ['warn', 'fair'] : ['bad', 'poor: check the joints'];
+  const [cls, word] = px < 6 ? ['good', 'good'] : px < 14 ? ['warn', 'fair'] : ['bad', 'poor'];
   return `Match with the video: <span class="${cls}">${word}</span> <span class="faint">(${px} px)</span>`;
 }
-function fillPeople(rv) {
-  const box = $('ppl'); box.innerHTML = '';
-  if (!INFO.people || !INFO.people.length) { box.innerHTML = `<div class="empty">${INFO.status.marks ? 'Nobody was detected in this clip.' : 'Not prepared yet. Press “Prepare this clip” below.'}</div>`; return; }
-  INFO.people.forEach(p => {
-    const r = (rv && rv.people && rv.people[p.id]) || {};
-    const d = el('div', { class: 'person', tabindex: '0' }); d.dataset.id = p.id;
-    d.addEventListener('focus', () => selectCard(d)); d.addEventListener('click', () => selectCard(d)); d.dataset.role = r.role || 'extra'; d.dataset.colour = r.colour || 'purple';
-    const shots = p.shots && p.shots.length && INFO.camera && (INFO.camera.shots || []).length > 1 ? ' · shot ' + p.shots.join(', ') : '';
-    const ai = p.ai ? `<div class="aitag">✦ AI: ${p.ai.is_person === false ? 'not a person' : esc(ROLES.find(x => x[0] === p.ai.role)?.[1] || p.ai.role)}${p.ai.look ? ' · ' + esc(p.ai.look) : ''}</div>` : '';
-    d.innerHTML = `<img src="/media/thumb/${CID}/${p.id}.jpg" alt="Person ${p.id}">
+function fillPeople() {
+  const box = $('ppl'), people = INFO.people || [];
+  const key = JSON.stringify(people) + (INFO.job ? INFO.job.id : '');
+  if (box.dataset.key === key) return;                 // unchanged: keep the pictures as they are
+  box.dataset.key = key;
+  box.innerHTML = people.length ? '' : '<div class="empty">Nobody was detected in this clip.</div>';
+  const many = INFO.camera && (INFO.camera.shots || []).length > 1;
+  people.forEach(p => {
+    const shots = many && p.shots && p.shots.length ? ' · shot ' + p.shots.join(', ') : '';
+    box.insertAdjacentHTML('beforeend', `<div class="person"><img src="/media/thumb/${CID}/${p.id}.jpg?v=${INFO.job ? INFO.job.id : 0}" alt="Person ${p.id}">
       <div class="body"><div class="top"><b>Person ${p.id}</b><span class="meta">frames ${p.first}–${p.last}${shots}</span></div>
-      <div class="meta">${quality(p.fit_px)}</div>${ai}
-      ${p.flags && p.flags.length ? `<ul class="flags">${p.flags.map(f => `<li>${esc(f.charAt(0).toUpperCase() + f.slice(1))}</li>`).join('')}</ul>` : ''}
-      ${p.not_person ? `<div class="suggest"><span><b>Not a person?</b> ${esc(p.not_person.charAt(0).toUpperCase() + p.not_person.slice(1))}</span><button class="np">Mark not a person</button></div>` : ''}
-      <div class="lbl">Role</div>
-      <div class="roles" role="group" aria-label="Role of person ${p.id}">${ROLES.map(([v, l, c]) => `<button data-v="${v}" aria-pressed="false">${c ? `<span class="dot" style="background:${HEX[c]}"></span>` : ''}${l}</button>`).join('')}</div>
-      <div class="fields">
-        <label class="f fh"><span>Height</span><span class="unit"><input type="number" class="h" step="0.01" min="0.5" max="2.3" value="${r.height || INFO.defaults.height}"><i>m</i></span></label>
-        <label class="f fn"><span>Name <em>optional</em></span><input type="text" class="nm" value="${esc(r.name)}" placeholder="e.g. Tom"></label>
-        <label class="f fc extra" style="display:none"><span>Colour</span><select class="col">${EXTRA_COLS.map(c => `<option>${c}</option>`).join('')}</select></label>
-      </div></div>`;
-    const np = d.querySelector('.np');
-    if (np) np.onclick = e => { e.stopPropagation(); d.querySelector('.roles button[data-v="ignore"]').click(); toast('Marked. Press Re-check to fit the clip again without it.'); };
-    const paint = () => { d.querySelectorAll('.roles button').forEach(b => { b.classList.toggle('on', b.dataset.v === d.dataset.role); b.setAttribute('aria-pressed', b.dataset.v === d.dataset.role); });
-      if (d.querySelector('.suggest')) d.querySelector('.suggest').style.display = d.dataset.role === 'ignore' ? 'none' : '';
-      d.classList.toggle('ignored', d.dataset.role === 'ignore'); d.querySelectorAll('.extra').forEach(x => x.style.display = d.dataset.role === 'extra' ? '' : 'none'); };
-    d.querySelectorAll('.roles button').forEach(b => b.onclick = () => { d.dataset.role = b.dataset.v;
-      d.dataset.colour = b.dataset.v === 'extra' ? d.querySelector('.col').value : (ROLES.find(x => x[0] === b.dataset.v)[2] || 'purple'); dirty = true; paint(); });
-    d.querySelector('.col').value = EXTRA_COLS.includes(d.dataset.colour) ? d.dataset.colour : 'purple';
-    d.querySelector('.col').onchange = e => { d.dataset.colour = e.target.value; dirty = true; };
-    d.querySelectorAll('input').forEach(i => i.addEventListener('change', () => dirty = true));
-    box.appendChild(d); paint();
+      <div class="meta">${quality(p.fit_px)}</div></div></div>`);
   });
 }
-function propRow(p = {}) {
-  const tr = $('props').tBodies[0].insertRow();
-  tr.innerHTML = `<td><input type="text" class="pn" value="${esc(p.name)}" placeholder="e.g. shoulder bag"></td>
-    <td><select class="pk">${KINDS.map(([v, l]) => `<option value="${v}" ${v === p.kind ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
-    <td><input type="text" class="pf" value="${esc(p.frames)}" placeholder="all" style="width:80px"></td>
-    <td><input type="text" class="pw" value="${esc(p.note)}" placeholder="e.g. in the man's right hand" style="width:100%"></td>
-    <td><button class="rm" title="Remove">✕</button></td>`;
-  tr.querySelector('.rm').onclick = () => { tr.remove(); dirty = true; };
+function fillCamera() {
+  const cam = INFO.camera || {}, sh = cam.shots || [];
+  $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${esc(s.shot)}: frames ${esc((s.frames || [])[0])}–${esc((s.frames || [])[1])}` +
+    (s.max_rotation_deg != null ? ` · turns ${(+s.max_rotation_deg).toFixed(1)}°` : '') + (s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : '') + '</span>').join('') : '<span>Not measured yet</span>';
+  const lens = (cam.lens && cam.lens.used_mm) || cam.lens_mm;
+  $('caminfo').textContent = [lens ? `Lens ${(+lens).toFixed(1)} mm` : '', cam.max_rotation_deg != null ? `turns up to ${(+cam.max_rotation_deg).toFixed(1)}°` : '',
+    cam.cuts && cam.cuts.length ? `${cam.cuts.length} cut(s)` : ''].filter(Boolean).join(' · ');
+  $('camwarn').innerHTML = [...(cam.warnings || []), ...(INFO.warnings || [])].filter((w, i, a) => a.indexOf(w) === i && !/^quality - /.test(w))
+    .map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
 }
-function fillForm(rv) {
-  fillPeople(rv);
-  propEditor.load(rv, INFO);
-  depthEditor.load(rv, INFO);
-  segSet($('camtype'), rv?.camera?.type || 'static');
-  $('lens').value = rv?.camera?.lens || INFO.defaults.lens; $('camnote').value = rv?.camera?.note || '';
-  const env = rv?.environment || {};
-  $('env_depth').checked = env.depth_set !== false; $('env_colour').value = env.set_colours || 'video'; $('env_useai').checked = env.use_ai !== false;
-  $('props').tBodies[0].innerHTML = ''; (env.props || []).forEach(propRow);
-  $('notes').value = rv?.notes || '';
+function fillSteps() {
+  const steps = (INFO.timing || {}).steps || {}, j = INFO.job, s = INFO.status;
+  const rows = [['movement', 'Stage 1 · Movement', 'people, camera, floor, render and the v2.1 zip'], ['background', 'Stage 2 · Background', 'coming later']];
+  $('steps').tBodies[0].innerHTML = rows.map(([k, name, what]) => {
+    const t = steps[k], mine = j && j.stage === k;
+    let state = k === 'background' && !t ? '<span class="muted">not available yet</span>' : '<span class="muted">–</span>';
+    if (mine && j.state === 'running') state = `<span class="pst run">running${t && t.state === 'running' ? ' ' + fmtDur(t.ran) : ''}</span>` + (j.pct != null ? progressBar(j.pct, j.step) : '');
+    else if (mine && j.state === 'queued') state = `<span class="pst wait">${s.label === 'paused' ? 'paused' : 'waiting'}</span>`;
+    else if (k === 'movement' && s.done) state = t && t.state === 'done' ? `<span class="pst ok">&#10003; done in ${fmtDur(t.ran)}</span>` : '<span class="pst ok">&#10003; done</span>';
+    else if (mine && j.state === 'stopped') state = `<span class="pst muted">cancelled${t && t.state === 'stopped' ? ' after ' + fmtDur(t.ran) : ''}</span>`;
+    else if (t && t.state === 'failed') state = `<span class="pst bad">failed after ${fmtDur(t.ran)}</span>`;
+    else if (k === 'movement' && s.outdated) state = '<span class="pst muted">out of date: Re-run to make it again</span>';
+    return `<tr><td><b>${esc(name)}</b><div class="small muted">${esc(what)}</div></td><td>${state}</td></tr>`; }).join('') +
+    (INFO.timing && Number.isFinite(INFO.timing.machine) ? `<tr><td class="small muted">Computer time since reset</td><td class="small">${fmtDur(INFO.timing.machine)}</td></tr>` : '');
 }
-function collect(confirmed) {
-  const people = {};
-  document.querySelectorAll('.person').forEach(d => people[d.dataset.id] = { role: d.dataset.role, colour: d.dataset.colour,
-    height: +d.querySelector('.h').value, name: d.querySelector('.nm').value.trim() });
-  const props = [...$('props').tBodies[0].rows].map(tr => ({ name: tr.querySelector('.pn').value.trim(), kind: tr.querySelector('.pk').value,
-    frames: tr.querySelector('.pf').value.trim(), note: tr.querySelector('.pw').value.trim() })).filter(p => p.name);
-  return { confirmed, people, ...propEditor.value(), ...depthEditor.value(), camera: { type: segGet($('camtype')) || 'static', lens: +$('lens').value || null, note: $('camnote').value.trim() },
-           environment: { depth_set: $('env_depth').checked, set_colours: $('env_colour').value, use_ai: $('env_useai').checked, props }, notes: $('notes').value };
-}
-function saveMarks() {
-  return new Promise(res => {
-    const f = $('marks'); if (!f || !f.getAttribute('src') || !f.contentWindow) return res(false);
-    const done = e => { if (e.data && e.data.type === 'marks_saved') { window.removeEventListener('message', done); res(e.data); } };
-    window.addEventListener('message', done); setTimeout(() => { window.removeEventListener('message', done); res(false); }, 3000);
-    f.contentWindow.postMessage({ type: 'do_save', all: false }, '*');
-  });
-}
-const sendReview = confirmed => post(`/api/clip/${CID}/review`, collect(confirmed));
-async function saveObjects() {                       // objects are kept with every button; Re-check builds them
-  if (!OBJ || !ODIRTY) return;
-  await post(`/api/clip/${CID}/objects?rebuild=0`, objectsBody()); ODIRTY = false;
-}
-$('background-only').onclick = async () => {
-  backgroundRequestPending = true; backgroundActionState();
-  try {
-    await saveObjects();
-    const r = await post(`/api/clip/${CID}/run?stage=background`);
-    toast(r.queued ? 'Rendering annotated background objects. Saved people and camera are preserved.' : 'A background job is already queued.');
-    await refresh();
-  } catch (e) { toast(e.message, true); }
-  finally { backgroundRequestPending = false; backgroundActionState(); }
-};
-let backgroundRequestPending = false;
-function backgroundActionState() {
-  const job = INFO?.job, busy = ['queued','running'].includes(job?.state);
-  const backgroundBusy = backgroundRequestPending || (busy && job.stage === 'background');
-  const button = $('background-only');
-  button.disabled = backgroundRequestPending || busy || !INFO?.background?.ready;
-  button.setAttribute('aria-busy', String(backgroundBusy));
-  $('background-label').textContent = backgroundRequestPending ? 'Starting background render…' : backgroundBusy ?
-    (job.state === 'queued' ? 'Background render queued…' : 'Rendering background…') : 'Render background only';
-  $('background-state').textContent = backgroundRequestPending ? 'Saving objects and starting the background render…' :
-    !INFO?.background?.ready ? 'Prepare the clip first.' : backgroundBusy ?
-    (job.state === 'queued' ? 'Waiting for a background processing slot.' : 'Updating the background preview. People and camera are preserved.') :
-    busy ? 'Waiting for this clip’s current job.' : INFO.background.report ?
-    `Last background render: ${INFO.background.report.seconds}s. People and camera reused.` : 'Updates drawn objects; keeps the saved movement and camera.';
-}
-async function saveAll(confirmed) { await saveMarks(); await saveObjects(); const r = await sendReview(confirmed); dirty = false; return r; }
-$('save').onclick = async () => {
-  const m = await saveMarks(); await saveObjects(); await sendReview(false); dirty = false;
-  toast('Saved: roles and objects' + (m && m.frames ? `, and joint fixes in ${m.frames} frame(s)` : '') + '.'); };
-let MARKS = { dirty: false, fixed: 0, ok: 0 };
-window.addEventListener('message', e => {
-  if (!e.data || e.data.type !== 'marks_state') return;
-  MARKS = e.data; marksState();
-});
-function marksState() {
-  const st = $('marksstate'); if (!st) return;
-  st.className = 'mstate ' + (MARKS.dirty ? 'unsaved' : MARKS.fixed || MARKS.ok ? 'saved' : '');
-  st.textContent = MARKS.dirty ? 'Unsaved joint fixes' : MARKS.fixed || MARKS.ok ? `${MARKS.fixed} frame(s) fixed, ${MARKS.ok} marked OK` : '';
-  $('save').className = MARKS.dirty ? 'primary' : '';
-  if (MARKS.dirty) msg('Unsaved joint fixes: press Save (or Save joint fixes in the editor).');
-}
-window.addEventListener('beforeunload', e => { if (MARKS.dirty) { e.preventDefault(); e.returnValue = ''; } });
-const doReset = async e => { if (e) e.preventDefault(); if (await startOver(CID, INFO.clip.name)) { MARKS.dirty = false; dirty = false; location.reload(); } };
-$('resetclip').onclick = doReset; $('resetnp').onclick = doReset;
-$('prepone').onclick = async () => { const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Preparing this clip…' : 'This clip is already being prepared'); refresh(); };
-$('rerun').onclick = async () => { await saveMarks(); await saveObjects(); if (INFO.status.marks) await sendReview(false); dirty = false;
-  const r = await post(`/api/clip/${CID}/run?stage=fit`); toast(r.queued ? 'Queued. The picture updates when it’s done.' : 'This clip is already being processed'); refresh(); };
-$('askai').onclick = async () => { const r = await post(`/api/clip/${CID}/run?stage=ai`); toast(r.queued ? 'DeepSeek is looking at this clip…' : 'Already busy'); refresh(); };
-$('confirm').onclick = async () => {
-  const roles = Object.values(collect(true).people).map(p => p.role).filter(r => !['ignore', 'extra'].includes(r));
-  const dup = roles.find((r, i) => roles.indexOf(r) !== i);
-  if (dup && !(await ask(`Two people are both ${ROLES.find(x => x[0] === dup)[1]}. That’s right only if they are the same character, for example before and after a cut.`, 'Continue', { title: 'Same role twice?' }))) return;
-  const r = await saveAll(true);
-  if ($('gonext').checked && r.next_review) { location.href = '/clip/' + r.next_review; return; }
-  const h = r.handoff;
-  toast(r.queued ? 'Reviewed. It is being finished in the background.' : 'Reviewed. Finish it with “Finish all reviewed” on the Clips page.'); refresh(); };
-async function finish(force) {
-  const r = await post(`/api/clip/${CID}/finish${force ? '?force=1' : ''}`);
-  if (r.result === 'unchanged') {
-    if (await ask('Nothing changed since the last Finish, so the package in SUBMIT is up to date.', 'Make it again', { title: 'Make the package again?' })) return finish(true);
-    return; }
-  toast(r.result === 'queued' ? 'Finishing: fit, set, Blender, videos and the v2.1 zip. You can review other clips meanwhile.' : 'This clip is already working'); refresh();
-}
-$('finish').onclick = async () => {
-  if (!INFO.package && !(await nameHere(true))) return;
-  await saveAll(true); await finish(false);
-};
-async function nameHere(thenFinish) {   // v2.1 packages need a name: one English title names every video of SOURCE without one
-  const src = (await api('/api/settings')).source_root;
-  return new Promise(resolve => {
-    const bg = el('div', { class: 'modal-bg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'nmt' });
-    bg.innerHTML = `<div class="modal"><h3 id="nmt" class="m-title">${thenFinish ? 'Delivery name needed' : 'Delivery name'}</h3>
-      <p class="small muted" style="margin:0 0 12px">The client requires a delivery name for each zip. Type the film's English title once: every video in SOURCE without a name gets it with a number, in file-name order. Existing names never change.</p>
-      <label style="display:flex;gap:8px;align-items:center">English title <input type="text" id="nmtitle" style="flex:1" placeholder="e.g. the hidden blade"></label>
-      <p class="small" id="nmhint" style="margin:10px 0 14px;min-height:20px"></p>
-      <div class="actions" style="justify-content:flex-end"><button class="m-no">Cancel</button><button class="primary m-yes" disabled>${thenFinish ? 'Save the name and finish' : 'Save the name'}</button></div></div>`;
-    document.body.appendChild(bg);
-    const close = v => { bg.remove(); resolve(v); };
-    bg.querySelector('.m-no').onclick = () => close(false);
-    bg.addEventListener('keydown', e => { if (e.key === 'Escape') close(false); });
-    let T = null, plan = null;
-    $('nmtitle').oninput = () => { clearTimeout(T); T = setTimeout(async () => {
-      plan = await api(`/api/folder?path=${encodeURIComponent(src)}&title=${encodeURIComponent($('nmtitle').value)}`);
-      const me = plan.videos.find(v => v.clip === INFO.clip.name), others = plan.videos.filter(v => v.new_name && v.clip !== INFO.clip.name).length;
-      $('nmhint').innerHTML = me && me.package ? `This clip: <b>${esc(me.package)}</b>` + (others ? ` · ${others} other video(s) also get a name` : '') : '<span class="muted">Type the English title (letters and numbers).</span>';
-      bg.querySelector('.m-yes').disabled = !(me && me.package); }, 250); };
-    bg.querySelector('.m-yes').onclick = async () => {
-      await post('/api/use_folder', { path: src, title: $('nmtitle').value });
-      INFO.package = (plan.videos.find(v => v.clip === INFO.clip.name) || {}).package; toast('Delivery name saved: ' + INFO.package); close(true); if (!thenFinish) refresh(); };
-    $('nmtitle').focus();
-  });
-}
-$('addprop').onclick = () => { propRow(); dirty = true; };
-segInit($('camtype'), () => dirty = true);
-['env_depth', 'env_colour', 'env_useai', 'lens', 'camnote', 'notes'].forEach(id => $(id).addEventListener('change', () => dirty = true));
-window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
-$('s-marks').addEventListener('toggle', () => { if ($('s-marks').open && !$('marks').getAttribute('src')) $('marks').src = '/check/' + CID; });
-
-function envAi() {
-  const e = INFO.env_ai, regs = INFO.regions || {};
-  $('useai_l').style.display = e ? '' : 'none';
-  if (!e) { $('envai').innerHTML = ''; return; }
-  $('envai').innerHTML = Object.entries(e).map(([tag, sh]) => {
-    const r = regs[tag] || { regions: [], added: [] };
-    const items = Object.entries(sh.labels || {}).map(([id, what]) => {
-      const bad = (sh.drop || []).some(d => d.id === id);
-      return `<li><b>${esc(id)}</b> <span class="${bad ? 'tagno' : 'tagok'}">${esc(what)}</span>${bad ? ' <span class="small bad">removed</span>' : ''}</li>`; }).join('');
-    const add = (r.added || []).map(a => `<li class="tagadd">+ ${esc(a.what)} <span class="small muted">${a.size_m.join(' × ')} m at ${a.distance_m} m</span></li>`).join('')
-             || (sh.objects || []).map(o => `<li class="tagadd">+ ${esc(o.what)} <span class="small muted">(added on the next build)</span></li>`).join('');
-    return `<div class="small" style="margin-top:8px"><b>DeepSeek · shot ${esc(tag.replace(/^_/, ''))}</b> <span class="muted">${esc(sh.scene)}</span><ul class="envlist">${items}${add}</ul></div>`;
-  }).join('');
-}
-// ---------------------------------------------------------------- object editor
-// Each background picture lists two kinds of objects: the ones Prepare found by itself (dashed boxes) and yours (solid).
-// Changing a found one makes it yours; deleting one remembers it, so the next set leaves it out.
-let OBJ = null, OSEL = null, ODIRTY = false;
-const FACINGS = [['camera', 'the camera'], ['left', 'left'], ['right', 'right'], ['away', 'away']];
-// the colour card's set meanings (docs/COLOUR_CARD.md); the character colours are for people, not here
-const CARD_KINDS = [['bg', 'Background · grey', '#B8B8B8'], ['fg', 'Foreground · brown', '#9A6B3B'], ['near', 'Near interactive · orange', '#DF872F'],
-  ['far_i', 'Far interactive · pink', '#D4689E'], ['lamp', 'Light source · white', '#F5F5F5'], ['special', 'Special · purple', '#7A4EC2']];
-const roleOf = o => o.role || (o.colour_role === 'orange' ? 'near' : '');
-const OCOL = ['#ff9f43', '#54a0ff', '#5f27cd', '#1dd1a1', '#ff6b6b', '#feca57', '#48dbfb', '#c8d6e5'];
-const FOUNDCOL = '#e8eef2';
-function boxIou(a, b) {
-  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])), iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
-  const u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix * iy; return u > 0 ? ix * iy / u : 0;
-}
-function mergeFound(sh) {                           // yours + the found ones that are not deleted, changed or covered by yours
-  const keep = sh.objects.filter(o => !o.found || o.edited);
-  const gone = fo => sh.dropped.some(d => d.frame === fo.frame && boxIou(d.bbox, fo.bbox) > 0.5);
-  const taken = fo => keep.some(o => o.found && o.frame === fo.frame && boxIou(o.orig, fo.bbox) > 0.9);
-  const covered = fo => fo.here && keep.some(o => !o.found && boxIou(o.bbox, fo.bbox) > 0.3);
-  sh.objects = keep.concat(sh.found.filter(fo => !gone(fo) && !taken(fo) && !covered(fo)).map(fo => ({
-    what: fo.what, type: fo.type, bbox: fo.bbox.slice(), attach: null, facing: 'camera', found: true, orig: fo.bbox.slice(), frame: fo.frame, nobox: !fo.here })));
-}
-async function loadObjects() {
-  try { OBJ = await api(`/api/clip/${CID}/objects`); } catch (e) { $('objshots').innerHTML = '<div class="empty">Could not load the objects.</div>'; return; }
-  OBJ.shots.forEach(sh => { sh.found = sh.found || []; sh.dropped = sh.dropped || []; mergeFound(sh); });
-  ODIRTY = false; OSEL = null; objectUndo.length = 0; objectRedo.length = 0; objectDraft = null; renderObjects();
-}
-const objectUndo = [], objectRedo = [];
-const OBJECT_SELECTION = '#2563eb';
-let objectDraft = null;
-function objectSnapshot() {
-  return structuredClone({shots: OBJ.shots.map(sh => ({objects:sh.objects, dropped:sh.dropped})), selection:OSEL});
-}
-function rememberObjects(snapshot = objectSnapshot()) {
-  objectUndo.push(snapshot); if (objectUndo.length > 50) objectUndo.shift(); objectRedo.length = 0;
-  objectHistoryState();
-}
-function objectHistoryState() {
-  $('object-undo').disabled = !objectUndo.length && !objectDraft?.points.length;
-  $('object-redo').disabled = !objectRedo.length || !!objectDraft;
-}
-function restoreObjects(from, to) {
-  if (!from.length || !OBJ) return;
-  to.push(objectSnapshot()); const snapshot = from.pop();
-  OBJ.shots.forEach((sh, i) => Object.assign(sh, snapshot.shots[i]));
-  OSEL = snapshot.selection; objectDraft = null; ODIRTY = true; renderObjects();
-}
-$('object-undo').onclick = () => {
-  if (objectDraft) { objectDraft.points.pop(); if (!objectDraft.points.length) objectDraft = null; paintObjectSelection(); }
-  else restoreObjects(objectUndo, objectRedo);
-  objectHistoryState();
-};
-$('object-redo').onclick = () => restoreObjects(objectRedo, objectUndo);
-function paintObjectSelection() {
-  document.querySelectorAll('.objrow').forEach(row => row.classList.toggle('osel', !!OSEL && +row.dataset.shot === OSEL[0] && +row.dataset.object === OSEL[1]));
-  document.querySelectorAll('.objwrap canvas').forEach(cv => cv.dispatchEvent(new Event('objectselectionchange')));
-  objectHistoryState();
-}
-function addDrawnObject(si, points, rectangle = false) {
-  const sh = OBJ.shots[si], outline = points.map(p => p.map((v,i) => Math.max(0,Math.min(sh.size[i],v))));
-  const xs = outline.map(p => p[0]), ys = outline.map(p => p[1]);
-  const bbox = [Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];
-  const area = Math.abs(outline.reduce((sum,p,i) => { const q = outline[(i+1)%outline.length]; return sum+p[0]*q[1]-q[0]*p[1]; },0))/2;
-  if (outline.length < 3 || bbox[2]-bbox[0] < 4 || bbox[3]-bbox[1] < 4 || area < 8) return false;
-  rememberObjects(); sh.objects.unshift({what:'', type:'other', bbox, outline:rectangle ? undefined : outline, attach:null, facing:'camera'});
-  OSEL = [si,0]; ODIRTY = true; objectDraft = null; renderObjects();
-  document.querySelectorAll('.objwrap canvas')[si]?.focus({preventScroll:true}); return true;
-}
-function finishObjectPolygon() {
-  if (!objectDraft) return;
-  if (!addDrawnObject(objectDraft.si, objectDraft.points)) toast('Add at least three corners to make a polygon.');
-}
-let objectTool = 'rectangle';
-const objectTools = $('object-tools');
-segSet(objectTools, objectTool);
-objectTools.onclick = e => {
-  const button = e.target.closest('button[data-v]');
-  if (button) {
-    objectDraft = null; objectTool = button.dataset.v; segSet(objectTools, objectTool); paintObjectSelection();
-    $('object-tool-hint').textContent = objectTool === 'polygon' ? 'Click corners. Double-click, click the first corner, or press Enter to finish. Escape cancels; Ctrl+Z removes the last corner.' :
-      objectTool === 'select' ? 'Click an object to select it. Drag it or its corner handles to move or resize. Ctrl+Z undoes an edit.' :
-      'Drag to draw. Ctrl+Z undoes the last object edit.';
-  }
-};
-function objectOutline(d, scale) {
-  if (!d.cur) return [];
-  const [ax, ay] = d.a, [bx, by] = d.cur;
-  if (d.tool === 'pen') return d.points;
-  if (d.tool === 'ellipse') return Array.from({length:48}, (_, i) => {
-    const t = i * Math.PI / 24;
-    return [(ax + bx + (bx - ax) * Math.cos(t)) / 2, (ay + by + (by - ay) * Math.sin(t)) / 2];
-  });
-  return [[ax,ay],[bx,ay],[bx,by],[ax,by]];
-}
-function objectsBody() {                            // what Save sends: your objects, and the found ones deleted or changed
-  const body = { shots: {} };
-  OBJ.shots.forEach(sh => body.shots[sh.tag] = {
-    objects: sh.objects.filter(o => !o.found || o.edited).map(({ what, type, bbox, outline, attach, facing, size, role, colour_role, level }) =>
-      ({ what, type, bbox, outline, attach, facing, size, role: role || (colour_role === 'orange' ? 'near' : null), level: level || null })),
-    dropped: sh.dropped.concat(sh.objects.filter(o => o.found && o.edited).map(o => ({ frame: o.frame, bbox: o.orig, why: 'changed' }))) });
-  return body;
-}
-function touch(o) { if (o.found) o.edited = true; ODIRTY = true; }
-function removeObject(si, oi) {
-  rememberObjects();
-  const sh = OBJ.shots[si], o = sh.objects[oi];
-  if (o.found) sh.dropped.push({ frame: o.frame, bbox: o.orig, why: 'deleted' });
-  sh.objects.splice(oi, 1); OSEL = null; ODIRTY = true; renderObjects();
-}
-function typeOpts(sel) {
-  const ks = Object.keys(OBJ.types).sort(); if (sel && !ks.includes(sel)) ks.unshift(sel);
-  return ks.map(t => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t.replace(/_/g, ' ')}</option>`).join('');
-}
-// every change redraws the objects section: keep where each shot's list (and the page) was scrolled
-function renderObjects() {
-  const box = $('objshots');
-  const keepScroll = [...box.querySelectorAll('.objgrid')].map(g => g.scrollTop), keepY = window.scrollY;
-  drawObjects();
-  objectHistoryState();
-  box.querySelectorAll('.objgrid').forEach((g, i) => { if (!keepScroll[i]) return;
-    g.scrollTop = keepScroll[i];
-    const img = g.querySelector('img');                   // (a picture not loaded yet makes the block shorter: again once it is)
-    if (img && !img.complete) img.addEventListener('load', () => { g.scrollTop = keepScroll[i]; }, { once: true }); });
-  if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY);
-}
-function drawObjects() {
-  const box = $('objshots');
-  if (!OBJ.shots.length) { box.innerHTML = '<div class="empty">The background pictures appear once the clip is prepared.</div>'; return; }
-  box.innerHTML = '';
-  OBJ.shots.forEach((sh, si) => {
-    const nf = sh.objects.filter(o => o.found && !o.edited).length, nm_ = sh.objects.length - nf, ndel = sh.dropped.filter(d => d.why !== 'changed').length;
-    const wrap = el('div', { class: 'objshot' });
-    wrap.innerHTML = `<div class="small muted objhead">${OBJ.shots.length > 1 ? `<b>Shot ${sh.shot} · frame ${sh.frame}</b> · ` : ''}${nf} found by Prepare · ${nm_} yours${sh.scene ? ' · ' + esc(sh.scene) : ''}
-        ${ndel ? ` · <a href="#" class="objback" title="The found objects you deleted come back">bring back ${ndel} deleted</a>` : ''}</div>
-      <div class="objgrid"><div class="objwrap"><img src="${sh.plate}?v=${Date.now() >> 15}" alt="background of the shot"><canvas></canvas></div>
-      <div><div class="objlist"></div>
-      ${sh.objects.length ? '' : '<div class="objempty">Choose a tool and draw on the background to add an object.</div>'}</div></div>`;
-    box.appendChild(wrap);
-    const back = wrap.querySelector('.objback');
-    if (back) back.onclick = e => { e.preventDefault(); rememberObjects(); sh.dropped = sh.dropped.filter(d => d.why === 'changed'); mergeFound(sh); OSEL = null; ODIRTY = true; renderObjects(); };
-    const img = wrap.querySelector('img'), cv = wrap.querySelector('canvas');
-    const tb = wrap.querySelector('.objlist');
-    const col = (o, oi) => o.found && !o.edited ? FOUNDCOL : OCOL[oi % OCOL.length];
-    sh.objects.forEach((o, oi) => {                 // one object = two lines: name and remove, then type / placed on / facing
-      const tr = el('div', { class: 'objrow' + (o.found && !o.edited ? ' found' : '') }); tb.appendChild(tr); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
-      if (sel) tr.classList.add('osel'); tr.dataset.shot = si; tr.dataset.object = oi;
-      const id = `o${si}_${oi}`, lock = o.nobox ? 'disabled' : '';
-      tr.innerHTML = `<div class="objtop"><span class="sw" style="background:${col(o, oi)}"></span>
-          <input type="text" value="${esc(o.what)}" maxlength="200" placeholder="Describe it, e.g. white pillar, potted plant, bag in his left hand" title="With type “other”, the description decides how it is built: a thing it names (door, pillar, table, car…) becomes that model; a plant, curtain, statue or anything else is built from its measured shape; “held / in his hand / backpack” puts it on the person’s hand or back." aria-label="Object description" ${lock}>
-          ${o.found && !o.edited ? `<span class="objtag" title="${o.nobox ? `Found in frame ${o.frame}, which has no picture here: you can only delete it` : 'Prepare found this one. Change it and it becomes yours.'}">${o.nobox ? 'found, frame ' + o.frame : 'found'}</span>` : ''}
-          <button class="objrm" title="Delete this object: the set leaves it out" aria-label="Delete this object">&#10005;</button></div>
-        <div class="objprops">
-          <label>Type<select id="${id}t" ${lock}>${typeOpts(o.type)}</select></label>
-          <label title="Its colour-card meaning, which sets its colour in the video. Auto: decided from what it is and where it is against the people (walls grey, lamps white, a door near a person orange...)."><span class="kindlab">Kind${roleOf(o) ? `<i class="kdot" style="background:${CARD_KINDS.find(k => k[0] === roleOf(o))[2]}"></i>` : ''}</span><select id="${id}k" ${lock}><option value="">auto</option>${CARD_KINDS.map(([v, l]) => `<option value="${v}" ${v === roleOf(o) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label title="Which way its front points. Used for library models (door, car, cabinet...); a shape built from the measured surface ignores it.">Facing<select id="${id}f" ${lock}>${FACINGS.map(([v, l]) => `<option value="${v}" ${v === (o.facing || 'camera') ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label title="How far from the camera, compared with the other objects you numbered in this shot: a bigger number is farther away. The biggest number in the shot (2 or more) is the back of the set: it is placed behind every person, so nobody walks through it. Auto: where the depth measures it.">Distance<select id="${id}d" ${lock}><option value="">auto</option>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(v => `<option value="${v}" ${v === o.level ? 'selected' : ''}>${v}${v === 1 ? ' · near' : v === 9 ? ' · far' : ''}</option>`).join('')}</select></label>
-          <label>Size in metres (width, height, depth)<input class="object-size" value="${o.size?.join(', ') || ''}" placeholder="auto" ${lock}></label>
-        </div>`;
-      const [nm] = tr.querySelectorAll('input'); const [ty, kd, fa, dl] = tr.querySelectorAll('select');
-      kd.onchange = () => { rememberObjects(); o.role = kd.value || null; delete o.colour_role; touch(o); renderObjects(); };
-      dl.onchange = () => { rememberObjects(); o.level = dl.value ? +dl.value : null; touch(o); renderObjects(); };
-      let nameBefore;
-      nm.onfocus = () => { nameBefore = objectSnapshot(); };
-      nm.oninput = () => { o.what = nm.value; touch(o); };
-      nm.onchange = () => { if (nameBefore) rememberObjects(nameBefore); renderObjects(); };
-      ty.onchange = () => { rememberObjects(); o.type = ty.value; if (!o.what) o.what = ty.value.replace('_', ' '); touch(o); renderObjects(); };
-      fa.onchange = () => { rememberObjects(); o.facing = fa.value; touch(o); renderObjects(); };
-      tr.querySelector('.object-size').onchange = e => {
-        const text = e.target.value.trim(), values = text.split(/[,\s]+/).map(Number);
-        if (text && (values.length !== 3 || values.some(v => !Number.isFinite(v) || v <= 0 || v > 100))) {
-          toast('Enter width, height and depth in metres.'); e.target.value = o.size?.join(', ') || ''; return;
-        }
-        rememberObjects(); o.size = text ? values : null; touch(o);
-      };
-      tr.querySelector('button').onclick = () => removeObject(si, oi);
-      tr.onpointerdown = () => { OSEL = [si, oi]; paintObjectSelection(); };
-    });
-    let drag = null;
-    const scale = () => img.clientWidth / sh.size[0];
-    const boxed = () => sh.objects.map((o, oi) => [o, oi]).filter(([o]) => !o.nobox);
-    function draw() {
-      cv.width = img.clientWidth * devicePixelRatio; cv.height = img.clientHeight * devicePixelRatio;
-      const g = cv.getContext('2d'); const k = scale() * devicePixelRatio, d = devicePixelRatio; g.clearRect(0, 0, cv.width, cv.height);
-      const stroke = points => {
-        g.beginPath();
-        points.forEach(([x,y], i) => i ? g.lineTo(x*k,y*k) : g.moveTo(x*k,y*k));
-        g.closePath();
-        g.stroke();
-      };
-      g.font = `${12 * d}px system-ui`; g.textBaseline = 'bottom';
-      boxed().forEach(([o, oi]) => { const [x0, y0, x1, y1] = o.bbox.map(v => v * k); const sel = OSEL && OSEL[0] === si && OSEL[1] === oi;
-        const c = sel ? OBJECT_SELECTION : col(o, oi), dashed = o.found && !o.edited && !sel;
-        const outline = o.outline || [[o.bbox[0],o.bbox[1]],[o.bbox[2],o.bbox[1]],[o.bbox[2],o.bbox[3]],[o.bbox[0],o.bbox[3]]];
-        g.setLineDash(dashed ? [6 * d, 4 * d] : []); g.strokeStyle = 'rgba(0,0,0,.55)'; g.lineWidth = (sel ? 5 : 3) * d; stroke(outline);
-        g.strokeStyle = c; g.lineWidth = (sel ? 3 : 1.6) * d; stroke(outline); g.setLineDash([]);
-        const label = (o.what || o.type).slice(0, 22); const tw = g.measureText(label).width + 8 * d;
-        g.fillStyle = c; g.fillRect(x0, Math.max(0, y0 - 16 * d), tw, 16 * d);
-        g.fillStyle = sel ? '#fff' : '#111'; g.fillText(label, x0 + 4 * d, Math.max(16 * d, y0) - 2 * d);
-        if (sel) { g.fillStyle = OBJECT_SELECTION; g.strokeStyle = '#fff'; g.lineWidth = 1.2 * d;
-          [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].forEach(([hx, hy]) => { g.fillRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); g.strokeRect(hx - 4 * d, hy - 4 * d, 8 * d, 8 * d); }); } });
-      if (drag?.kind === 'new' && drag.cur) { g.setLineDash([]); g.strokeStyle = OBJECT_SELECTION; g.lineWidth = 2 * d;
-        stroke(objectOutline(drag, scale())); g.setLineDash([]); }
-      if (objectDraft?.si === si) {
-        const points = objectDraft.points; g.strokeStyle = OBJECT_SELECTION; g.lineWidth = 2 * d; g.fillStyle = OBJECT_SELECTION;
-        g.beginPath(); points.concat(objectDraft.hover ? [objectDraft.hover] : []).forEach(([x,y],i) => i ? g.lineTo(x*k,y*k) : g.moveTo(x*k,y*k)); g.stroke();
-        points.forEach(([x,y]) => { g.beginPath(); g.arc(x*k,y*k,4*d,0,Math.PI*2); g.fill(); });
-      }
-    }
-    const pos = e => { const r = cv.getBoundingClientRect(); const s = scale(); return [(e.clientX - r.left) / s, (e.clientY - r.top) / s]; };
-    const inside = (b, p) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
-    cv.tabIndex = 0; cv.setAttribute('aria-label', 'Draw or select background objects');
-    cv.addEventListener('pointerdown', e => { if (e.button !== 0 || drag) return;
-      cv.focus({preventScroll:true});
-      if (objectTool === 'polygon') {
-        const p = pos(e).map((v,i) => Math.max(0,Math.min(sh.size[i],v)));
-        if (!objectDraft || objectDraft.si !== si) objectDraft = {si,points:[]};
-        const points = objectDraft.points;
-        if (points.length >= 3 && Math.hypot(p[0]-points[0][0],p[1]-points[0][1])*scale() < 8) { finishObjectPolygon(); return; }
-        if (points.length < 256 && (!points.length || Math.hypot(p[0]-points.at(-1)[0],p[1]-points.at(-1)[1])*scale() > 3)) points.push(p);
-        objectDraft.hover = p; paintObjectSelection(); e.preventDefault(); return;
-      }
-      cv.setPointerCapture(e.pointerId);
-      const p = pos(e), tol = 9 / scale();
-      const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null;
-      if (so && !so.nobox && ['select','rectangle'].includes(objectTool)) {
-        const b = so.bbox, c = [[0, 1], [2, 1], [0, 3], [2, 3]].find(([ix, iy]) => Math.abs(p[0] - b[ix]) < tol && Math.abs(p[1] - b[iy]) < tol);
-        if (c) { drag = { kind: 'size', o: so, c, b0: b.slice(), before:objectSnapshot() }; return; }
-        if (inside(b, p)) { drag = { kind: 'move', o: so, a: p, b0: b.slice(), before:objectSnapshot() }; return; }
-      }
-      const hit = boxed().filter(([o]) => inside(o.bbox, p))
-        .sort((a, b) => (a[0].bbox[2] - a[0].bbox[0]) * (a[0].bbox[3] - a[0].bbox[1]) - (b[0].bbox[2] - b[0].bbox[0]) * (b[0].bbox[3] - b[0].bbox[1]))[0];
-      drag = { kind: 'new', a: p, hit, tool: objectTool, points: [p] }; });
-    cv.addEventListener('pointermove', e => {
-      const p = pos(e), W = sh.size[0], H = sh.size[1];
-      if (objectDraft?.si === si && objectTool === 'polygon') { objectDraft.hover = p; draw(); return; }
-      if (!drag) {                                   // the cursor says what a drag will do
-        if (!['select','rectangle'].includes(objectTool)) { cv.style.cursor = 'crosshair'; return; }
-        const so = OSEL && OSEL[0] === si ? sh.objects[OSEL[1]] : null, tol = 9 / scale();
-        const corner = so && !so.nobox && [[0, 1], [2, 1], [0, 3], [2, 3]].find(([ix, iy]) => Math.abs(p[0] - so.bbox[ix]) < tol && Math.abs(p[1] - so.bbox[iy]) < tol);
-        cv.style.cursor = corner ? ((corner[0] === 0) === (corner[1] === 1) ? 'nwse-resize' : 'nesw-resize') : so && !so.nobox && inside(so.bbox, p) ? 'move' : 'crosshair';
-        return;
-      }
-      if (drag.kind === 'new') {
-        if (drag.tool === 'select') return;
-        drag.cur = p;
-        if (drag.tool === 'pen' && drag.points.length < 1024 &&
-            Math.hypot(...p.map((v,i) => v - drag.points.at(-1)[i])) * scale() >= 2) drag.points.push(p);
-        draw(); return;
-      }
-      const b = drag.o.bbox;
-      if (drag.kind === 'move') {
-        const dx = Math.max(-drag.b0[0], Math.min(W - drag.b0[2], p[0] - drag.a[0])), dy = Math.max(-drag.b0[1], Math.min(H - drag.b0[3], p[1] - drag.a[1]));
-        b[0] = drag.b0[0] + dx; b[2] = drag.b0[2] + dx; b[1] = drag.b0[1] + dy; b[3] = drag.b0[3] + dy;
-      } else {
-        const [ix, iy] = drag.c; b[ix] = Math.max(0, Math.min(W, p[0])); b[iy] = Math.max(0, Math.min(H, p[1]));
-      }
-      drag.moved = drag.o.bbox.some((v,i) => Math.abs(v-drag.b0[i]) > .1); draw(); });
-    cv.addEventListener('dblclick', e => { if (objectTool === 'polygon') { e.preventDefault(); finishObjectPolygon(); } });
-    cv.addEventListener('pointercancel', () => {
-      if (drag?.o) drag.o.bbox.splice(0, 4, ...drag.b0);
-      drag = null; draw();
-    });
-    cv.addEventListener('pointerup', () => { if (!drag) return; const d = drag; drag = null;
-      if (d.kind !== 'new') {
-        const b = d.o.bbox; const n = [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
-        if (n[2] - n[0] < 4 || n[3] - n[1] < 4) { b.splice(0, 4, ...d.b0); draw(); return; }      // too small: as it was
-        b.splice(0, 4, ...n.map(v => Math.round(v * 10) / 10));
-        if (d.moved && d.o.outline) d.o.outline = d.o.outline.map(point => point.map((v,i) =>
-          b[i] + (v - d.b0[i]) * (b[i+2] - b[i]) / (d.b0[i+2] - d.b0[i])));
-        if (d.moved) { rememberObjects(d.before); touch(d.o); renderObjects(); } return;
-      }
-      const outline = objectOutline(d, scale()).map(p => p.map((v,i) => Math.max(0, Math.min(sh.size[i], v))));
-      if (addDrawnObject(si, outline, d.tool === 'rectangle')) return;
-      if (d.hit) OSEL = [si,d.hit[1]]; else OSEL = null;
-      paintObjectSelection(); });
-    img.onload = draw; if (img.complete) draw();
-    cv.addEventListener('objectselectionchange', draw);
-  });
-}
-document.addEventListener('keydown', e => {
-  if (!OBJ || e.defaultPrevented || e.target.closest('input,textarea,[contenteditable="true"]')) return;
-  const undo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z', redo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y';
-  if (undo || redo) { e.preventDefault(); (redo || e.shiftKey ? $('object-redo') : $('object-undo')).click(); return; }
-  if (objectDraft) {
-    if (e.key === 'Enter') { e.preventDefault(); finishObjectPolygon(); }
-    else if (e.key === 'Escape') { e.preventDefault(); objectDraft = null; paintObjectSelection(); }
-    else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); $('object-undo').click(); }
-    return;
-  }
-  if (!OSEL || e.target.tagName === 'SELECT') return;
-  if (e.key === 'Delete' || e.key === 'Backspace') { removeObject(OSEL[0], OSEL[1]); e.preventDefault(); }
-  else if (e.key === 'Escape') { OSEL = null; renderObjects(); }
-});
-document.addEventListener('pointerdown', e => {
-  if (e.target.closest('.objwrap,.objrow,#object-tools,.object-history')) return;
-  if (OSEL || objectDraft) { OSEL = null; objectDraft = null; paintObjectSelection(); }
-});
-window.addEventListener('resize', paintObjectSelection);
-window.addEventListener('beforeunload', e => { if (ODIRTY) { e.preventDefault(); e.returnValue = ''; } });
-
 function banner() {
   const b = $('banner'), j = INFO.job, s = INFO.status;
   if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
-    b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${STAGE[j.stage]}). The queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>. You can review meanwhile.` :
-      `Waiting for a free slot (${STAGE[j.stage]})… You can review meanwhile.`) : esc({ fit: 'The local models are working on this clip.', depth: 'Applying limb depth corrections using the saved scene.', background: 'Rendering annotated background objects using saved people and camera.', ai: 'DeepSeek is checking the people and the set.', all: 'Rendering and packaging. You can review other clips meanwhile.' }[j.stage]) +
+    b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${esc(STAGE[j.stage] || j.stage)}). Your queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>.` :
+      `Waiting for a free slot (${esc(STAGE[j.stage] || j.stage)})…`) : 'Working on this clip: people, camera, floor, render and the v2.1 zip.' +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
+  else if (s.done) { b.className = 'banner done'; b.innerHTML = `Done. The zip is at <b>${esc(INFO.outputs.zip_path)}</b>` + (INFO.outputs.comparison ? '; the comparison video is below.' : '.'); }
   else if (j && j.state === 'stopped') { b.className = 'banner note';
-    b.textContent = 'Processing cancelled. Completed files and caches are kept. Re-check or Finish starts a new job.'; }
+    b.textContent = 'Processing cancelled. Completed files and caches are kept. Re-run starts a new job.'; }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
-    b.innerHTML = `<b>The last job (${STAGE[j.stage]}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
-  else if (!INFO.package && s.fit) { b.className = 'banner note';
-    b.innerHTML = '<span>No delivery name yet. The client needs one for the zip; it is made from the film’s English title, for example <b>the_hidden_blade-1</b>. Finish asks for it if you skip this.</span><button id="namenow">Name it now</button>';
-    $('namenow').onclick = () => nameHere(false); }
-  else if (s.done) { b.className = 'banner done'; b.innerHTML = `Finished: the comparison video is below, and the zip is at <b>${esc(INFO.outputs.zip_path)}</b>.`; }
-  else if (s.changed) { b.className = 'banner info'; b.textContent = 'Changed since the last Finish. Press Finish (or Finish all reviewed on the Clips page) to make the package again.'; }
-  else if (s.auto) { b.className = 'banner info'; b.textContent = 'Confirmed automatically by autopilot. You can change anything and press Finish again.'; }
+    b.innerHTML = `<b>The last run (${esc(STAGE[j.stage] || j.stage)}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
+  else if (!INFO.package) { b.className = 'banner note';
+    b.innerHTML = '<span>No delivery name yet. The client needs one for each zip: on the Clips page press <b>Name videos…</b> and type the film’s English title, for example <b>the hidden blade</b>.</span>'; }
+  else if (s.outdated) { b.className = 'banner info'; b.textContent = 'The zip is out of date: the video, its delivery name or the settings changed since it was made. Re-run makes it again.'; }
   else b.className = 'banner';
   if ($('unqueue')) $('unqueue').onclick = async e => { e.preventDefault(); await processingControl(`/api/clip/${CID}/cancel`,'Cancelling this clip…'); refresh(); };
 }
@@ -671,7 +138,7 @@ async function load(first) {
   const resume = INFO.paused && INFO.job?.state === 'queued';
   finishQueue.textContent = resume ? 'Resume processing' : 'Pause processing';
   finishQueue.disabled = processingBusy;
-  finishQueue.title = resume ? 'Restart the interrupted stage using completed caches' : 'Stop active processes and keep completed caches';
+  finishQueue.title = resume ? 'Restart the interrupted run using completed caches' : 'Stop active processes and keep completed caches';
   finishQueue.onclick = async () => {
     await processingControl(resume ? '/api/resume' : '/api/pause','Updating active processing…');
     refresh();
@@ -681,130 +148,63 @@ async function load(first) {
   $('cancel-processing').onclick = async () => {
     await processingControl(`/api/clip/${CID}/cancel`,'Cancelling this clip’s active process…');refresh();
   };
-  $('geometry-actions').textContent = (INFO.geometry_protection || []).slice(-12).map(a => `${a.object}: ${a.action || a.reason}`).join(' · ');
+  // ---- end of the processing controls
   document.title = INFO.clip.name + ' · Blender Agent';
   $('title').textContent = INFO.clip.name.replace(/^[^_]+_/, ''); $('title').title = INFO.clip.name; $('film').textContent = INFO.clip.film;
   $('state').innerHTML = chip(INFO.status); $('pos').textContent = `${INFO.index + 1} of ${INFO.count}`;
   [['prevc', INFO.prev], ['nextc', INFO.next]].forEach(([id, to]) => { const a = $(id);   // an end of the list greys out, it does not leave a hole
     if (to) { a.href = '/clip/' + to; a.removeAttribute('aria-disabled'); a.classList.remove('off'); } else { a.removeAttribute('href'); a.setAttribute('aria-disabled', 'true'); a.classList.add('off'); } });
-  if (first) {
-    $('src').src = '/media/video/' + CID + '.mp4';
-    $('srcinfo').textContent = INFO.frames ? `The source clip · ${INFO.size[0]}×${INFO.size[1]} · ${INFO.fps} fps · ${INFO.frames} frames` : 'The source clip';
-    fillForm(INFO.review || INFO.suggested);
-    if (!INFO.review && INFO.suggested) msg(INFO.suggested.source === 'ai' ? 'Roles filled in by DeepSeek: check them.' : 'Roles filled in with first guesses: check them.');
-    if (INFO.flagged) $('s-marks').open = true;
-    loadObjects();
-  }
-  depthEditor.report(INFO);
-  const sh = (INFO.camera && INFO.camera.shots) || [];
-  $('shots').innerHTML = sh.length ? sh.map(s => `<span>Shot ${s.shot}: frames ${s.frames[0]}–${s.frames[1]} · turns ${(+s.max_rotation_deg).toFixed(1)}°${s.parallax_px > 2 ? ' · <b class="warn">moves</b>' : ''}</span>`).join('') : '<span>Not measured yet</span>';
-  checks();
-  $('camwarn').innerHTML = (INFO.warnings || []).filter(w => !/^quality - /.test(w)).map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
-  $('envdet').textContent = INFO.set ? 'Built: ' + Object.entries(INFO.set).map(([k, n]) => `${n} ${k}${n > 1 ? 's' : ''}`).join(', ') + (sh.length > 1 ? ` across ${sh.length} shots` : '') : 'Not built yet.';
-  $('blocks').innerHTML = (INFO.blocks || []).map(b => `<img src="/media/blocks/${CID}/${b}?v=${INFO.job ? INFO.job.id : 0}" alt="set">`).join('');
-  $('prev').src = INFO.status.fit ? `/media/preview/${CID}.jpg?v=${INFO.job ? INFO.job.id : 0}` : '';
-  $('prevbox').style.visibility = INFO.status.fit ? 'visible' : 'hidden';
+  if (first) $('src').src = '/media/video/' + CID + '.mp4';
+  $('srcinfo').textContent = INFO.frames ? `The source clip · ${INFO.size[0]}×${INFO.size[1]} · ${INFO.fps} fps · ${INFO.frames} frames` : 'The source clip';
+  const busy = !!(INFO.job && /queued|running/.test(INFO.job.state));
+  const fit = !!INFO.status.fit;
+  if (fit) { const u = `/media/preview/${CID}.jpg?v=${INFO.job ? INFO.job.id : 0}`; if ($('prev').getAttribute('src') !== u) $('prev').src = u; }
+  $('prevbox').hidden = !fit;
+  $('outbox').hidden = !INFO.outputs.comparison;
   if (INFO.outputs.comparison) {
-    $('outbox').style.display = '';
     const videoUrl = `/media/comparison/${CID}.mp4?v=${INFO.outputs.comparison_version || 0}`;
     if ($('cmp').getAttribute('src') !== videoUrl) $('cmp').src = videoUrl;
-    $('outcap').textContent = 'The finished comparison video: the source on top, the white model below.' +
-      (INFO.status.changed ? ' An earlier render is playing. Press Finish to include the latest saved edits.' : '');
+    $('outcap').textContent = 'The comparison video: the source and the white model.' + (INFO.status.outdated ? ' It is out of date: Re-run makes it again.' : '');
   }
-  $('frame-review').hidden = !INFO.outputs.frame_review;
-  $('frame-review').href = `/media/review/${CID}/index.html`;
-  if (INFO.job) { $('jobbox').style.display = INFO.job.state === 'failed' ? '' : 'none';   // the raw log only matters when a job failed $('jobstate').textContent = `· ${STAGE[INFO.job.stage]} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
+  $('s-people').hidden = !INFO.people; if (INFO.people) fillPeople();
+  $('s-camera').hidden = !INFO.camera; if (INFO.camera) fillCamera();
+  fillSteps();
+  $('jobbox').hidden = !INFO.job;
+  if (INFO.job) {
+    $('jobbox').open = $('jobbox').open || INFO.job.state === 'failed';
+    $('jobstate').textContent = `· ${STAGE[INFO.job.stage] || INFO.job.stage} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
-  const busy = INFO.job && /queued|running/.test(INFO.job.state), running = INFO.job && INFO.job.state === 'running';
-  $('rerun').disabled = busy; $('confirm').disabled = running || !INFO.status.fit; $('finish').disabled = busy || !INFO.status.fit;
-  backgroundActionState();
-  $('background-result').hidden = !INFO.background?.preview;
-  const alignment = INFO.background?.alignment;
-  const failed = (alignment?.objects || []).filter(o => !o.passed);
-  $('background-alignment').textContent = alignment?.checked ? `${alignment.objects.length} objects checked against source masks. ${failed.length ? `${failed.length} need review: ${failed.map(o => o.object).join(', ')}.` : 'All passed size, center and silhouette checks.'}` : '';
-  const validation = INFO.background?.validation;
-  $('background-validation').textContent = validation?.mode ? `${validation.mode === 'audit' ? 'Audit: detailed scene checks' : 'Normal: sampled scene checks and bounded repair'}. ${validation.cache_hit ? 'Reused unchanged validation results.' : `${validation.checked_depth_frames?.length || 0} depth views checked.`}` : '';
-  const timingLabels = {model_loading:'Model loading',sam_model_loading:'SAM model loading',sam_inference:'SAM inference',sam_worker_overhead:'SAM worker startup and transfer',semantic_classification:'Semantic classification',object_classification:'Object classification',vegetation_classification:'Vegetation classification',vegetation_instance_separation:'Separating shrub instances',vegetation_recovery:'Automatic shrub recovery',prototype_observation_matching:'Matching and segmenting additional views',prototype_fitting:'Joint prototype fitting',silhouette_verification:'Projected silhouette verification',scene_verification:'Scene verification and repair',scene_checks:'Geometry, depth and contact checks',occlusion_protection:'Protecting visible people',occlusion_clipping:'Occlusion fragment refinement',support_scale_search:'Checking support scale',verification_preview:'Verification preview',inference_slot_wait:'Waiting for model inference slot',geometry_inference:'Depth inference'};
-  const timingRows = Object.entries(INFO.background?.timings || {}).flatMap(([worker, p]) => p ? [
-    `<p><b>${esc(worker)}: ${(+p.total_seconds || 0).toFixed(2)}s</b></p>`,
-    ...Object.entries(p.stages || {}).map(([key, value]) => `<div>${esc(timingLabels[key] || key)}: ${(+value.seconds).toFixed(2)}s (${value.calls} calls)</div>`),
-    ...Object.entries(p.counters || {}).map(([key, value]) => `<div>${esc(key.replaceAll('_', ' '))}: ${+value}</div>`)
-  ] : []);
-  $('background-timings').hidden = !timingRows.length;
-  $('background-timing-rows').innerHTML = timingRows.join('');
-  if (INFO.background?.preview && $('background-preview').dataset.version !== String(INFO.background.preview)) {
-    $('background-preview').dataset.version = String(INFO.background.preview);
-    $('background-preview').src = `/media/background/${CID}.jpg?v=${INFO.background.preview}`;
-  }
-  $('finish').title = !INFO.package ? 'Asks for the film\'s English title first (the zip needs a delivery name), then finishes' :
-    busy ? 'Wait until the current job is done' : 'Save, mark reviewed and make the final package now: fit, set, Blender, videos and the v2.1 zip';
+  $('notrun').hidden = busy || !!INFO.job || INFO.status.zip || fit;
+  $('rerun').disabled = busy;
+  $('rerun').title = busy ? 'Wait until the current job is done' : 'Run Movement again for this clip: people, camera, floor, render and the v2.1 zip';
+  const dl = INFO.outputs.download;
+  $('download').hidden = !dl || !INFO.status.done;
+  if (dl) { $('download').href = dl; $('download').title = `Downloads as ${INFO.package}.zip`; }
   $('pkgname').innerHTML = INFO.package ? `<span class="pkname" title="The client requires this name for the zip: the film's English title and this video's number">Delivery name <b>${esc(INFO.package)}</b></span>` : '<span class="pkname none">No delivery name yet</span>';
-  if (INFO.flagged) $('marksum').textContent = `(${INFO.flagged} flagged frame(s) to check first)`; $('askai').disabled = busy || !INFO.status.marks || !INFO.ai_ready;
-  $('askai').style.display = INFO.ai_ready ? '' : 'none';
-  const prepared = !!INFO.status.fit;                 // not prepared: one empty state instead of empty sections
-  ['s-people', 's-marks', 's-objects', 's-more', 'prevbox'].forEach(id => $(id).style.display = prepared ? '' : 'none');
-  $('notprepared').style.display = prepared || busy ? 'none' : '';
-  $('oldfiles').style.display = !prepared && !busy && INFO.status.marks ? '' : 'none';     // joints from an earlier run would be reused
-  document.querySelector('footer.actbar').style.display = prepared ? '' : 'none';
-  envAi();
 
   const state = INFO.job ? INFO.job.state + INFO.job.id : '';
-  if (lastState && /queued|running/.test(lastState) && INFO.job && !/queued|running/.test(INFO.job.state)) {
-    toast(INFO.job.state === 'done' ? 'Finished' : 'Failed: ' + (INFO.job.error || ''), INFO.job.state !== 'done');
-    if (!['all','background'].includes(INFO.job.stage) && !dirty) { fillForm(INFO.review || INFO.suggested); }
-    if (INFO.job.stage !== 'all' && !ODIRTY) loadObjects();
-    if (INFO.job.stage === 'background' && INFO.job.state === 'done') $('background-result').open = true;
-  }
+  if (lastState && /queued|running/.test(lastState) && INFO.job && !/queued|running/.test(INFO.job.state))
+    toast(INFO.job.state === 'done' ? 'Done' : INFO.job.state === 'stopped' ? 'Cancelled' : 'Failed: ' + (INFO.job.error || ''), INFO.job.state === 'failed');
   lastState = state;
   return busy;
 }
-// the quality warnings of the last run, in plain words, with the step that fixes them
-function plain(w) {
-  const r = [[/^jerky \((\d+) sudden movements per 100 frames\)/, 'moves jerkily ($1 jumps per 100 frames)'],
-             [/^feet not seen in most frames.*/, 'feet hidden in most frames, so size and distance are guessed'],
-             [/^joints (\d+)% of the body off the detected ones/, 'joints $1% off the detected ones'],
-             [/^pose never changes.*/, 'never moves: a statue or a picture?'],
-             [/^camera ZOOMS \(focal x([\d.]+).*/, 'the camera zooms slightly (×$1), so size and distance may drift']];
-  for (const [a, b] of r) if (a.test(w)) return w.replace(a, b);
-  return w.charAt(0).toLowerCase() + w.slice(1);
+async function runClip() {
+  let r; try { r = await post(`/api/clip/${CID}/run?stage=movement`); } catch (e) { return; }
+  toast(r.queued ? 'Queued: the picture and videos update when it is done.' : 'This clip is already being processed'); refresh();
 }
-const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
-function checks() {
-  const rows = [];
-  (INFO.people || []).filter(p => p.flags && p.flags.length).forEach(p => {
-    const still = p.flags.some(f => /^pose never changes/.test(f));
-    rows.push({ who: 'P' + p.id, text: p.flags.map(plain).join(' · '), go: still ? 's-people' : 's-marks', label: still ? 'Who is who' : 'Fix joints' }); });
-  (INFO.warnings || []).filter(w => !/^quality - /.test(w)).forEach(w =>
-    rows.push({ who: 'Camera', text: plain(w), go: 's-more', label: 'Camera settings' }));
-  ((INFO.scene_verification || {}).issues || []).slice(0, 8).forEach(i =>
-    rows.push({ who: 'Scene · f' + i.frame, text: i.detail, go: 's-objects', label: 'Objects in the set' }));
-  $('s-check').style.display = rows.length && INFO.status.fit ? '' : 'none';
-  $('checklist').innerHTML = rows.map(r => `<li><b>${esc(r.who)}</b><span>${esc(cap(r.text))}</span><a href="#${r.go}" data-go="${r.go}">${esc(r.label)}</a></li>`).join('');
-  $('checklist').querySelectorAll('[data-go]').forEach(a => a.onclick = e => { e.preventDefault();
-    const t = $(a.dataset.go); if (t.tagName === 'DETAILS') t.open = true; t.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setTimeout(() => { const y = t.getBoundingClientRect().top; if (Math.abs(y - 170) > 40) t.scrollIntoView({ block: 'start' }); }, 900); });   // pictures still loading above can move it
-}
-let SEL = null;
-function selectCard(d) { document.querySelectorAll('.person').forEach(x => x.classList.toggle('sel', x === d)); SEL = d; }
+$('runone').onclick = runClip;
+$('rerun').onclick = async () => {
+  if (INFO && INFO.status.done && !(await ask('Its zip is up to date. The run makes the people, camera, floor, videos and zip again.', 'Re-run', { title: 'Run this clip again?' }))) return;
+  runClip();
+};
+$('resetclip').onclick = async e => { e.preventDefault(); try { if (await startOver(CID, INFO.clip.name)) location.reload(); } catch (err) {} };
 document.addEventListener('keydown', e => {
-  const tag = (e.target.tagName || '').toLowerCase();
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); $('save').click(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!$('confirm').disabled) $('confirm').click(); return; }
   if (e.altKey && e.key === 'ArrowLeft' && INFO && INFO.prev) { location.href = '/clip/' + INFO.prev; return; }
   if (e.altKey && e.key === 'ArrowRight' && INFO && INFO.next) { location.href = '/clip/' + INFO.next; return; }
-  if (['input', 'textarea', 'select'].includes(tag)) return;
-  if (e.key === '?') { $('kbdhelp').classList.toggle('show'); return; }
-  const map = { '1': 'main', '2': 'second', '3': 'third', '4': 'fourth', '5': 'extra', '0': 'ignore' };
-  if (map[e.key]) {
-    const d = SEL || document.querySelector('.person'); if (!d) return; selectCard(d);
-    const b = d.querySelector(`.roles button[data-v="${map[e.key]}"]`); if (b) b.click();
-    const cards = [...document.querySelectorAll('.person')]; const nx = cards[cards.indexOf(d) + 1];
-    if (nx) { nx.focus(); selectCard(nx); }
-  }
 });
 let timer = null;
-async function refresh() { clearTimeout(timer); let busy = false; try { busy = await load(false); } catch (e) { msg('Connection lost, retrying…'); } timer = setTimeout(refresh, busy ? 3000 : 12000); }
+async function refresh() { clearTimeout(timer); let busy = false; try { busy = await load(false); msg(''); } catch (e) { msg('Connection lost, retrying…'); } timer = setTimeout(refresh, busy ? 3000 : 12000); }
 load(true).then(() => timer = setTimeout(refresh, 3000)).catch(e => { document.querySelector('main').innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
 </script>
 </body>

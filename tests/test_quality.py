@@ -36,10 +36,9 @@ class TestJunk(unittest.TestCase):
         fs, K = track(16, 15)
         self.assertIsNone(quality.junk_reason(quality.track_stats(fs, K, 30.0)))
 
-    def test_reviewed_role_is_never_dropped(self):
+    def test_persistent_track_is_kept_and_junk_is_reported(self):
         fs, K = track(16, 5)
-        c = {"_review": {"people": {"7": {"role": "main"}}}}
-        self.assertIn(7, quality.drop_junk({7: (fs, K)}, c, 30.0))
+        self.assertIn(7, quality.drop_junk({7: (fs, K)}, {"_persistent_tracks": True}, 30.0))   # SAM 3 tracks
         c = {}
         self.assertEqual(quality.drop_junk({7: (fs, K)}, c, 30.0), {})
         self.assertEqual(c["_junk"][0]["track"], 7)

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring);
-package_lzhd() the LZHD V1.0 trial layout (render_lzhd.py).
+"""Rendered frames -> a submission package.  package() follows the v2.1 rules (2026-11-12, see its docstring).
 
 Video: H.264 High, yuv420p, Rec.709 (tagged), 24 fps, ~30 Mbit/s constant; audio AAC stereo 48 kHz 320 kbit/s.
 Encoder: h264_nvenc (GPU) when it works and the frame fits NVENC (<= 4096 per side: the white model), else libx264
@@ -15,17 +14,22 @@ import threading
 import zipfile
 
 from common import ffmpeg_exe
-from validation import review_enabled
 
 
-def clear_optional_review(rec, config):
-    """Do not ship a stale audit page after a normal rebuild."""
-    from pathlib import Path
-    if review_enabled(config):return
-    root=Path(rec).resolve();target=root/'review'
-    if target.is_symlink():target.unlink();return
-    if not target.resolve().is_relative_to(root):raise ValueError('Review path escapes reconstruction folder')
-    if target.is_dir():shutil.rmtree(target)
+RECONSTRUCTION_FILES = ("scene.json", "reconstruct.py", "README.md")
+
+
+def clear_reconstruction(rec):
+    """Only the reconstruction files ship: anything else in model_3d/reconstruction (an earlier build's
+    l3_geometry.json or audit review/ folder) is removed.  A link is unlinked, never followed."""
+    for fn in os.listdir(rec):
+        if fn in RECONSTRUCTION_FILES:
+            continue
+        p = os.path.join(rec, fn)
+        if os.path.islink(p) or not os.path.isdir(p):
+            os.remove(p)
+        else:
+            shutil.rmtree(p)
 
 SUBDIRS = ("comparison", "meta", "model_3d", "target", "white_model")
 META_KEYS = ["source_video_id", "source_video_name", "source_video_desc", "source_video_duration", "source_video_resolution",
@@ -353,7 +357,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
       model_3d/<package>.blend       master project (+ reconstruction/scene.json, reconstruct.py, README.md)
       meta/meta.json                 id, paths, blender version, frames, fps, duration (+ meta/README.md)
     The white model and the comparison carry the source's own audio stream, copied (identical in all three).
-    Staged in <submit_root>/<clip>/, zipped to <submit_root>/<clip>.zip; deliver.py names it <package>.zip."""
+    Staged in <submit_root>/<clip>/, zipped to <submit_root>/<clip>.zip (the app downloads it as <package>.zip)."""
     pkg = package_name(name, c)
     if not pkg or not PKG_RE.match(pkg):
         raise RuntimeError("no v2.1 package name for %s in data/package_names.json (got %r)" % (name, pkg))
@@ -409,6 +413,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
     rec = os.path.join(md, "reconstruction")
     if not os.path.exists(os.path.join(rec, "scene.json")):
         raise RuntimeError("missing model_3d/reconstruction/scene.json")
+    clear_reconstruction(rec)
     for fn in ("reconstruct.py", "README.md"):
         shutil.copyfile(os.path.join(ROOT, "assets", "reconstruction", fn), os.path.join(rec, fn))
     pw = probe(ff, wm)
@@ -427,15 +432,7 @@ def package(name, video, render_dir, submit_root, ci, c, desc=""):
                                         "original and the white model (24 fps film frames, same duration, no speed change)" % len(drops))
                                        if drops else "none",
                              "audio": "source audio stream copied unchanged into white_model and comparison" if pt_audio(ff, video) else "source has no audio"},
-            "checks": {"structure": "check_package.py", "reconstruction": "unverified", "visual_review": "unverified"}}
-    geometry_report=os.path.join(os.path.dirname(render_dir),'l3_geometry.json')
-    if os.path.isfile(geometry_report):
-        shutil.copyfile(geometry_report,os.path.join(rec,'l3_geometry.json'))
-        meta['checks']['rigid_geometry']='see model_3d/reconstruction/l3_geometry.json'
-    clear_optional_review(rec,c)
-    if review_enabled(c):
-        from frame_review import build as build_frame_review
-        meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
+            "checks": {"structure": "v2.1 package check (agent/validate.py) after packing", "reconstruction": "unverified", "visual_review": "unverified"}}
     with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=2)
     with open(os.path.join(sub, "meta", "README.md"), "w", encoding="utf-8") as fh:
@@ -482,12 +479,12 @@ def meta_readme(pkg, meta, desc, drops, W, H, CW, CH):
         "- Dependencies: no extra dependencies, plugins, external textures or linked files. All meshes and materials are included.",
         "",
         "## Project contents", "",
-        "- `Set_Background` collection: gray and white scene primitives (floor, walls and props). In multi-shot clips, hide_render keys limit each set to its shot's frame range.",
-        "- Characters: the supplied `human_master.blend` rig and 10 mesh parts, uniformly scaled once per person. Head and chest marker faces use white `WM_marker` material. "
-        "Role colors: main red, second blue, third green, fourth yellow, and cyan for additional people.",
+        "- `Set_Background` collection: the floor only - a flat grey (#B8B8B8) ground disc under the people. There is no background set and there are no props. In multi-shot clips, hide_render keys limit each shot's floor to its shot's frame range.",
+        "- Characters: the client's sample character mesh (rigid blocks: torso, sphere head, upper and lower arms and legs), uniformly scaled once per person to the fitted height. The eye band on the head and the band on the chest are white. "
+        "Role colors (colour card): main red #D63E3D, second blue #2D6BD8, third green #2E9D5A, fourth yellow #D9A014; additional people cyan, magenta, teal, olive.",
         "- Character controls: `P<n>_root` (position and heading keys) → `P<n>_pelvis` (height keys) → joint empties (XYZ Euler rotation keys every frame). "
         "Mesh parts follow their corresponding joints; edit joint rotations to adjust motion.",
-        "- Camera: `Camera`, with position and rotation keys every frame following the source camera. Focal length and sensor width are in scene.json `camera`.",
+        "- Camera: `Camera`, with position and rotation keys every frame following the source camera. When the source zooms, the camera's focal length is keyed every frame too. Focal length and sensor width are in scene.json `camera`.",
         "- Timeline: frames 1–%d at %d fps, matching the source frame for frame." % (meta["project_frames"]["frame_end"], meta["project_frames"]["fps"]),
         "",
         "## Videos", "",
@@ -496,11 +493,12 @@ def meta_readme(pkg, meta, desc, drops, W, H, CW, CH):
         "- `white_model/blendervid.mp4`: %dx%d, %d fps, %d frames. The source framing is scaled proportionally to fill the 1080P canvas and center-cropped without black borders." % (CW, CH, ov["fps"], ov["frames"]),
         ("- `comparison/comparison.mp4`: %dx%d, source above and white model below, synchronized. Both fill %dx%d with the same framing as the white-model video, stacked at full size without black borders." % (CW, 2 * CH, CW, CH)
          if CW >= CH else "- `comparison/comparison.mp4`: %dx%d, source left and white model right, synchronized. Both fill %dx%d with the same framing as the white-model video, placed side by side at full size without black borders." % (2 * CW, CH, CW, CH)),
-        "- Frame rate: %s" % ov["retime"],
+        "- Frame rate: %s" % (ov["retime"] if ov["retime"] != "none" else
+                              "%d fps, the source's frames one for one (none dropped or added)" % ov["fps"]),
         "- Audio: %s." % ov["audio"],
         "",
         "## Verification status", "",
-        "- Structure: checked by check_package.py; see the delivery log.",
+        "- Structure: checked automatically after packing (v2.1 package check: folders, files, meta, video sizes, codec, durations, audio, target, .blend, zip).",
         "- Reconstruction: unverified for this package. The entry point has been tested on similar packages, but reconstruct.py has not been run separately for each package.",
         "- Visual review: unverified.",
         "" if not desc else "\n## Shot notes\n\n" + desc + "\n"])
@@ -529,142 +527,3 @@ def zip_v21(src_dir, pkg, zp):
         raise RuntimeError("package incomplete, missing " + ", ".join(miss))
     os.replace(tmp, zp)
 
-
-
-# ---------------------------------------------------------------------------------------------- LZHD V1.0 (2026-11-15)
-def source_video_info(ff, path):
-    """width, height, fps (rational string), video bitrate (bit/s), frames, duration, audio? of a video"""
-    fp = os.path.join(os.path.dirname(ff), "ffprobe.exe")
-    exe = fp if os.path.exists(fp) else (shutil.which("ffprobe") or "ffprobe")
-    p = subprocess.run([exe, "-v", "error", "-show_streams", "-show_format", "-of", "json", path], capture_output=True,
-                       text=True, encoding="utf-8", errors="ignore")
-    d = json.loads(p.stdout)
-    v = next(s for s in d["streams"] if s["codec_type"] == "video")
-    a = [s for s in d["streams"] if s["codec_type"] == "audio"]
-    num, den = (int(x) for x in v["r_frame_rate"].split("/"))
-    br = int(v.get("bit_rate") or 0) or int(float(d["format"].get("bit_rate", 0)) * 0.95)
-    return {"width": int(v["width"]), "height": int(v["height"]), "fps_rational": "%d/%d" % (num, den), "fps": num / float(den),
-            "video_bitrate": br, "frames": int(v.get("nb_frames") or 0), "duration": float(d["format"]["duration"]),
-            "codec": v.get("codec_name"), "has_audio": bool(a), "audio_codec": a[0]["codec_name"] if a else None}
-
-
-def lzhd_flags(si):
-    """qualification flags of the spec (section 7): recorded, never 'fixed' by resampling"""
-    f = []
-    if min(si["width"], si["height"]) < 1080:
-        f.append("Source below 1080P (%dx%d)" % (si["width"], si["height"]))
-    if si["fps"] < 24 - 1e-3:
-        f.append("Source below 24 fps (%.3f)" % si["fps"])
-    if si["duration"] < 5.0:
-        f.append("Source shorter than 5 seconds (%.3fs)" % si["duration"])
-    if si["video_bitrate"] < 18000000:
-        f.append("Source video bitrate below 18 Mbps (%.2f Mbps)" % (si["video_bitrate"] / 1e6))
-    return f
-
-
-def package_lzhd(name, pkg, video, render_dir, submit_root, ci, c, desc="", notes=None):
-    """LZHD White-model Video Reconstruction and Acceptance Standard V1.0 (2026-11-15):
-      white_model/blendervid.mp4   same width, height, frame rate and video bit rate as the source; the source's audio
-      comparison/comparison.mp4    original on top, white model below: W x 2H, same fps, audio copied
-      target/original.mp4          the source clip, byte for byte
-      model_3d/<pkg>.blend         editable project (official human_master rig, Eevee, active camera, timeline 1..N)
-      model_3d/reconstruction/     scene.json (+ reconstruct.py, README.md)
-      meta/meta.json + README.md   specs, qualification flags, honest check record (unverified where not done)
-    No resampling, padding, cropping or speed change: frame N of the source = frame N of the white model."""
-    ff = ffmpeg_exe()
-    si = source_video_info(ff, video)
-    sub = os.path.join(submit_root, name)
-    if os.path.isdir(sub):
-        for d in ("comparison", "meta", "target", "white_model"):
-            shutil.rmtree(os.path.join(sub, d), ignore_errors=True)
-    for d in SUBDIRS:
-        os.makedirs(os.path.join(sub, d), exist_ok=True)
-    shutil.copyfile(video, os.path.join(sub, "target", "original.mp4"))
-    W, H, y0, Hp, N = si["width"], si["height"], ci["y0"], ci["Hpic"], ci["frames"]
-    fr = si["fps_rational"]; D = N / si["fps"]
-    frames = os.path.join(render_dir, "wm_%04d.jpg")
-    if not os.path.exists(frames % 1):
-        frames = os.path.join(render_dir, "wm_%04d.png")
-    inp = ["-framerate", fr, "-start_number", "1", "-i", frames, "-i", video]
-    tail = "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1"
-    # the render is the picture area at exactly W x Hp; where the source has black bars the white model has them too
-    WMF = "[0:v]scale=%d:%d:flags=lanczos,pad=%d:%d:0:%d:black" % (W, Hp, W, H, y0)
-    br = si["video_bitrate"]
-    cw = dict(c, video_bitrate="%dk" % int(round(br / 1000.0)), out_fps=int(round(si["fps"])))
-    cc = dict(c, video_bitrate="%dk" % int(round(2 * br / 1000.0)), out_fps=int(round(si["fps"])))
-    wm = os.path.join(sub, "white_model", "blendervid.mp4")
-    cmp_ = os.path.join(sub, "comparison", "comparison.mp4")
-    encode(ff, cw, W, H, inp, WMF + "," + tail + "[v]", video, D, wm)
-    encode(ff, cc, W, 2 * H, inp, WMF + "[b];[1:v]setpts=PTS-STARTPTS[a];[a][b]vstack=inputs=2," + tail + "[v]", video, D, cmp_)
-    md = os.path.join(sub, "model_3d")
-    blend = os.path.join(md, pkg + ".blend")
-    if not os.path.exists(blend):
-        raise RuntimeError("missing %s (render again)" % blend)
-    for fn in os.listdir(md):
-        if fn not in (pkg + ".blend", "reconstruction"):
-            p = os.path.join(md, fn)
-            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
-    rec = os.path.join(md, "reconstruction")
-    if not os.path.exists(os.path.join(rec, "scene.json")):
-        raise RuntimeError("missing model_3d/reconstruction/scene.json")
-    for fn in ("reconstruct.py", "README.md"):
-        shutil.copyfile(os.path.join(ROOT, "assets", "reconstruction", fn), os.path.join(rec, fn))
-    wi, ci2 = source_video_info(ff, wm), source_video_info(ff, cmp_)
-    nw, nc = count_frames(ff, wm), count_frames(ff, cmp_)
-    spec_ok = {"white_model_size": [wi["width"], wi["height"]] == [W, H], "white_model_fps": wi["fps_rational"] == fr,
-               "white_model_frames": nw == N, "comparison_size": [ci2["width"], ci2["height"]] == [W, 2 * H],
-               "comparison_fps": ci2["fps_rational"] == fr, "comparison_frames": nc == N,
-               "white_model_bitrate_ratio": round(wi["video_bitrate"] / float(br), 3)}
-    ok = all(v for k, v in spec_ok.items() if k != "white_model_bitrate_ratio")
-    meta = {"id": pkg, "clip": name, "spec": "LZHD White-model Video Reconstruction and Acceptance Standard V1.0 (2026-11-15)",
-            "paths_base": ".", "source": "target/original.mp4", "white_model": "white_model/blendervid.mp4",
-            "comparison": "comparison/comparison.mp4", "model_3d": "model_3d/%s.blend" % pkg,
-            "scene_json_path": "model_3d/reconstruction/scene.json", "blender_version": blender_version(render_dir),
-            "render_engine": "Eevee",
-            "character_model": "See scene.json characters for the fitted model style; fixed uniform scale per actor",
-            "frame_start": 1, "frame_end": N, "frames": N, "fps": fr, "duration": round(D, 6),
-            "source_video": si, "white_model_video": wi, "comparison_video": ci2,
-            "frame_map": "Source frame N = 3D project frame N = white-model frame N (1..%d)" % N,
-            "qualification_flags": lzhd_flags(si), "output_checks": spec_ok,
-            "checks": {"technical_structure": "passed (decoding, frame count, dimensions and fps checked)" if ok else "failed",
-                       "reconstruction": "unverified", "visual_review": "unverified", "client_acceptance": "unverified"},
-            "notes": notes or []}
-    clear_optional_review(rec,c)
-    if review_enabled(c):
-        from frame_review import build as build_frame_review
-        meta['frame_review']=build_frame_review(video,render_dir,os.path.join(rec,'review'),ci)
-    with open(os.path.join(sub, "meta", "meta.json"), "w", encoding="utf-8") as fh:
-        json.dump(meta, fh, ensure_ascii=False, indent=2)
-    with open(os.path.join(sub, "meta", "README.md"), "w", encoding="utf-8") as fh:
-        fh.write(lzhd_readme(pkg, meta, desc))
-    zp = os.path.join(submit_root, pkg + ".zip")
-    zip_v21(sub, pkg, zp)
-    return sub, zp, meta
-
-
-def lzhd_readme(pkg, meta, desc):
-    s, w = meta["source_video"], meta["white_model_video"]
-    lines = [
-        "# %s — Project guide (LZHD V1.0)" % pkg, "",
-        "- Main project: `model_3d/%s.blend` (Blender %s, Eevee). Active camera: `Camera`. Timeline: frames 1–%d at %s fps, matching the source frame for frame."
-        % (pkg, meta["blender_version"], meta["frames"], meta["fps"]),
-        "- Characters: the supplied `human_master.blend` rig and 10 mesh parts, with original rig and proportions, uniformly scaled once on import using model_scale. "
-        "Body palette: main #D63E3D, second #2D6BD8, third #2E9D5A, fourth #D9A014. The source model's head and chest marker faces are white.",
-        "- Motion: joint empties (`<n>_pelvis`, `<n>_shoulder_L`, etc.) have rotation keys every frame. Corresponding DEF bones follow with Copy Transforms "
-        "(`<n>_<joint>_bone`). Edit the joint empties to adjust motion.",
-        "- Scene: `Set_Background` collection, colored by semantic palette: background #B8B8B8, foreground objects #9A6B3B, nearby interactive objects #DF872F, distant interactive objects #D4689E, "
-        "light sources #F5F5F5, special objects #7A4EC2.",
-        "- Lighting: `Lights` collection (`Key_sun` plus ambient light), oriented to match the source key light.", "",
-        "## Videos", "",
-        "- `target/original.mp4`: unchanged source (%dx%d, %s fps, %.2f Mbps)." % (s["width"], s["height"], s["fps_rational"], s["video_bitrate"] / 1e6),
-        "- `white_model/blendervid.mp4`: %dx%d, %s fps, %.2f Mbps; source audio copied." % (w["width"], w["height"], w["fps_rational"], w["video_bitrate"] / 1e6),
-        "- `comparison/comparison.mp4`: %dx%d, source above and white model below, aligned frame for frame; source audio copied."
-        % (meta["comparison_video"]["width"], meta["comparison_video"]["height"]),
-        "- Qualification flags: %s." % ("; ".join(meta["qualification_flags"]) or "none"), "",
-        "## Verification record", ""]
-    lines += ["- %s: %s" % kv for kv in meta["checks"].items()]
-    if meta["notes"]:
-        lines += ["", "## Notes", ""] + ["- " + n for n in meta["notes"]]
-    if desc:
-        lines += ["", "## Shot notes", "", desc]
-    return "\n".join(lines) + "\n"

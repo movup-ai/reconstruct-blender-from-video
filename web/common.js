@@ -1,7 +1,7 @@
 // Blender Agent - shared helpers for the pages
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-const STAGE = { fit: 'Prepare', depth: 'Correct limb depth', background: 'Render background only', ai: 'local AI', all: 'Finish' };
+const STAGE = { movement: 'Movement', background: 'Background' };
 function el(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) if (v !== '' && v != null) e.setAttribute(k, v);
@@ -35,6 +35,8 @@ async function processingControl(url, message) {
     const result = await post(url);
     toast(result.note || 'Processing controls updated.');
     return result;
+  } catch (e) {
+    return null;                                   // post() already showed the error
   } finally {
     processingBusy = false;
     document.querySelectorAll('[data-processing-control]').forEach(button => button.disabled = false);
@@ -50,7 +52,7 @@ function chip(st) { return `<span class="chip g-${st.group}">${esc(st.label)}</s
 function fmtDur(s) { s = Math.max(0, Math.round(s)); if (s < 60) return s + ' s'; const m = Math.round(s / 60);
   return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min'; }
 // how long the work on a video took (computer time, not waiting): took = {done, open, last} from /api/clips, st = its status.
-// running: this job so far · prepared: how long preparing took · finished: all its jobs, from Start to the zip
+// running: this job so far · done: all its jobs, from Start to the zip
 function computerSeconds(t) {
   if (!t) return null;
   if (Number.isFinite(t.machine)) return t.machine;
@@ -63,12 +65,11 @@ function computerSeconds(t) {
 }
 function tookText(t, st) {
   if (!t) return null;
-  const L = t.last, what = L && L.stage === 'all' ? 'finishing' : 'preparing';
-  if (L && L.state === 'stopped') return { text: 'cancelled after ' + fmtDur(L.ran), tip: 'Processing cancelled. Completed files are kept.' };
-  if (L && L.state === 'running') return { text: `${what} ${fmtDur(L.ran)}`, tip: `This job has been ${what} for ${fmtDur(L.ran)}.` };
+  const L = t.last;
+  if (L && L.state === 'running') return { text: 'processing ' + fmtDur(L.ran), tip: `This job has been running for ${fmtDur(L.ran)}.` };
   if (t.done && (!st || st.done)) return { text: 'done in ' + fmtDur(computerSeconds(t)), fin: true,
-    tip: `Total recorded processing time since reset: ${fmtDur(computerSeconds(t))}. Queue waits and your review time are excluded.` };
-  if (L && L.stage === 'fit' && L.state === 'done' && (!st || st.fit)) return { text: 'prepared in ' + fmtDur(L.ran), tip: `Preparing took ${fmtDur(L.ran)}.` };
+    tip: `Total recorded processing time since reset: ${fmtDur(computerSeconds(t))}. Queue waits are excluded.` };
+  if (L && L.state === 'stopped') return { text: 'cancelled after ' + fmtDur(L.ran), tip: 'Processing cancelled. Completed files are kept.' };
   return null;
 }
 function fmtTime(s) { s = Math.max(0, Math.round(s)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; }
@@ -107,23 +108,23 @@ function progressBar(pct, step) {
 }
 async function openFolder(path) { try { await post('/api/open', { path }); } catch (e) {} }
 
-// ---- Start over: delete what preparing left for one clip (cid) or every clip (no cid), after a confirmation
+// ---- Start over: delete what processing left for one clip (cid) or every clip (no cid), after a confirmation
 async function startOver(cid, name) {
   const base = cid ? `/api/clip/${cid}/reset` : '/api/reset_all';
   const r = await post(base + '?dry=1');
   if (!r.clips.length) { toast('There are no clips in the selected folder to reset.'); return false; }
   const what = [...new Set(r.clips.flatMap(c => c.paths.map(p => p.what)))].join('; ') || 'queue entries and processing history';
   const pts = [(cid ? 'Deleted: ' : `Deleted for ${r.clips.length} clip(s): `) + what + '.',
-    'Your roles, joint fixes and objects are deleted too. This cannot be undone.',
+    'This cannot be undone.',
     'Running processes are stopped, waiting jobs are cancelled, and all recorded processing times are cleared.',
     cid ? 'Kept: the original video, task zip and delivery name.' : 'Kept: the original videos, task zips and delivery names.',
-    cid ? 'Press Prepare this clip (or Start) to detect the people again.' : 'Press Start to prepare them again from the videos.'];
-  if (!cid) pts.push('The queue stays paused. Taken-out and removed clips return to the list as not prepared.');
+    cid ? 'Press Run this clip (or Start) to process it again from the video.' : 'Press Start to process them again from the videos.'];
+  if (!cid) pts.push('The queue stays paused. Taken-out and removed clips return to the list as new.');
   if (!(await ask('', cid ? 'Delete and start over' : 'Reset all', { title: cid ? 'Start this clip over?' : `Reset all ${r.clips.length} clip(s)?`, name: cid ? name : '', danger: true, points: pts }))) return false;
   toast('Stopping processes and clearing generated files and timing records…');
   const d = await post(base);
   if (d.failed.length) toast(`${d.failed.length} item(s) could not be deleted (${d.failed[0].reason}): close any program using them and try again.`, true);
-  else toast(cid ? 'Started over: prepare the clip again.' : `Reset ${d.clips.length} clip(s). Press Start to prepare them.`);
+  else toast(cid ? 'Started over: run the clip again.' : `Reset ${d.clips.length} clip(s). Press Start to process them.`);
   return true;
 }
 

@@ -38,31 +38,6 @@ def read_frames_at(video, idxs):
     return out
 
 
-def shot_frame(c, cl, tag, frame):
-    """the Objects step's picture for one key frame: the ORIGINAL video frame (people and all, sharp), cut to the
-    picture area and sized like the set's background plate (plate<tag>.jpg, which the boxes are drawn in) -> path.
-    Cached as work/frame<tag>.jpg, made again when the plate is newer.  None when the video cannot be read."""
-    f = folders(c, cl)
-    plate = os.path.join(f["work"], "plate%s.jpg" % tag)
-    p = os.path.join(f["work"], "frame%s.jpg" % tag)
-    if os.path.exists(p) and (not os.path.exists(plate) or os.path.getmtime(p) >= os.path.getmtime(plate)):
-        return p
-    with _lock:
-        if not os.path.exists(plate):
-            return None  # Reset removed this prepared shot while the request was waiting.
-        img = read_frames_at(cl.video, [int(frame)]).get(int(frame))
-        if img is None:
-            return None
-        pose = read_json(f["pose"], {}) or {}
-        _, y0, _, hp = pose.get("picture_area") or [0, 0, img.shape[1], img.shape[0]]
-        img = img[int(y0):int(y0) + int(hp)]
-        ref = cv2.imread(plate) if os.path.exists(plate) else None    # (ASCII work paths)
-        if ref is not None and ref.shape[:2] != img.shape[:2]:
-            img = cv2.resize(img, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
-        write_jpg(p, img, 90)
-    return p
-
-
 def clip_thumb(c, cl):
     p = os.path.join(c["work_root"], "_thumbs", cl.id + ".jpg")
     if os.path.exists(p):
@@ -91,9 +66,11 @@ def person_crops(c, cl, size=220):
         return {}
     td = os.path.join(f["marks"], "thumbs")
     out, want = {}, {}
-    for p in pose["people"]:
+    for p in pose.get("people", []):
         path = os.path.join(td, "P%d.jpg" % p["id"])
         out[p["id"]] = path
+        if not p.get("boxes"):
+            continue                                     # nothing to cut a picture from
         if not os.path.exists(path) or os.path.getmtime(path) < os.path.getmtime(f['pose']):
             fs = sorted(int(x) for x in p["boxes"])
             mid = fs[len(fs) // 4: 3 * len(fs) // 4 + 1] or fs
@@ -114,30 +91,3 @@ def person_crops(c, cl, size=220):
                 s = float(size) / max(crop.shape[:2])
                 write_jpg(out[pid], cv2.resize(crop, (max(1, int(crop.shape[1] * s)), max(1, int(crop.shape[0] * s)))), 88)
     return {k: v for k, v in out.items() if os.path.exists(v)}
-
-
-def labelled_frame(c, cl, frame=None, width=960):
-    """one frame with every visible person boxed and numbered (for the AI)"""
-    f = folders(c, cl)
-    pose = read_json(f["pose"])
-    if not pose:
-        return None
-    n = pose["frames"]
-    counts = {}
-    for p in pose["people"]:
-        for k in p["boxes"]:
-            counts[int(k)] = counts.get(int(k), 0) + 1
-    if frame is None:
-        frame = max(counts, key=lambda k: (counts[k], -abs(k - n // 2))) if counts else n // 2
-    img = read_frames_at(cl.video, [frame]).get(frame)
-    if img is None:
-        return None
-    for p in pose["people"]:
-        b = p["boxes"].get(str(frame))
-        if b:
-            x0, y0, x1, y1 = [int(v) for v in b[:4]]
-            cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 3)
-            cv2.putText(img, "P%d" % p["id"], (x0, max(30, y0 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 0, 0), 6)
-            cv2.putText(img, "P%d" % p["id"], (x0, max(30, y0 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 255), 3)
-    s = float(width) / img.shape[1]
-    return cv2.resize(img, (width, int(img.shape[0] * s)))

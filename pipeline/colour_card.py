@@ -13,18 +13,17 @@
   light source                white    #F5F5F5   marks a light and its position (not the white head / chest marks)
   special object              purple   #7A4EC2   anything the rules don't cover
 
-apply(data) recolours a scene (scene_data.json) to the card: the palette gets the card's values, characters keep
-their role colour (5th and later: cyan, magenta, teal, olive - never a set-piece colour), and every set piece and
-prop gets the colour of its meaning, decided from what it is (build_env tags each mesh with its object, type and
-class) and where it is against the fitted people:
+apply(data) recolours a scene (scene_data.json) to the card, in place: the palette gets the card's values, the eye /
+chest marks are white, characters keep their role colour (red, blue, green, yellow; 5th and later: cyan, magenta,
+teal, olive - never a set-piece colour), and every mesh gets the colour of its meaning.  Stage 1 has one mesh per
+shot, the floor (colour "ground"), so it is always background: grey #B8B8B8.  The role rules below are kept for the
+set pieces and props of the planned Stage 2 (a mesh's "role" always wins):
   light source   lamps, chandeliers, sconces, street lights, ceiling lights;
-  nearby / distant interactive   held props (always nearby); things a hand comes within 12 cm of; interactive kinds
-                 (door, cup, phone, car, fridge, tv...) within reach (1 m) of a person = nearby, farther = distant;
+  nearby / distant interactive   things a hand comes within 12 cm of; interactive kinds (door, cup, phone, car,
+                 fridge, tv...) within reach (1 m) of a person = nearby, farther = distant;
   foreground     a piece between the camera and a person: closer to the camera than they are, overlapping them in
                  the picture;
-  background     everything else (walls, floor, ground, far things, furniture behind people);
-  special        only when asked for (an annotation saying "special", or an env object "role": "special").
-An object's "role" set by hand (the clip page, env_claude.json) always wins."""
+  background     everything else (walls, floor, ground, far things, furniture behind people)."""
 import numpy as np
 
 HEX = {"red": "#D63E3D", "blue": "#2D6BD8", "green": "#2E9D5A", "yellow": "#D9A014",
@@ -112,7 +111,7 @@ def _box_dist(P, lo, hi):
 
 
 def _groups(meshes):
-    """meshes -> {object key: [indices]} (build_env tags each part with its object "obj")"""
+    """meshes -> {object key: [indices]} (the parts of one object share its "obj" tag)"""
     g = {}
     for i, m in enumerate(meshes):
         g.setdefault(m.get("obj") or m.get("name"), []).append(i)
@@ -169,17 +168,8 @@ def role_of(info, V, people, cam, frames):
 def apply(data, log=print):
     """recolour a scene to the card (in place) -> {role: count of objects}"""
     pal = data.setdefault("palette", {})
-    l3 = data.get('previs_standard') == 'l3' or any(ch.get('style') == 'l3' for ch in data.get('chars', {}).values())
-    source_colors = dict(pal)
     pal.update({k: v for k, v in CARD.items()})
     pal["marker"] = MARKER
-    if l3:
-        import json
-        from pathlib import Path
-        colors = json.loads((Path(__file__).resolve().parents[1] / 'assets/l3/semantic-palette.json').read_text(encoding='utf-8'))['srgb_0_255']
-        for name, key in {'RED':'red','BLUE':'blue','GREEN':'green','YELLOW':'yellow','BROWN':'fg',
-                          'GRAY':'bg','PINK':'far_i','ORANGE':'near','WHITE':'lamp','PURPLE':'special'}.items():
-            pal[key] = colors[name]
     extra = list(EXTRA)                                           # 5th person on: stable colours, never a set colour
     used = {ch.get("colour") for ch in (data.get("chars") or {}).values()}
     for kind in sorted(data.get("chars") or {}, key=lambda k: int(k[1:]) if k[1:].isdigit() else 99):
@@ -189,42 +179,31 @@ def apply(data, log=print):
             ch["colour"] = free[0]; used.add(free[0])
             if ch.get("label"):
                 ch["label"] = ch["label"].rsplit("_", 1)[0] + "_" + ch["colour"] if "_" in ch["label"] else ch["label"]
-    try:
-        import build_env as BE
-        cam = BE.Cam(data)
-    except Exception:
-        cam = None
-    people = _people(data)
-    frames = sorted(people)
     count = {}
     meshes = data.get("meshes") or []
+    seen = None                                                    # (people, camera, frames): only for set pieces
     for key, idx in _groups(meshes).items():
         m0 = meshes[idx[0]]
         if m0.get("layer", 2) in (0, 1) or m0.get("cls") == "ground" or m0.get("colour") == "ground":   # backdrop, terrain, floor
             role = "bg"
         else:
+            if seen is None:
+                try:
+                    from camera_model import Cam
+                    cam = Cam(data)
+                except Exception:
+                    cam = None
+                people = _people(data)
+                seen = (people, cam, sorted(people))
             V = np.vstack([np.asarray(meshes[i]["v"], float) for i in idx])
-            role = role_of(m0, V, people, cam, frames)
+            role = role_of(m0, V, seen[0], seen[1], seen[2])
         for i in idx:
-            mesh = meshes[i]
-            if data.get('background_policy', 'video' if l3 else 'grey') in ('source','video') and role == 'bg':
-                original = mesh.setdefault('source_rgb', source_colors.get(mesh.get('colour'), pal['bg']))
-                key = 'source_bg_' + ''.join('%02x' % int(np.clip(v, 0, 255)) for v in original[:3])
-                pal[key] = list(original[:3])
-                mesh['colour'] = key
-            else:
-                mesh['colour'] = role
-            mesh['semantic_role'] = role
+            meshes[i]['colour'] = role                                 # background (the floor): grey #B8B8B8
+            meshes[i]['semantic_role'] = role
         count[role] = count.get(role, 0) + 1
     props = data.get("props") or []
     for key, idx in _groups(props).items():
-        p0 = props[idx[0]]
-        if p0.get("held"):
-            role = norm_role(p0.get("role")) or "near"                # carried / held: interactive, close by
-        elif str(p0.get("name", "")).find("_horse_") >= 0:
-            role = "special"
-        else:
-            role = norm_role(p0.get("role")) or "near"                # moving set pieces are moved by people
+        role = norm_role(props[idx[0]].get("role")) or "near"           # a moving prop is moved by people
         for i in idx:
             props[i]["colour"] = role
         count[role] = count.get(role, 0) + 1

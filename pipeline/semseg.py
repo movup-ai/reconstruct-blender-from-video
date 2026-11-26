@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """What every pixel of a set frame is: Mask2Former (Swin-L) trained on ADE20K's 150 indoor and outdoor classes
 (models\\mask2former_ade, facebook/mask2former-swin-large-ade-semantic), on the NVIDIA card in half precision.
-env_auto.py uses it to name each piece SAM cut out (wall, curtain, plant, door, table, car...) in place of CLIP's
-short word list, and to pick how the piece is built (ROLE)."""
+Stage 1 (metric_observe.py / metric_scene.py) uses its floor, wall and ceiling labels for gravity and the camera
+height.  ROLE (class -> what a piece is) is kept for the planned Stage 2 background."""
 import os
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(HERE)
 MODEL_DIR = os.path.join(ROOT, "models", "mask2former_ade")
 
-# ADE20K class -> role.  Surfaces and big things keep env_auto's geometry ("floor", "ground", "ceiling", "wall",
-# "building", "far", "sky", "rock", "tree"); "relief" = built from its measured shape (relief.py); any other value is a
-# props.py type (a library model sized from the measurement).  "person": not part of the set.
+# ADE20K class -> role (Stage 2).  Surfaces and big things ("floor", "ground", "ceiling", "wall",
+# "building", "far", "sky", "rock", "tree"); "relief" = built from its measured shape; any other value is a
+# library model type sized from the measurement.  "person": not part of the set.
 ROLE = {
     "floor": "floor", "rug": "floor", "stage": "floor",
     "road": "ground", "sidewalk": "ground", "earth": "ground", "field": "ground", "sand": "ground", "path": "ground",

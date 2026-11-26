@@ -14,74 +14,41 @@
   <section class="step">
     <h2>Processing</h2>
     <div class="form" style="margin-top:12px">
-      <label class="k">Autopilot</label>
-      <div><span class="seg" id="autopilot"><button data-v="off">Off</button><button data-v="prepare">Prepare only</button><button data-v="full">Full auto</button></span></div>
-      <div class="help" id="autohelp">Nothing runs until you press <b>Start</b> on the Clips page. After Start:
-        <b>Off</b> prepares only the videos there at that moment;
-        <b>Prepare only</b> also prepares videos added later, then each waits for your review;
-        <b>Full auto</b> also marks every clip reviewed and finishes it <span class="warn">without your review</span>.</div>
-      <label class="k" for="parallel">Prepare / background jobs</label>
+      <div class="k">How it runs</div>
+      <div>Automatic: after <b>Start</b> on the Clips page, every video without a finished zip runs Stage 1 (Movement) to a checked v2.1 zip, also videos added later.</div>
+      <label class="k" for="parallel">Clips at once</label>
       <div><select id="parallel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
       <div class="help" id="parhelp"></div>
-      <label class="k" for="finish_parallel">Finish jobs</label>
-      <div><select id="finish_parallel"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
-      <div class="help">Prepare and Finish have separate slots: 1 of each can run together. Model inference shares one GPU slot; rendering can overlap preparation. Two jobs for the same clip always run in order.</div>
-      <label class="k">Set style</label>
-      <div><span class="seg" id="set_detail"><button data-v="clean">Clean</button><button data-v="detailed">Detailed</button></span></div>
-      <div class="help">Clean: buildings as whole facades, simple masses for trees and cars, easy to read (recommended). Detailed: every depth block, closer to the picture but busy.</div>
       <label class="k" for="max_attempts">Tries per job</label>
       <div><select id="max_attempts"><option>1</option><option>2</option><option>3</option></select></div>
       <div class="help">A failed job is tried again automatically this many times in total.</div>
-      <label class="k" for="foot_contact">Foot contact</label>
-      <div><input id="foot_contact" type="checkbox"> Hold visible planted feet during fitting</div>
-      <label class="k" for="metric_scene">Shared scene geometry</label>
-      <div><input id="metric_scene" type="checkbox"> Align scene axes and depth using MoGe and fitted people</div>
-      <label class="k" for="scene_verify">Scene checks</label>
-      <div><input id="scene_verify" type="checkbox"> Check scene consistency and sampled depth alignment</div>
-      <label class="k" for="validation_mode">Validation mode</label>
-      <div><select id="validation_mode"><option value="normal">Normal — automatic and bounded</option><option value="audit">Audit — exhaustive validation</option></select></div>
-      <div></div><div class="help">Normal reuses unchanged checks and limits automatic repairs. Audit adds detailed contacts, full-frame rig checks and frame-review exports. Changing modes preserves tracking and body fitting.</div>
-      <label class="k" for="scene_repair">Measured surface repair</label>
-      <div><input id="scene_repair" type="checkbox"> Try bounded depth corrections; Audit also tests additional surfaces</div>
-      <label class="k" for="set_adaptive_frames">Set views</label>
-      <div><input id="set_adaptive_frames" type="checkbox"> Measure additional views when the camera moves</div>
-      <label class="k" for="set_max_frames">Maximum automatic views per shot</label>
-      <div><input id="set_max_frames" type="number" min="2" max="12" value="5"></div>
+      <label class="k" for="person_height" data-key="person_height">Person height</label>
+      <div data-key="person_height"><input id="person_height" type="number" min="0.5" max="2.5" step="0.01" style="max-width:120px"> m</div>
+      <div class="help" data-key="person_height">The height assumed for a person when the video gives no better measure.</div>
+      <label class="k" for="lens_mm" data-key="lens_mm">Lens</label>
+      <div data-key="lens_mm"><input id="lens_mm" type="number" min="5" max="400" step="0.1" style="max-width:120px"> mm (35 mm equivalent)</div>
+      <div class="help" data-key="lens_mm">Used when the lens cannot be measured from the picture.</div>
+      <label class="k" for="foot_contact" data-key="foot_contact">Foot contact</label>
+      <div data-key="foot_contact"><input id="foot_contact" type="checkbox"> Hold visible planted feet during fitting</div>
+      <label class="k" for="metric_scene" data-key="metric_scene">Metric scale</label>
+      <div data-key="metric_scene"><input id="metric_scene" type="checkbox"> Measure gravity, camera height and scale with MoGe-2 and Mask2Former</div>
       <div class="k">Person reconstruction</div>
       <div>SAM 3 tracking → RTMPose masked joints → SAM 3D Body</div>
-      <label class="k" for="character_style">Character</label>
-      <div><select id="character_style"><option value="sample">Previous mannequin (default)</option><option value="l3">Supplied L3 mannequin</option></select></div>
-      <div></div><div class="help">Changing characters requires Re-check because their body proportions differ. L3 is optional.</div>
-      <label class="k" for="render_engine">Render quality</label>
-      <div><select id="render_engine"><option value="workbench">Fast shaded render (Workbench)</option><option value="eevee">Scene lighting (Eevee)</option></select></div>
-      <div></div><div class="help">Choose render quality independently of the character. LZHD delivery uses its required lighting renderer.</div>
-      <label class="k" for="source_exposure">Match video brightness</label>
-      <div><input id="source_exposure" type="checkbox"> Optional relative exposure matching (default off)</div>
-      <div></div><div class="help">Use for lighting or exposure changes in the source. Camera movement and scene content can affect this estimate.</div>
-      <label class="k" for="sam3_checkpoint">SAM 3 checkpoint</label>
-      <div><input id="sam3_checkpoint" type="text"></div>
-      <label class="k" for="sam3_python">SAM 3 Python executable</label>
-      <div><input id="sam3_python" type="text"></div>
-      <div class="help">SAM 3 keeps mask identities through overlaps. RTMPose measures joints inside each person's mask. Prepare/Re-check regenerates tracking when its checkpoint or settings change. Previous person edits are backed up, and the new IDs need review.</div>
-      <label class="k" for="sam3d_checkpoint">SAM 3D Body checkpoint</label>
-      <div><input id="sam3d_checkpoint" type="text"></div>
-      <label class="k" for="sam3d_mhr">MHR model file</label>
-      <div><input id="sam3d_mhr" type="text"></div>
-      <label class="k" for="sam3d_python">SAM 3D Body Python executable</label>
-      <div><input id="sam3d_python" type="text"></div>
-      <label class="k" for="sam3d_stride">Body inference interval</label>
-      <div><input id="sam3d_stride" type="number" min="1" max="16" value="2"></div>
-      <div class="help">SAM 3D Body uses tracked masks, camera intrinsics and visible mesh surfaces for metric pose, scale and depth placement. It drives the editable mannequin. Use interval 1 for every observed frame, or 2 for faster inference. Re-check applies body model changes without replacing person IDs.</div>
-      <label class="k" for="camera_backend">Camera solver</label>
-      <div><select id="camera_backend"><option value="flow">Optical flow + depth</option><option value="da3">Depth Anything 3</option></select></div>
-      <label class="k" for="da3_model">DA3 checkpoint folder</label>
-      <div><input id="da3_model" type="text"></div>
-      <label class="k" for="da3_python">DA3 Python executable</label>
-      <div><input id="da3_python" type="text"></div>
-      <label class="k" for="da3_meters_per_unit">DA3 translation scale</label>
-      <div><input id="da3_meters_per_unit" type="number" min="0.000001" step="any" placeholder="Auto"></div>
-      <div class="help">Metres per model unit. Leave blank to estimate from visible floor contacts. Clips with hidden feet may need a measured scale.</div>
-      <div class="help">DA3 requires its own compatible Python environment and checkpoint. Pose model changes apply when joint marks are generated. Stage timings are saved in each clip's work folder.</div>
+      <label class="k" for="sam3_checkpoint" data-key="sam3_checkpoint">SAM 3 checkpoint</label>
+      <div data-key="sam3_checkpoint"><input id="sam3_checkpoint" type="text"></div>
+      <label class="k" for="sam3_python" data-key="sam3_python">SAM 3 Python executable</label>
+      <div data-key="sam3_python"><input id="sam3_python" type="text"></div>
+      <div class="help">SAM 3 keeps mask identities through overlaps. RTMPose measures joints inside each person's mask.</div>
+      <label class="k" for="sam3d_checkpoint" data-key="sam3d_checkpoint">SAM 3D Body checkpoint</label>
+      <div data-key="sam3d_checkpoint"><input id="sam3d_checkpoint" type="text"></div>
+      <label class="k" for="sam3d_mhr" data-key="sam3d_mhr">MHR model file</label>
+      <div data-key="sam3d_mhr"><input id="sam3d_mhr" type="text"></div>
+      <label class="k" for="sam3d_python" data-key="sam3d_python">SAM 3D Body Python executable</label>
+      <div data-key="sam3d_python"><input id="sam3d_python" type="text"></div>
+      <label class="k" for="sam3d_stride" data-key="sam3d_stride">Body inference interval</label>
+      <div data-key="sam3d_stride"><input id="sam3d_stride" type="number" min="1" max="16" value="2" style="max-width:120px"></div>
+      <div class="help" data-key="sam3d_stride">SAM 3D Body uses tracked masks and camera intrinsics for metric pose, scale and depth. Use interval 1 for every observed frame, or 2 for faster inference.</div>
+      <div class="help">A clip whose zip was made with other settings shows <i>out of date</i>; Start makes it again.</div>
     </div>
   </section>
 
@@ -97,49 +64,12 @@
   </section>
 
   <section class="step">
-    <h2>Background set · Claude</h2>
-    <p class="hint">Who builds the walls, pillars, curtains, doors and furniture behind the people. <b>Claude</b> looks at the
-      frames like an artist, uses the local measurements (camera, distances, people, outlines) as its ruler, includes every
-      object you annotated, then checks its set over the film and corrects it. <b>Local models</b> build it from the
-      measurements alone (free, but weaker on walls and pillars). With Claude, frames of each clip are sent to the Claude
-      API (about $0.10–0.40 per clip with Sonnet). The key is stored only on this PC and is never shown again.</p>
-    <div class="form">
-      <label class="k">Built by</label>
-      <div><span class="seg" id="set_builder"><button data-v="claude">Claude</button><button data-v="auto">Local models</button></span></div>
-      <div class="help" id="sb_help"></div>
-      <label class="k" for="cl_key">Claude API key</label>
-      <div class="row" style="margin:0"><input type="password" id="cl_key" autocomplete="off" spellcheck="false" placeholder="Paste your Anthropic API key (sk-ant-…)" style="flex:1;min-width:200px"><button id="cl_save">Save key</button><button id="cl_test">Test</button></div>
-      <div class="help" id="cl_state"></div>
-      <label class="k" for="set_model">Model</label>
-      <div><select id="set_model"><option value="claude-sonnet-5-5">Claude Sonnet 5.5 (recommended)</option><option value="claude-opus-5-5">Claude Opus 5.5 (stronger, about twice the cost)</option></select></div>
-      <div class="help">Used for the next Prepare. Finish reuses the set Prepare made unless the camera or your objects changed.</div>
-      <label class="k" for="set_rounds">Check rounds</label>
-      <div><select id="set_rounds"><option value="1">1 – write the set only</option><option value="2">2 – write, check over the film, correct (recommended)</option><option value="3">3 – one more check</option></select></div>
-      <div class="help">Each check shows Claude its set laid over the film and lets it fix positions; each round adds about the same cost again.</div>
-    </div>
-  </section>
-
-  <section class="step">
-    <h2>AI suggestions · DeepSeek</h2>
-    <p class="hint">DeepSeek checks who is who and what the set really is (walls, cars, trees…), removes wrong parts and adds missed objects. Clip frames are sent to DeepSeek. The key is stored only on this PC and is never shown again.</p>
-    <div class="form">
-      <label class="k">Use AI suggestions</label><div><label><input type="checkbox" id="ai_enabled"> on</label></div>
-      <label class="k" for="ds_key">API key</label>
-      <div class="row" style="margin:0"><input type="password" id="ds_key" autocomplete="off" spellcheck="false" placeholder="Paste your DeepSeek API key" style="flex:1;min-width:200px"><button id="ds_save">Save key</button><button id="ds_test">Test</button></div>
-      <div class="help" id="ds_state"></div>
-      <label class="k" for="deepseek_model">Model</label><div><input type="text" id="deepseek_model" style="max-width:260px"></div>
-      <div class="help">The environment check needs a model that accepts images. Test tells you.</div>
-      <label class="k">Send frames</label><div><label><input type="checkbox" id="ai_send_images"> send frames and person close-ups (needed for the environment check)</label></div>
-    </div>
-  </section>
-
-  <section class="step">
     <h2>Delivery format · v2.1</h2>
-    <p class="hint">Fixed by the client's v2.1 spec (docs\v21). One zip per clip, named after its package, e.g. <code>the_hidden_blade-3.zip</code>:</p>
+    <p class="hint">Fixed by the client's v2.1 spec. One zip per clip, named after its package, e.g. <code>the_hidden_blade-3.zip</code>, checked automatically before the job counts as done:</p>
     <ul class="checks">
-      <li><code>target/original.mp4</code>: the source clip, unchanged</li>
+      <li><code>target/original.mp4</code>: the source clip, byte for byte</li>
       <li><code>white_model/blendervid.mp4</code>: the white model on a 1920×1080 frame (1080×1920 for a vertical source)</li>
-      <li><code>comparison/comparison.mp4</code>: source on top, white model below, each 1920x1080 (1920x2160 in all)</li>
+      <li><code>comparison/comparison.mp4</code>: the source and the white model, each 1080P: 1920×2160 stacked (2160×1920 side by side for a vertical source)</li>
       <li><code>model_3d/&lt;package&gt;.blend</code> with <code>model_3d/reconstruction/scene.json</code></li>
       <li><code>meta/meta.json</code>: paths, Blender version, frames, fps, duration</li>
       <li>Both videos carry the source's own audio, copied unchanged.</li>
@@ -157,71 +87,33 @@
 <script>
 nav('settings');
 const FOLDERS = [['submit_root', 'Submissions (SUBMIT)', 'Finished packages and their zips, one folder per member inside (_users\\<name>).'],
-                 ['work_root', 'Work files', 'Preparation results, previews and logs, one folder per member inside. Clearing it makes every member\'s clips "not prepared" again: only do it when everything is delivered.'],
+                 ['work_root', 'Work files', 'Processing results, previews and logs, one folder per member inside. Clearing it makes every member\'s clips "new" again: only do it when everything is delivered.'],
                  ['blender_exe', 'Blender (optional)', 'Leave empty to find Blender automatically.']];
+const TEXT = ['sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python'];
+const NUMBER = ['person_height', 'lens_mm', 'sam3d_stride'];
+const CHECK = ['foot_contact', 'metric_scene'];
 let S = null;
 async function load() {
   S = await api('/api/settings');
+  // a setting the pipeline no longer has is not offered
+  document.querySelectorAll('[data-key]').forEach(n => n.hidden = !(n.dataset.key in S));
   $('srcpath').textContent = S.source_root || 'not chosen yet';
   $('opensrc').style.display = S.local && S.source_root ? '' : 'none'; $('openlogs').style.display = S.local ? '' : 'none';
-  $('parhelp').textContent = S.nvidia ? 'Start with 1 Prepare/background slot and 1 Finish slot. Model inference runs one job at a time on the NVIDIA card.'
+  $('parhelp').textContent = S.nvidia ? 'Start with 1. Model inference runs one job at a time on the NVIDIA card; rendering can overlap it.'
     : 'No working NVIDIA card was found. The models run on the NVIDIA card only: run Setup.bat, then start the app again.';
-  segSet($('autopilot'), S.autopilot); $('parallel').value = S.parallel; $('finish_parallel').value = S.finish_parallel || 1; $('max_attempts').value = S.max_attempts; segSet($('set_detail'), S.set_detail || 'clean');
-  for (const key of ['camera_backend', 'da3_model', 'da3_python', 'set_max_frames', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python', 'sam3d_stride']) $(key).value = S[key] ?? '';
-  for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).checked = S[key] !== false;
-  $('validation_mode').value = S.validation_mode || 'normal';
-  if (S.character_style && ![...$('character_style').options].some(o => o.value === S.character_style)) {
-    const option = document.createElement('option'); option.value = S.character_style; option.textContent = 'Saved legacy character'; $('character_style').appendChild(option);
-  }
-  $('character_style').value = S.character_style || 'sample';
-  $('render_engine').value = S.render_engine || 'workbench';
-  $('source_exposure').checked = S.source_exposure === true;
-  $('da3_meters_per_unit').value = S.da3_meters_per_unit ?? '';
+  $('parallel').value = S.parallel; $('max_attempts').value = S.max_attempts;
+  for (const key of TEXT.concat(NUMBER)) if (key in S) $(key).value = S[key] ?? '';
+  for (const key of CHECK) if (key in S) $(key).checked = S[key] !== false;
   $('folders').innerHTML = FOLDERS.map(([k, l, h]) => `<label class="k" for="f_${k}">${l}</label>
     <div class="row" style="margin:0"><input type="text" id="f_${k}" value="${esc(S[k] || '')}" style="flex:1">${k !== 'blender_exe' && S.local ? `<button data-open="${k}">Open</button>` : ''}</div><div class="help">${h}</div>`).join('');
   document.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openFolder(S[b.dataset.open]));
-  $('ai_enabled').checked = !!S.ai_enabled; $('ai_send_images').checked = S.ai_send_images !== false; $('deepseek_model').value = S.deepseek_model || '';
-  $('ds_state').innerHTML = S.deepseek_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="ds_del">remove</a>' : '<span class="muted">○ no key yet: AI suggestions are off, everything else works</span>';
-  segSet($('set_builder'), S.set_builder === 'claude' ? 'claude' : 'auto');
-  $('set_model').value = S.set_model || 'claude-sonnet-5-5'; $('set_rounds').value = String(S.set_rounds || 2);
-  $('sb_help').innerHTML = S.set_builder === 'claude' ? (S.anthropic_key_set ? 'The next Prepare asks Claude to build each clip\'s set.' :
-    '<span class="warn">Claude is chosen but no key is saved yet: the local models build the set until you save one.</span>') :
-    'The local models build the set. Choose Claude for walls, pillars and curtains placed like in the film.';
-  $('cl_state').innerHTML = S.anthropic_key_set ? '<span class="good">● key saved</span> (hidden) · <a href="#" id="cl_del">remove</a>' : '<span class="muted">○ no key yet</span>';
-  const cdel = $('cl_del'); if (cdel) cdel.onclick = async e => { e.preventDefault(); if (!(await ask('Sets are built by the local models until you add a key again.', 'Remove the key', { title: 'Remove the Claude key?', danger: true }))) return; await post('/api/settings', { anthropic_key: '', set_builder: 'auto' }); toast('Key removed'); load(); };
-  const del = $('ds_del'); if (del) del.onclick = async e => { e.preventDefault(); if (!(await ask('Ask DeepSeek stays hidden until you add a key again.', 'Remove the key', { title: 'Remove the DeepSeek key?', danger: true }))) return; await post('/api/settings', { deepseek_key: '' }); toast('Key removed'); load(); };
 }
 async function set(obj, msg) { try { await post('/api/settings', obj); toast(msg || 'Saved'); load(); } catch (e) { load(); } }
-segInit($('autopilot'), async v => { if (v === 'full' && !(await ask('After Start, every clip is marked reviewed and finished without waiting for you to check people, joints and objects.', 'Turn on Full auto', { title: 'Turn on Full auto?' }))) { load(); return; } set({ autopilot: v }, 'Autopilot: ' + v); });
-segInit($('set_detail'), v => set({ set_detail: v }, 'Set style: ' + v + ' (used for the next builds)'));
-$('parallel').onchange = e => set({ parallel: +e.target.value }, 'Prepare/background slots: ' + e.target.value);
-$('finish_parallel').onchange = e => set({ finish_parallel: +e.target.value }, 'Finish slots: ' + e.target.value);
+$('parallel').onchange = e => set({ parallel: +e.target.value }, 'Clips at once: ' + e.target.value);
 $('max_attempts').onchange = e => set({ max_attempts: +e.target.value });
-$('ai_enabled').onchange = e => set({ ai_enabled: e.target.checked }, 'AI suggestions ' + (e.target.checked ? 'on' : 'off'));
-$('ai_send_images').onchange = e => set({ ai_send_images: e.target.checked });
-$('deepseek_model').onchange = e => set({ deepseek_model: e.target.value.trim() || 'deepseek-chat' });
-$('ds_save').onclick = async () => { const k = $('ds_key').value.trim(); if (!k) { toast('Paste the key first', true); return; }
-  await set({ deepseek_key: k, ai_enabled: true }, 'Key saved'); $('ds_key').value = ''; };
-$('ds_test').onclick = async () => { $('ds_state').innerHTML = '<span class="muted">Testing… (up to a minute)</span>';
-  const r = await post('/api/ai_test'); $('ds_state').innerHTML = `<span class="${r.ok ? (r.images ? 'good' : 'warn') : 'bad'}">● ${esc(r.detail)}</span>`; };
-segInit($('set_builder'), v => set({ set_builder: v }, v === 'claude' ? 'Claude builds the sets from the next Prepare' : 'The local models build the sets'));
-for (const key of ['camera_backend', 'da3_model', 'da3_python', 'sam3_checkpoint', 'sam3_python', 'sam3d_checkpoint', 'sam3d_mhr', 'sam3d_python']) {
-  $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
-}
-for (const key of ['foot_contact', 'set_adaptive_frames', 'metric_scene', 'scene_verify', 'scene_repair']) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
-$('validation_mode').onchange = e => set({ validation_mode:e.target.value }, 'Validation mode saved');
-$('character_style').onchange = e => set({ character_style:e.target.value }, 'Character saved; Re-check clips to update their fitted proportions');
-$('render_engine').onchange = e => set({ render_engine:e.target.value }, 'Render quality saved; Finish applies it');
-$('source_exposure').onchange = e => set({ source_exposure:e.target.checked }, 'Brightness matching saved; Finish applies it');
-$('set_max_frames').onchange = e => set({ set_max_frames: +e.target.value }, 'Set view limit saved');
-$('sam3d_stride').onchange = e => set({ sam3d_stride: +e.target.value }, 'Body inference interval saved');
-$('da3_meters_per_unit').onchange = e => set({ da3_meters_per_unit: e.target.value === '' ? null : +e.target.value }, 'Camera scale saved');
-$('set_model').onchange = e => set({ set_model: e.target.value }, 'Set model saved');
-$('set_rounds').onchange = e => set({ set_rounds: +e.target.value }, 'Check rounds: ' + e.target.value);
-$('cl_save').onclick = async () => { const k = $('cl_key').value.trim(); if (!k) { toast('Paste the key first', true); return; }
-  await set({ anthropic_key: k, set_builder: 'claude' }, 'Key saved · Claude builds the sets'); $('cl_key').value = ''; };
-$('cl_test').onclick = async () => { $('cl_state').innerHTML = '<span class="muted">Testing…</span>';
-  const r = await post('/api/claude_test'); $('cl_state').innerHTML = `<span class="${r.ok ? 'good' : 'bad'}">● ${esc(r.detail)}</span>`; };
+for (const key of TEXT) $(key).onchange = e => set({ [key]: e.target.value.trim() }, 'Processing setting saved');
+for (const key of NUMBER) $(key).onchange = e => { if (e.target.value === '') { load(); return; } set({ [key]: +e.target.value }, 'Processing setting saved'); };
+for (const key of CHECK) $(key).onchange = e => set({ [key]: e.target.checked }, 'Processing setting saved');
 $('savefolders').onclick = async () => { const o = {}; FOLDERS.forEach(([k]) => o[k] = $('f_' + k).value.trim()); if (!o.blender_exe) delete o.blender_exe;
   if ((o.submit_root !== S.submit_root || o.work_root !== S.work_root) && !(await ask('Every member\'s clips, results and packages are looked for in the new folders from now on. Nothing is moved.', 'Change the folders', { title: 'Change the shared folders?' }))) return;
   await set(o, 'Folders saved'); health(); };

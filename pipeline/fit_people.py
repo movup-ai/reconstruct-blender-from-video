@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""3D pose of every person: the L3 rig is fitted to the 2D marks of each frame (COCO-17),
+"""3D pose of every person: the character rig is fitted to the 2D marks of each frame (COCO-17),
 standing on the ground, with joint limits, pose priors and smooth motion."""
 import os
 import numpy as np
@@ -35,9 +35,9 @@ def unpack(q, rig):
 def bounds(rig):
     top = float(rig.J[0][2][2] / rig.s)
     # master: deep squats bring the pelvis down to ~0.3 m
-    lo = [-1e5, -1e5, -1e5, (0.18 if rig.style in ('master','l3') else 0.50) * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
+    lo = [-1e5, -1e5, -1e5, (0.18 if rig.style == 'master' else 0.50) * rig.s]; hi = [1e5, 1e5, 1e5, (top + 0.04) * rig.s]
     for j, _, l, h, _ in ANG:
-        if rig.style in ('master','l3') and j.startswith("knee_"):
+        if rig.style == 'master' and j.startswith("knee_"):
             l = -165.0                                   # master: full squats (feet flat, heels under the hips)
         lo.append(l); hi.append(h)
     return np.array(lo, float), np.array(hi, float)
@@ -921,7 +921,7 @@ def fit_all(world, y0, people, N, c):
                        (model_height if trustworthy_height else None) or c["person_height"])
         actor_heights[str(pid)] = height
         log("    person %s: %d frames%s" % (pid, len(fs), ("  role " + r["role"]) if r.get("role") else ""))
-        style = (c.get("_hints") or {}).get("character_style") or c.get("character_style", "sample")
+        style = c.get("character_style", "sample")
         hint = {"foot_contact": c.get("foot_contact", True),
                 **(((c.get("_hints") or {}).get("people") or {}).get(str(pid)) or {})}
         if body is not None and pid in lifts:
@@ -949,15 +949,6 @@ def fit_all(world, y0, people, N, c):
             arm_confidence[~np.isin(np.arange(N),fs)]=0
         keys, Bq = assemble(rig, Q, N, float(sm), span=(min(fs), max(fs)),
                             confidence=arm_confidence,fps=c.get('_fps',30.))
-        if style == 'l3' and c.get('temporal_refinement', True) and not any(
-                hint.get(k) for k in ('pose','keys','keys_more','ignore_kps','use_kps','hand_dist','hand_distance')):
-            import temporal_refine
-            Bq, refinement = temporal_refine.arms(rig, Bq, fs, K, world, y0, c.get('_fps',30.))
-            for frame, parameters in enumerate(Bq):
-                _, _, rotations, _ = unpack(parameters, rig)
-                for joint in ('shoulder_L','elbow_L','shoulder_R','elbow_R'):
-                    keys['rot'][joint][frame] = [round(float(v),2) for v in rotations[joint]]
-            keys['temporal_refinement'] = refinement
         if c.get('_persistent_tracks'):
             observed = set(fs)
             keys['visible'] = [f in observed for f in range(N)]

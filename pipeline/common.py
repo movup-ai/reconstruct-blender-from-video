@@ -14,14 +14,9 @@ DEFAULT_CFG = {
     "work_root": os.path.join(AGENT, "Work_auto"),
     "lens_mm": 34.9,                         # 35 mm-equivalent focal length used for every clip (clip 1 solved to 34.9)
     "person_height": 1.72,
-    "character_style": "sample",             # L3 is available through explicit character selection
-    "previs_standard": "legacy",             # derived from the selected rig, never forces a replacement
-    "set_colours": "video",
+    "character_style": "sample",             # the client's sample character mesh (the only Stage 1 rig)
     "source_exposure": False,                 # optional relative brightness matching
-    "render_engine": "workbench",             # independent of character style; eevee enables scene lighting
-    "temporal_refinement": True,
-    "frame_review": True,
-    "validation_mode": "normal",             # audit enables exhaustive checks and review exports
+    "render_engine": "workbench",             # Workbench (default); eevee only when set in config.json
     "out_width": 3840,                       # white model / comparison width, like the client sample (3840 x source aspect)
     "out_fps": 24,
     "video_bitrate": "30M",
@@ -32,15 +27,7 @@ DEFAULT_CFG = {
     "pose3d_sigma": 0.2,
     "pose_mode": "performance",              # RTMPose-x; balanced/lightweight use smaller joint models
     "pose_engine": "tensorrt",               # automark GPU engine: "tensorrt" (fp16, falls back to CUDA) or "cuda"
-    "sam_points": 32,                        # automatic set (env_auto): SAM point grid per side (16 = fewer small pieces, ~3x faster)
     "pose_backend": "rtmpose",               # joints measured inside SAM 3 masks
-    "camera_backend": "flow",               # flow or optional da3 multi-view geometry
-    "da3_model": os.path.join(AGENT, "models", "da3"),
-    "da3_python": os.path.join(AGENT, "downloads", "da3-venv", "Scripts", "python.exe"),
-    "da3_max_views": 12,
-    "da3_meters_per_unit": None,             # None = infer scale from visible floor contacts
-    "set_adaptive_frames": True,
-    "set_max_frames": 5,
     "foot_contact": True,
     "track_occlusion_seconds": 2.0,          # retain identities across bounded detection gaps
     "tracker_backend": "sam3",              # persistent video masks and identities
@@ -50,8 +37,6 @@ DEFAULT_CFG = {
     "sam3_max_objects": 16,
     "sam3_probability": 0.35,
     "sam3_timeout_min": 40,
-    "sam3_image_batch": 16,                  # independent point prompts per image decoder call
-    "sam3_image_max_masks": 256,             # bounded background proposals before geometric fitting
     "human_backend": "sam3d_body",           # metric body reconstruction
     "sam3d_checkpoint": os.path.join(AGENT, "models", "sam3d_body", "model.ckpt"),
     "sam3d_mhr": os.path.join(AGENT, "models", "sam3d_body", "assets", "mhr_model.pt"),
@@ -62,24 +47,21 @@ DEFAULT_CFG = {
     "metric_scene": True,                   # shared MoGe geometry and gravity evidence
     "metric_max_views": 3,
     "metric_resolution": 384,
-    "scene_verify": True,
-    "scene_repair": True,                   # measured planar patches accepted only after verification
-    "scene_repair_limit": 4,
-    "protect_people": True,                # correct or suppress background geometry covering source-visible people
 }
 
-RETIRED_SETTINGS = ("rtmo_model", "detect_stride", "pose3d")
+RETIRED_SETTINGS = ("rtmo_model", "detect_stride", "pose3d", "previs_standard", "set_colours", "temporal_refinement",
+                    "frame_review", "validation_mode", "camera_backend", "da3_model", "da3_python", "da3_max_views",
+                    "da3_meters_per_unit", "scene_verify", "scene_repair", "scene_repair_limit", "protect_people")
 FIXED_BACKENDS = {"tracker_backend": "sam3", "human_backend": "sam3d_body", "pose_backend": "rtmpose"}
 
 
 def normalize_backends(c):
-    """Migrate saved legacy selections to the supported human reconstruction flow."""
+    """Migrate saved legacy selections to the supported Stage 1 flow (retired settings are dropped)."""
     c = dict(c)
     for key in RETIRED_SETTINGS:
         c.pop(key, None)
     c.update(FIXED_BACKENDS)
-    c['character_style'] = c.get('character_style') or 'sample'
-    c['previs_standard'] = 'l3' if c['character_style']=='l3' else 'legacy'
+    c['character_style'] = 'sample'                     # the only rig (an L3 / other saved choice is retired)
     return c
 
 
@@ -107,8 +89,6 @@ def cfg():
         with open(CFG_PATH, "w", encoding="utf-8") as fh:
             json.dump(c, fh, ensure_ascii=False, indent=2)
     c = normalize_backends(c)
-    if os.environ.get('BA_VALIDATION_MODE'):c['validation_mode']=os.environ['BA_VALIDATION_MODE']
-    if os.environ.get('BA_FREEZE_PEOPLE') == '1': c['_freeze_people'] = True
     sb = os.environ.get("BA_SANDBOX")                  # test runs: everything written goes under this folder
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")

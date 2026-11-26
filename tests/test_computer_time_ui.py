@@ -17,7 +17,7 @@ vm.runInContext(fs.readFileSync(root+'/web/common.js','utf8'),context);
 const index=fs.readFileSync(root+'/web/index.html','utf8');
 const table=index.slice(index.indexOf('function renderTable('),index.indexOf('function progressSummary('));
 vm.runInContext(`function clipActions(){return {queue:'',remove:''};} function stepCell(){return '';}`+table,context);
-const old={done:{machine:180},steps:{prepare:{ran:480},finish:{ran:180}}};
+const old={done:{machine:180},steps:{movement:{ran:480},background:{ran:180}}};
 const cumulative={...old,machine:780};
 assert.equal(vm.runInContext('computerSeconds(null)',context),null);
 context.timing=old;assert.equal(vm.runInContext('computerSeconds(timing)',context),660);

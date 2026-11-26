@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The simple flow: source folder -> package names -> prepare -> review -> Finish (skipped when nothing changed).
+"""The simple flow: source folder -> package names -> one automatic Movement run (skipped while nothing changed).
    .venv\\Scripts\\python -m unittest discover -s tests -v"""
 import json
 import os
@@ -7,7 +7,6 @@ import shutil
 import sys
 import tempfile
 import unittest
-import numpy as np
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -198,188 +197,6 @@ class TestTaskZips(unittest.TestCase):
             self.assertEqual(scan["unnamed"], 0)
 
 
-class TestHeldObjects(unittest.TestCase):
-    """objects people carry: which hand, how often seen, and placed on the fitted hand where the picture shows them"""
-    @staticmethod
-    def kp(wl=(560, 600), wr=(440, 600)):
-        k = np.zeros((17, 3)); k[:, 2] = 0.9
-        k[:, 0] = 500; k[:, 1] = np.linspace(300, 900, 17)
-        k[5, :2], k[6, :2], k[11, :2], k[12, :2] = (540, 420), (460, 420), (530, 640), (470, 640)
-        k[9, :2], k[10, :2] = wl, wr
-        return k
-
-    def test_attach_hand_and_back(self):
-        import held_objects as HO
-        people = [(1, self.kp())]
-        self.assertEqual(HO.attach([550, 610, 620, 760], people, "held"), (1, "wrist_L"), "a bag hanging below the left hand")
-        self.assertIsNone(HO.attach([100, 100, 160, 160], people, "held"), "far from both hands")
-        self.assertIsNone(HO.attach([435, 290, 565, 910], people, "held"), "a box that is the person themself")
-        other = self.kp(); other[:, 0] += 100                           # a second person beside: their box is no object
-        self.assertIsNone(HO.attach([535, 290, 665, 910], [(1, self.kp()), (2, other)], "held"))
-        self.assertEqual(HO.attach([465, 430, 535, 630], people, "worn"), (1, "chest"))
-
-    def test_groups_need_enough_frames(self):
-        import held_objects as HO
-        d = lambda f, label="bag": {"f": f, "box": [0, 0, 10, 10], "score": 0.6, "track": 1, "joint": "wrist_L", "kind": "held", "label": label}
-        objs = HO.groups([d(0), d(2), d(4, "box"), d(6)], {1: 10})
-        self.assertEqual(len(objs), 1)
-        self.assertEqual((objs[0]["label"], objs[0]["shape"], sorted(objs[0]["boxes"])), ("bag", "bag", ["0", "2", "4", "6"]))
-        self.assertEqual(HO.groups([d(0), d(2)], {1: 10}), [], "seen twice: a passing false detection")
-        self.assertEqual(HO.groups([d(0), d(2), d(4)], {1: 40}), [], "in under a quarter of the frames")
-
-    def test_fill_holds_and_interpolates(self):
-        import held_objects as HO
-        F = HO.fill({2: [1.0], 6: [3.0]}, 9)
-        self.assertEqual(F[:, 0].tolist(), [1, 1, 1, 1.5, 2, 2.5, 3, 3, 3])
-
-    def test_placed_on_the_hand_where_the_picture_shows_it(self):
-        import held_objects as HO
-        import build_env as BE
-        from rig import Rig, JOINTS
-        N = 5
-        ch = {"height": 1.75, "style": "sample", "track_id": 1, "visible": [True] * N, "root": [[0.0, 5.0, 0.0, 0.0]] * N,
-              "pelvis_z": [0.94] * N, "rot": {j: [[0, 0, 0]] * N for j in JOINTS}}
-        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
-                "chars": {"P1": ch}, "props": [{"name": "chair", "keys": []}]}
-        cam = BE.Cam(data)
-        W = Rig(1.75, "sample").fk((0, 5, 0), 0.0, {}, 0.94)
-        u, v = cam.project(W["wrist_L"][1], 0)[0][0]
-        box = [u - 40, v + 10, u + 40, v + 150]                    # a bag hanging under the hand
-        held = {"step": 1, "objects": [{"track": 1, "joint": "wrist_L", "kind": "held", "label": "bag", "shape": "bag",
-                                        "boxes": {str(f): box for f in range(N)}}]}
-        made = HO.place(data, held)
-        self.assertEqual([(m[1], m[2]) for m in made], [("bag", N)])
-        p = data["props"][-1]
-        self.assertTrue(p["held"]); self.assertEqual(data["props"][0]["name"], "chair", "other props stay")
-        c = cam.project(np.array(p["keys"][2][:3]), 2)[0][0]
-        self.assertLess(abs(c[0] - u), 2.0); self.assertLess(abs(c[1] - (v + 80)), 2.0)
-        t = 5.0                                                   # the hand is 5 m away: 140 px tall = 140 * 5 / f metres
-        self.assertAlmostEqual(np.ptp(np.array(p["v"])[:, 2]), 140 * t / cam.f, delta=0.03)
-        HO.place(data, held)
-        self.assertEqual(sum(1 for q in data["props"] if q.get("held")), 1, "placing again replaces, never doubles")
-
-    def test_hidden_when_the_person_is_not_seen(self):
-        import held_objects as HO
-        from rig import JOINTS
-        N = 4
-        ch = {"height": 1.75, "style": "sample", "track_id": 1, "visible": [True, True, False, False], "root": [[0.0, 5.0, 0.0, 0.0]] * N,
-              "pelvis_z": [0.94] * N, "rot": {j: [[0, 0, 0]] * N for j in JOINTS}}
-        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
-                "chars": {"P1": ch}}
-        held = {"step": 1, "objects": [{"track": 1, "joint": "chest", "kind": "worn", "label": "backpack", "shape": "bag", "boxes": {"0": [900, 400, 1000, 600]}}]}
-        HO.place(data, held)
-        self.assertEqual([k[6] for k in data["props"][0]["keys"]], [1.0, 1.0, 0.0, 0.0])
-
-
-class TestMeasuredSet(unittest.TestCase):
-    """the set: pieces named by the segmentation model, soft things built from their measured surface"""
-    def test_relief_is_a_closed_solid_on_the_measured_surface(self):
-        import relief
-        H, W = 60, 80
-        ys, xs = np.mgrid[0:H, 0:W]
-        X = np.dstack([(xs - 40) * 0.02, np.full((H, W), 4.0) + 0.002 * xs, (H - ys) * 0.02])   # a sheet 4 m in front
-        ok = (xs - 40) ** 2 + (ys - 30) ** 2 < 20 ** 2                                         # a round piece of it
-        V, F = relief.relief_mesh(X, ok, (0.0, 0.0, 0.6), 0.3)
-        V = np.array(V); n = len(V) // 2
-        self.assertTrue(np.all(np.abs(V[:n, 1] - 4.04) < 0.1), "the front lies on the measured points")
-        self.assertTrue(np.all(V[n:, 1] > V[:n, 1] + 0.25), "the back is pushed away from the camera")
-        self.assertLess(np.ptp(V[:n, 0]), 0.85); self.assertGreater(np.ptp(V[:n, 0]), 0.7)   # the outline's width (0.8 m)
-        edges = {}
-        for f in F:
-            for a, b in zip(f, f[1:] + f[:1]):
-                k = (min(a, b), max(a, b)); edges[k] = edges.get(k, 0) + 1
-        self.assertTrue(all(c == 2 for c in edges.values()), "closed: every edge has two faces")
-        self.assertIsNone(relief.relief_mesh(X, np.zeros((H, W), bool), (0, 0, 0.6), 0.3))
-
-    def test_segmentation_class_decides_with_the_geometry(self):
-        import env_auto as EA
-        R = {"cls": "object", "z": (0.0, 0.5, 1.2), "rng": 3.0, "area": 0.01, "planar": False, "plane": (np.array([0, 1.0, 0]), None, 0)}
-        self.assertEqual(EA.sem_decide(R, "plant", 0.9, True), ("object", None, True), "a plant: its measured shape")
-        self.assertEqual(EA.sem_decide(R, "curtain", 0.7, True),('object','curtain',False))
-        self.assertEqual(EA.sem_decide(R, "swivel chair", 0.9, True), ("object", "office_chair", False))
-        self.assertEqual(EA.sem_decide(R, "person", 0.9, True)[0], "sky", "a missed person is no set piece")
-        self.assertEqual(EA.sem_decide(R, "wall", 0.95, True)[0], "sky", "a scrap of wall the wall piece has")
-        self.assertEqual(EA.sem_decide(R, "plant", 0.3, True), ("object", None, False), "unsure: the geometry stays")
-        big = dict(R, cls="wall", area=0.2, planar=True, plane=(np.array([0, 1.0, 0]), None, 0))
-        self.assertEqual(EA.sem_decide(big, "cabinet", 0.96, True), ("object", 'cabinet', False), "confident furniture labels survive planar geometry")
-        tree = dict(R, cls="vegetation")
-        self.assertEqual(EA.sem_decide(tree, "tree", 0.9, False), ("vegetation", None, False), "outdoors: the tree model")
-        self.assertTrue(EA.sem_decide(tree, "tree", 0.9, True)[2], "indoors: its measured shape")
-
-    def test_every_role_is_known(self):
-        import semseg, props
-        geo = {"floor", "ground", "ceiling", "sky", "person", "wall", "building", "far", "rock", "tree", "relief"}
-        bad = sorted(k for k, v in semseg.ROLE.items() if v not in geo and props.norm_type(v) == "other" and v != "box")
-        self.assertEqual(bad, [], "props types that do not exist")
-
-    def test_build_env_builds_a_mesh_piece(self):
-        import build_env as BE
-        env = {"ground": {"size": 0}, "objects": [{"name": "plant", "type": "mesh", "v": [[0, 3, 0], [1, 3, 0], [0, 3, 1]],
-                                                   "f": [[0, 1, 2]], "colour": "tree"}]}
-        data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]]}
-        m = BE.build(env, BE.Cam(data), 0, dx=200.0, tag="_s2")
-        self.assertEqual(len(m), 1)
-        self.assertEqual(m[0]["v"][1], [201.0, 3.0, 0.0], "moved with its shot"); self.assertEqual(m[0]["colour"], "tree")
-
-
-class TestAnnotations(unittest.TestCase):
-    """the clip page's object notes: the description decides how each one is built"""
-    def test_camera_zoom(self):
-        """a zooming lens: the world camera and the scene camera agree, and a point at the frame-0 edge leaves the picture"""
-        from common import Camera
-        from ground_solve import World
-        import build_env as BE
-        cam = Camera(1920, 1080, 30.0)
-        N = 3; zoom = [1.0, 1.5, 2.0]
-        w = World(cam, [np.eye(3)] * N, np.array([0, -1.0, 0]), 1.2, zoom=zoom)
-        P = w.on_ground(0, 40.0, 1000.0)                                 # near the left edge at frame 0
-        self.assertLess(abs(w.project(P, 0)[0][0, 0] - 40.0), 0.5)
-        self.assertLess(w.project(P, 2)[0][0, 0], 0)                     # zoomed x2: out of the picture
-        data = {"res": [1920, 1080], "lens": 30.0, "sensor": 36.0, "cam": [w.blender_cam(i) for i in range(N)],
-                "zoom": [w.f_at(i) / cam.f for i in range(N)]}
-        bc = BE.Cam(data)
-        for i in range(N):
-            self.assertLess(np.abs(bc.project(P, i)[0] - w.project(P, i)[0]).max(), 0.5)
-            C, d = bc.ray(700.0, 900.0, i)
-            self.assertLess(np.abs(d - w.ray(i, 700.0, 900.0)).max(), 1e-6)
-
-    def test_distance_levels(self):
-        import env_auto as EA
-        C = [0.0, 0.0, 1.5]
-        ob = lambda what, lvl, near, typ="wall": {"what": what, "type": typ, "dist": near, "_level": lvl, "_C": C,
-                                                  "_reach": [near, near + 0.5], "_az": [80.0, 100.0]}
-        wall, table, free = ob("back wall", 3, 2.0), ob("table", 1, 3.0), ob("lamp", None, 1.0)
-        mesh = dict(ob("plant", 2, 1.0), type="mesh", v=[[0.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
-        person = [np.array([[0.0, 6.0, 1.0], [0.2, 6.2, 1.2]])]            # walks 6 m out, straight ahead
-        aside = [np.array([[9.0, 0.5, 1.0]])]                              # far off to the side: not in the wall's view
-        EA.by_level([wall, table, free, mesh], person + aside)
-        self.assertAlmostEqual(table["dist"], 3.0)                         # level 1: as measured
-        self.assertAlmostEqual(mesh["_reach"][0], 3.8, places=2)           # level 2: behind the table (3.5 + 0.3)
-        self.assertAlmostEqual(mesh["v"][0][1], 3.8, places=2)             # its points pushed along the view
-        self.assertGreaterEqual(wall["dist"], 6.2 + 0.4 - 0.01)            # the back: behind the person
-        self.assertLess(wall["dist"], 8.0)                                 # (the one to the side does not count)
-        self.assertEqual(free["dist"], 1.0)
-        self.assertEqual(server.distance_level("4"), 4)
-        self.assertIsNone(server.distance_level(""))
-        self.assertIsNone(server.distance_level(12))
-
-    def test_description_decides(self):
-        import describe as D
-        p = lambda w, t="other": D.parse(w, t)
-        self.assertEqual((p("white pillar by the door")["mode"], p("white pillar by the door")["kind"]), ("model", "pillar"))
-        self.assertEqual(p("desk lamp with white shade")["kind"], "lamp", "the thing is the last noun")
-        self.assertEqual(p("the thing on the shelf")["mode"], "shape", "not the shelf it stands on")
-        self.assertEqual(p("a big potted plant next to the wall")["kind"], "plant_pot")
-        self.assertEqual(p("old sculpture of a horse")["mode"], "shape")
-        h = p("plastic bag held in his left hand")
-        self.assertEqual((h["mode"], h["side"], h["label"]), ("held", "L", "bag"))
-        self.assertTrue(p("backpack")["worn"])
-        self.assertEqual(p("phone in her right hand")["label"], "phone")
-        self.assertEqual(p("pillar", "door")["kind"], "door", "a type picked in the list wins")
-        self.assertEqual(p("distant door")["role"], "far_i")
-        self.assertEqual(p("special thing")["role"], "special")
-
-
 class TestColourCard(unittest.TestCase):
     def test_card_values(self):
         import colour_card as CC
@@ -387,6 +204,7 @@ class TestColourCard(unittest.TestCase):
         self.assertEqual(CC.CARD["near"], [223, 135, 47]); self.assertEqual(CC.CARD["special"], [122, 78, 194])
 
     def test_roles(self):
+        """the role rules stay for set pieces (Stage 2); Stage 1's floor is always background grey"""
         import colour_card as CC
         from rig import JOINTS
         N = 3
@@ -395,8 +213,9 @@ class TestColourCard(unittest.TestCase):
         box = lambda c, s: [[c[0] + sx * s / 2, c[1] + sy * s / 2, c[2] + sz * s / 2] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
         mk = lambda obj, v, **kw: dict({"name": obj, "obj": obj, "v": v, "f": [[0, 1, 2]], "colour": "set", "layer": 2}, **kw)
         data = {"res": [1920, 1080], "lens": 35.0, "sensor": 36.0, "frames": N, "cam": [[0.0, 0.0, 1.2, 90.0, 0.0, 0.0]] * N,
-                "chars": {"P1": ch}, "palette": {}, "props": [{"name": "held_P1_bag_0", "held": True, "colour": "dark"}],
-                "meshes": [mk("wall", box((0, 9, 1.5), 3), cls="wall", kind="patch"),
+                "chars": {"P1": ch}, "palette": {}, "props": [],
+                "meshes": [mk("ground", box((0, 0, 0), 9), colour="ground", layer=1),
+                           mk("wall", box((0, 9, 1.5), 3), cls="wall", kind="patch"),
                            mk("lamp", box((3, 7, 1), 0.4), kind="lamp"),
                            mk("table", box((0, 3.5, 0.9), 0.7), kind="table"),                 # between camera and person
                            mk("door", box((-4, 12, 1), 1), kind="door"),                       # far from him
@@ -404,55 +223,15 @@ class TestColourCard(unittest.TestCase):
                            mk("special", box((5, 9, 0.5), 1), role="special")]}
         CC.apply(data, log=None)
         col = {m["obj"]: m["colour"] for m in data["meshes"]}
-        self.assertEqual(col, {"wall": "bg", "lamp": "lamp", "table": "fg", "door": "far_i", "cup": "near", "special": "special"})
-        self.assertEqual(data["props"][0]["colour"], "near", "held: nearby interactive")
+        self.assertEqual(col, {"ground": "bg", "wall": "bg", "lamp": "lamp", "table": "fg", "door": "far_i", "cup": "near",
+                               "special": "special"})
         self.assertEqual(data["chars"]["P1"]["colour"], "cyan", "purple is the special colour: a person gets another")
         self.assertEqual(data["palette"]["fg"], [154, 107, 59])
+        self.assertEqual(data["palette"]["bg"], [184, 184, 184])
 
 
-class TestClaudeSet(unittest.TestCase):
-    """the Claude set builder's own logic (no API call): the answer it accepts, and measured shapes for plants"""
-    def test_parse_answer(self):
-        import claude_set as CS
-        env = CS.parse_set('A corridor.\n```json\n{"objects": [{"type": "pillar", "bbox": [1, 2, 3, 4], "dist": 3},'
-                           '{"type": "box"}, {"what": "no type", "pos": [0, 1, 0]}]}\n```')
-        self.assertEqual([o["type"] for o in env["objects"]], ["pillar"], "objects need a type and a placement")
-        self.assertIn("ground", env)
-        with self.assertRaises(Exception):
-            CS.parse_set("no json here")
-
-    def test_spec_leaves_out_people_fitting(self):
-        import claude_set as CS
-        s = CS.spec_text()
-        self.assertIn("## File format", s); self.assertIn("### Types", s)
-        self.assertNotIn("People on horses", s); self.assertNotIn("Wrong person tracks", s)
-
-    def test_plants_get_their_measured_shape(self):
-        import claude_set as CS
-        se = {"objects": [{"type": "plant_pot", "what": "potted fig", "bbox": [300, 400, 700, 1000], "dist": 2.5},
-                          {"type": "pillar", "what": "white pillar", "bbox": [0, 0, 200, 1000], "dist": 3}]}
-        auto = {"objects": [{"type": "mesh", "name": "object_3", "v": [[0, 0, 0]], "f": [], "_src": {"frame": 0, "px": [320, 420, 690, 990]}},
-                            {"type": "mesh", "name": "object_9", "v": [[0, 0, 0]], "f": [], "_src": {"frame": 40, "px": [320, 420, 690, 990]}}]}
-        self.assertEqual(CS.measured_shapes(se, auto, 0), 1)
-        self.assertEqual([(o["type"], o.get("what")) for o in se["objects"]], [("mesh", "potted fig"), ("pillar", "white pillar")])
-
-    def test_settings_validation(self):
-        from agent import config as cfgmod
-        d = tempfile.mkdtemp(); p = cfgmod.CFG_PATH
-        try:
-            cfgmod.CFG_PATH = os.path.join(d, "config.json")
-            c = cfgmod.save({"set_builder": "claude", "set_model": "claude-opus-5-5", "set_rounds": 2})
-            self.assertEqual((c["set_builder"], c["set_model"]), ("claude", "claude-opus-5-5"))
-            for bad in ({"set_builder": "gpt"}, {"set_model": "claude-x"}, {"set_rounds": 9}, {"anthropic_key": "short"}):
-                with self.assertRaises(ValueError):
-                    cfgmod.save(bad)
-            self.assertIn("anthropic_key", cfgmod.SECRETS)
-        finally:
-            cfgmod.CFG_PATH = p
-            shutil.rmtree(d, ignore_errors=True)
-
-
-class TestFinishFingerprint(unittest.TestCase):
+class TestFingerprint(unittest.TestCase):
+    """a Movement zip is up to date while the video, its delivery name and the Stage 1 settings are unchanged"""
     def setUp(self):
         self.d = tempfile.mkdtemp()
         src = os.path.join(self.d, "src", "FilmA"); os.makedirs(src)
@@ -462,41 +241,23 @@ class TestFinishFingerprint(unittest.TestCase):
         self.cl = clipsmod.Library(self.c).clips[0]
         self.f = clipsmod.folders(self.c, self.cl)
         os.makedirs(self.f["marks"]); os.makedirs(self.f["work"]); os.makedirs(self.c["submit_root"])
-        self.write(self.f["review"], {"confirmed": True, "people": {"1": {"role": "main"}}, "saved": "t1"})
 
     def tearDown(self):
         shutil.rmtree(self.d, ignore_errors=True)
 
-    @staticmethod
-    def write(p, d):
-        with open(p, "w", encoding="utf-8") as fh:
-            json.dump(d, fh)
-
-    def test_skip_until_something_changes(self):
+    def test_done_until_a_stage1_setting_changes(self):
         c, cl, f = self.c, self.cl, self.f
-        fp = clipsmod.fingerprint(c, cl)
-        self.write(f["review"], {"confirmed": False, "people": {"1": {"role": "main"}}, "saved": "t2"})
-        self.assertEqual(clipsmod.fingerprint(c, cl), fp, "save time and confirm flag are not changes")
         open(f["zip"], "w").close()
-        clipsmod.record_finish(c, cl, fp)
-        self.write(f["review"], {"confirmed": True, "people": {"1": {"role": "main"}}, "saved": "t3"})
+        clipsmod.record_finish(c, cl, clipsmod.fingerprint(c, cl))
+        with open(os.path.join(f["marks"], "review.json"), "w", encoding="utf-8") as fh:   # an old review file: no input
+            json.dump({"confirmed": True, "people": {"1": {"role": "ignore"}}}, fh)
         self.assertTrue(clipsmod.status(c, cl)["done"])
-        self.assertEqual(clipsmod.status(c, cl)["label"], "finished")
-        self.write(os.path.join(f["marks"], "checked.json"), {"frames": {}, "saved": "t5"})  # the editor saved ...
-        clipsmod.record_finish(c, cl, clipsmod.fingerprint(c, cl))                             # ... and was finished
-        self.write(os.path.join(f["marks"], "checked.json"), {"frames": {}, "saved": "t6"})  # saved again, nothing new
-        self.assertTrue(clipsmod.status(c, cl)["done"], "a save without a new fix is not a change")
-        self.write(os.path.join(f["marks"], "checked.json"), {"frames": {"0": []}})     # a joint fix
-        st = clipsmod.status(c, cl)
-        self.assertFalse(st["done"]); self.assertTrue(st["changed"])
-        self.assertEqual(st["label"], "changed since Finish")
-        os.remove(os.path.join(f["marks"], "checked.json"))
-        self.write(f["review"], {"confirmed": True, "people": {"1": {"role": "ignore"}}, "saved": "t4"})   # a role
-        self.assertFalse(clipsmod.status(c, cl)["done"])
+        c2 = dict(c, person_height=c["person_height"] + 0.1)
+        self.assertFalse(clipsmod.status(c2, cl)["done"])
 
 
 class TestJobResult(unittest.TestCase):
-    """a job's result is the pipeline's exit code: 0 done, 1 failed (tried again once), 3 review not confirmed (not retried)"""
+    """a job's result is the pipeline's exit code: 0 done, anything else failed (tried again once)"""
     def setUp(self):
         from agent import jobs
         self.d = tempfile.mkdtemp()
@@ -516,49 +277,52 @@ class TestJobResult(unittest.TestCase):
         self.store.db.close()
         shutil.rmtree(self.d, ignore_errors=True)
 
-    def run_job(self, code, stage="fit"):
-        self.r._cmd = lambda job, cl: [sys.executable, "-c", "print('working'); raise SystemExit(%d)" % code]
+    def zip_maker(self):
+        """python code that writes the clip's zip (a successful run leaves its package)"""
+        zp = clipsmod.folders(self.r.app.c, self.cl)["zip"]
+        return "import os; os.makedirs(os.path.dirname(%r), exist_ok=True); open(%r, 'w').close(); " % (zp, zp)
+
+    def run_job(self, code, stage="movement"):
+        make = self.zip_maker() if code == 0 else ""
+        self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('working'); raise SystemExit(%d)" % code]
         jid = self.store.enqueue(self.cl.id, stage, user="anna")
         self.r._run(self.store.take())
         return jid
 
     def test_job_runs_in_the_members_folders(self):
         """the job's program gets the member and their folder (BA_USER / BA_SOURCE)"""
-        self.r._cmd = lambda job, cl: [sys.executable, "-c", "import os; print('member=' + os.environ['BA_USER'] + '|' + os.environ['BA_SOURCE'])"]
-        self.store.enqueue(self.cl.id, "fit", user="anna")
+        make = self.zip_maker()
+        self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('member=' + os.environ['BA_USER'] + '|' + os.environ['BA_SOURCE'])"]
+        self.store.enqueue(self.cl.id, "movement", user="anna")
         self.r._run(self.store.take())
-        with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_fit.log"), encoding="utf-8") as fh:
+        with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_movement.log"), encoding="utf-8") as fh:
             self.assertIn("member=anna|" + self.r.app.c["source_root"], fh.read())
-        self.store.enqueue(self.cl.id, "fit")                                 # no member: refused, not run as someone
+        self.store.enqueue(self.cl.id, "movement")                            # no member: refused, not run as someone
         self.r._run(self.store.take())
         self.assertIn("no member", self.store.latest_for(self.cl.id)["error"])
 
-    def test_one_job_per_clip(self):
-        """a forced job queued while its clip's job runs waits for it (both would write scene_data.json)"""
-        self.store.enqueue(self.cl.id, "fit", user="anna")
-        first = self.store.take()
-        self.assertIsNotNone(self.store.enqueue(self.cl.id, "all", force=True, user="anna"))
-        self.assertIsNone(self.store.take(), "the clip is busy")
-        self.store.finish(first["id"], True)
-        self.assertEqual(self.store.take()["stage"], "all")
-
     def test_exit_codes(self):
-        self.run_job(0)                                                     # no "0 failed" line needed any more
+        self.run_job(0)
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "done")
-        self.run_job(3, "all")
-        j = self.store.latest_for(self.cl.id)
-        self.assertEqual((j["state"], j["attempts"]), ("failed", 1), "not confirmed: no second attempt")
-        self.assertIn("not confirmed", j["error"])
         self.run_job(1)
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "queued", "a failure is tried once more")
         self.r._run(self.store.take())
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "failed")
         work = clipsmod.folders(self.r.app.c, self.cl)["work"]
-        self.assertTrue(os.path.exists(os.path.join(work, "job_fit.previous.log")), "the first attempt's log is kept")
+        self.assertTrue(os.path.exists(os.path.join(work, "job_movement.previous.log")), "the first attempt's log is kept")
+
+    def test_movement_command(self):
+        """the contract with run_pipeline.py: one movement stage, the clip's name, no review gate"""
+        cmd = self.r._cmd({"stage": "movement"}, self.cl)
+        self.assertIn("run_pipeline.py", os.path.basename(cmd[1]))
+        self.assertEqual(cmd[cmd.index("--stage") + 1], "movement")
+        self.assertEqual(cmd[cmd.index("--name") + 1], self.cl.name)
+        self.assertNotIn("--require-confirm", cmd)
+        self.assertIn("--force", cmd)
 
 
 class TestStartOver(unittest.TestCase):
-    """Start over deletes what preparing, review and Finish left for one clip, and nothing else"""
+    """Start over deletes what a run left for one clip, and nothing else"""
     def setUp(self):
         self.d = tempfile.mkdtemp()
         src = os.path.join(self.d, "src", "FilmA"); os.makedirs(src)
@@ -572,8 +336,7 @@ class TestStartOver(unittest.TestCase):
 
     def fill(self, cl):
         f = clipsmod.folders(self.c, cl)
-        for p in (f["pose"], f["review"], os.path.join(f["marks"], "checked.json"), f["preview"], f["scene"],
-                  os.path.join(f["work"], "finished.json"), os.path.join(f["submit"], "meta", "meta.json"), f["zip"]):
+        for p in (f["pose"], f["preview"], f["scene"], os.path.join(f["submit"], "meta", "meta.json"), f["zip"]):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             with open(p, "w") as fh:
                 fh.write("{}")
@@ -581,12 +344,12 @@ class TestStartOver(unittest.TestCase):
 
     def test_reset_one_clip(self):
         fa, fb = self.fill(self.a), self.fill(self.b)
-        self.assertEqual(clipsmod.status(self.c, self.a)["label"], "finished")
+        self.assertTrue(clipsmod.status(self.c, self.a)["done"])
         self.assertEqual(len(clipsmod.prepared_paths(self.c, self.a)), 4)        # marks, work, submit folder, zip
         r = clipsmod.reset(self.c, self.a)
         self.assertEqual((len(r["removed"]), r["failed"]), (4, []))
         self.assertEqual(clipsmod.prepared_paths(self.c, self.a), [])
-        self.assertEqual(clipsmod.status(self.c, self.a)["label"], "not prepared")
+        self.assertFalse(clipsmod.status(self.c, self.a)["done"])
         self.assertTrue(os.path.exists(self.a.video), "the video stays")
         self.assertTrue(os.path.exists(fb["pose"]) and os.path.exists(fb["zip"]), "the other clip is untouched")
         for root in (self.c["work_root"], self.c["submit_root"], self.c["marks_root"]):
@@ -598,38 +361,31 @@ class TestStartOver(unittest.TestCase):
         self.assertTrue(clipsmod._inside(os.path.join(self.c["work_root"], "x"), [self.c["work_root"]]))
 
 
-class TestProgressAndFlags(unittest.TestCase):
+class TestProgress(unittest.TestCase):
+    """the app reads the pipeline's log lines: run_pipeline must keep writing them"""
     def test_progress_from_log(self):
         d = tempfile.mkdtemp()
         try:
-            lp = os.path.join(d, "job_fit.log")
+            lp = os.path.join(d, "job_movement.log")
             cl = mock.Mock(); cl.name = "x"
             with mock.patch.object(server, "folders", return_value={"work": d}):
                 with open(lp, "w", encoding="utf-8") as fh:
-                    fh.write("  detected 40 frames (frame 79/137, people 2)  (139.6s)\n")
-                p = server.job_progress({}, cl, {"stage": "fit", "log": lp})
-                self.assertTrue(10 < p["pct"] < 20, p); self.assertIn("40 of 137", p["step"])
-                with open(lp, "a", encoding="utf-8") as fh:
-                    fh.write("  detected 86 frames (frame 40/137, people 2)  (170.2s)\n")
-                p2 = server.job_progress({}, cl, {"stage": "fit", "log": lp})
-                self.assertGreater(p2["pct"], p["pct"])                       # never steps back
-                with open(lp, "a", encoding="utf-8") as fh:
                     fh.write("  marks: x\n  lens: 40.7 mm\n  [shot 1: frames 0-136]\n  camera ...\n")
-                p = server.job_progress({}, cl, {"stage": "fit", "log": lp})
-                self.assertEqual(p["pct"], 58); self.assertIn("camera", p["step"])
+                p = server.job_progress({}, cl, {"stage": "movement", "log": lp})
+                self.assertIn("camera", p["step"])
+                with open(lp, "a", encoding="utf-8") as fh:
+                    fh.write("  people ...\n  set ...  (Stage 1: the floor only)\n  quality:\n  blender build + render (10 frames) ...\n")
+                p2 = server.job_progress({}, cl, {"stage": "movement", "log": lp})
+                self.assertGreater(p2["pct"], p["pct"]); self.assertIn("rendering", p2["step"])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def test_person_flags(self):
-        rep = {"quality": {"people": [
-            {"track": 3, "flags": ["pose never changes: a statue or a picture?", "jerky (12 sudden movements per 100 frames)"], "jump_frames": [5, 40]},
-            {"track": 1, "flags": []}]}, "left_out": [{"track": 7, "why": "short and unclear (0.5 s)"}]}
-        f = server.person_flags(rep)
-        self.assertIn("statue", f["3"]["not_person"]); self.assertEqual(len(f["3"]["flags"]), 1)
-        self.assertIsNone(f["1"]["not_person"])
-        self.assertIn("short and unclear", f["7"]["not_person"])
-        self.assertEqual(server.jump_frames(rep), {"3": [5, 40]})
-        self.assertEqual(server.jump_frames(rep, {"9": 3}), {"3": [5, 40], "9": [5, 40]})   # joined track: old editor id too
+    def test_pipeline_still_writes_the_parsed_lines(self):
+        with open(os.path.join(ROOT, "pipeline", "run_pipeline.py"), encoding="utf-8") as fh:
+            src = fh.read()
+        for line in ('"  marks: %s"', '"  camera ..."', '"  people ..."', '"  set ...', '"  quality:"',
+                     '"  [shot %d: frames %d-%d]"', '"  blender build + render (%d frames) ..."', '"  videos + zip ..."'):
+            self.assertIn(line, src)
 
 
 class TestSubmissionsPage(unittest.TestCase):
@@ -648,37 +404,7 @@ class TestSubmissionsPage(unittest.TestCase):
     def test_download_name(self):
         self.assertEqual(server.download_name("the_hidden_blade-3.zip"),
                          "attachment; filename=\"the_hidden_blade-3.zip\"; filename*=UTF-8''the_hidden_blade-3.zip")
-        self.assertIn("filename*=UTF-8''%E9%9A%90", server.download_name("\u9690\u5251.zip"))   # non-ASCII kept in the UTF-8 form
-
-    def test_character_file_follows_style(self):
-        self.assertEqual(server.char_file({"character_style": "master"}), "human_master.json")
-        self.assertEqual(server.char_file({"character_style": "base21"}), "base_character_v21.json")
-        self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", server.char_file(config.load()))))
-
-
-class TestEditorColours(unittest.TestCase):
-    def test_role_colours_and_joined_tracks(self):
-        rv = {"people": {"1": {"role": "main", "colour": "red"}, "2": {"role": "ignore", "colour": "purple"}}}
-        out = server.editor_colours(rv, {"3": 1})
-        self.assertEqual(out["1"], {"hex": "#ff4d4d", "role": "Main"})
-        self.assertEqual(out["2"]["hex"], server.DRAW_HEX["grey"], "not a person: grey")
-        self.assertEqual(out["3"], out["1"], "a joined track keeps the colour of the track it joined")
-        self.assertEqual(server.editor_colours(None), {})
-
-
-class TestCheckPage(unittest.TestCase):
-    def test_current_template_used(self):
-        d = tempfile.mkdtemp()
-        try:
-            c = {}; cl = mock.Mock()
-            with open(os.path.join(d, "check.html"), "w", encoding="utf-8") as fh:
-                fh.write('<html><head></head><script>\nconst PAGE = {"clip": "x", "frames": []};\nconst cv = 1;</script></html>')
-            with mock.patch.object(server, "folders", return_value={"marks": d}):
-                html = server.check_page(c, cl)
-            self.assertIn('const PAGE = {"clip": "x", "frames": []};', html)
-            self.assertIn("nextFlagged", html)
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
+        self.assertIn("filename*=UTF-8''%E9%9A%90", server.download_name("隐剑.zip"))   # non-ASCII kept in the UTF-8 form
 
 
 if __name__ == "__main__":

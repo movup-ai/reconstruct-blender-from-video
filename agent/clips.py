@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """Clip discovery, per-clip folders and status (status is read from the files, so it survives restarts)."""
-import glob
 import hashlib
 import json
 import os
@@ -199,7 +198,7 @@ class Library:
         return len(clips)
 
     def remove(self, cl):
-        """take a video off the list: it is not prepared or finished; the file is not touched"""
+        """take a video off the list: it is not processed; the file is not touched"""
         gone = removed_set(self.c); gone.add(os.path.normcase(cl.video)); save_removed(gone, self.c)
         self.rescan()
 
@@ -255,60 +254,31 @@ def save_removed(gone, c=None):
         json.dump(sorted(gone), fh, ensure_ascii=False, indent=1)
 
 
-_FP_CACHE = {}
-REVIEW_NOISE = ("saved", "confirmed", "auto", "source", "clip", "video")
-
-
-def _digest(p):
-    """sha1 of a file's bytes, cached by (size, mtime)"""
-    try:
-        st = os.stat(p)
-    except OSError:
-        return None
-    key = (p, st.st_size, st.st_mtime_ns)
-    if key not in _FP_CACHE:
-        with open(p, "rb") as fh:
-            _FP_CACHE[key] = hashlib.sha1(fh.read()).hexdigest()
-    return _FP_CACHE[key]
+# the settings Stage 1 (Movement) output depends on; a setting the pipeline no longer has reads as None (stable)
+STAGE1_SETTINGS = ("lens_mm", "lens_auto", "person_height", "pose_mode", "pose_engine", "foot_contact",
+                   "metric_scene", "metric_max_views", "metric_resolution", "max_people", "track_occlusion_seconds",
+                   "tracker_backend", "sam3_checkpoint", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
+                   "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_stride", "sam3d_surface_side",
+                   "pose3d_weight", "pose3d_sigma", "colours", "out_fps")
 
 
 def fingerprint(c, cl):
-    """everything a Finish depends on that a person can change: roles / camera / notes (review.json without its
-    save time and confirm flag), joint fixes, objects, hints, the hand-built set, the description, the package name
-    and the video itself.  Same fingerprint as the last Finish = nothing to render again."""
-    import package as pkg                                # pipeline
-    from common import output_dir                        # pipeline
-    f = folders(c, cl)
-    out = os.path.join(output_dir(c), cl.name)
-    rv = read_json(f["review"], {}) or {}
-    h = hashlib.sha1(json.dumps({k: v for k, v in rv.items() if k not in REVIEW_NOISE}, sort_keys=True, ensure_ascii=False).encode("utf-8"))
-    chk = sorted(glob.glob(os.path.join(f["marks"], "checked*.json")), key=os.path.getmtime)
-    fixes = (read_json(chk[-1], {}) or {}) if chk else {}          # the joint editor stamps every save: not a change
-    h.update(json.dumps({k: v for k, v in fixes.items() if k != "saved"}, sort_keys=True).encode("utf-8"))
-    parts = [os.path.join(d, n) for d in (f["marks"], out) for n in ("env_ai.json", "hints.json", "env_claude.json", "desc.txt")]
-    parts.append(os.path.join(f['work'],'background_revision.json'))
-    for p in parts:
-        h.update(("%s|" % (_digest(p) if p else None)).encode("utf-8"))
+    """what a Movement run is made from: the video itself (size and time), its package (delivery) name and the
+    Stage 1 settings.  Same fingerprint as the last successful run = its zip is up to date."""
+    h = hashlib.sha1()
     try:
         st = os.stat(cl.video)
         h.update(("%d|%d|" % (st.st_size, int(st.st_mtime))).encode("utf-8"))
     except OSError:
-        pass
-    h.update(str(pkg.package_name(cl.name, c)).encode("utf-8"))
-    settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in
-                ("pose_mode", "camera_backend", "da3_model", "da3_python", "da3_meters_per_unit",
-                 "da3_max_views", "foot_contact", "set_adaptive_frames", "set_max_frames",
-                 "metric_scene", "metric_max_views", "metric_resolution", "scene_verify", "scene_repair", "scene_repair_limit", "validation_mode", "frame_review",
-                 "character_style", "render_engine", "source_exposure", "temporal_refinement",
-                 "tracker_backend", "sam3_checkpoint", "sam3_python", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
-                 "sam_points", "sam3_image_batch", "sam3_image_max_masks",
-                 "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_python", "sam3d_stride", "sam3d_surface_side")}
-    h.update(json.dumps({"pipeline_version": 12, **settings}, sort_keys=True).encode("utf-8"))
+        h.update(b"missing|")
+    h.update(("%s|" % pkg.package_name(cl.name, c)).encode("utf-8"))
+    settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in STAGE1_SETTINGS}
+    h.update(json.dumps({"pipeline_version": "stage1-movement-1", **settings}, sort_keys=True, default=str).encode("utf-8"))
     return h.hexdigest()
 
 
 def finished_fp(c, cl):
-    """the fingerprint of the last successful Finish (None: never finished from the app)"""
+    """the fingerprint of the last successful Movement run (None: never made from the app)"""
     return (read_json(os.path.join(folders(c, cl)["work"], "finished.json"), {}) or {}).get("fp")
 
 
@@ -329,19 +299,18 @@ def folders(c, cl):
     work = os.path.join(c["work_root"], cl.name)
     sub = os.path.join(c["submit_root"], cl.name)
     return {"marks": md, "work": work, "submit": sub, "zip": sub + ".zip",
-            "pose": os.path.join(md, "pose.json"), "review": os.path.join(md, "review.json"),
-            "ai": os.path.join(md, "ai.json"), "preview": os.path.join(work, "preview.jpg"),
+            "pose": os.path.join(md, "pose.json"), "preview": os.path.join(work, "preview.jpg"),
             "scene": os.path.join(work, "scene_data.json")}
 
 
 def prepared_paths(c, cl):
-    """everything preparing, reviewing and finishing a clip left on disk -> [(path, what)] that exist.
-    Not included: the video, its delivery name, the film's cast notes (shared by its clips)."""
+    """everything processing a clip left on disk -> [(path, what)] that exist.
+    Not included: the video and its delivery name."""
     from common import output_dir                                     # pipeline
     f = folders(c, cl)
-    out = [(f["marks"], "detected joints, roles, joint fixes, objects, AI suggestions, description"),
-           (os.path.join(output_dir(c), cl.name), "hints and a hand-built set"),
-           (f["work"], "fit, set, preview, renders and job logs"),
+    out = [(f["marks"], "detected people and joints"),
+           (os.path.join(output_dir(c), cl.name), "older per-clip notes"),
+           (f["work"], "people, camera, floor, preview, renders and job logs"),
            (os.path.join(c['work_root'],'_thumbs',cl.id+'.jpg'), 'cached thumbnail'),
            (f["submit"], "the finished package"),
            (f["zip"], "the finished zip")]
@@ -359,7 +328,7 @@ def _inside(p, roots):
 
 
 def reset(c, cl):
-    """Start over: delete what prepared_paths() lists, so the next Prepare detects the people again from the video.
+    """Start over: delete what prepared_paths() lists, so the next run detects the people again from the video.
     Returns {"removed": [paths], "failed": [(path, reason)]}; a file another program holds open is reported, not hidden."""
     import shutil
     from common import output_dir                                     # pipeline
@@ -388,54 +357,44 @@ def read_json(p, default=None):
         return default
 
 
-LABELS = {  # label -> group used by the start page
-    "processing paused": "busy", "not prepared": "new", "waiting to prepare": "busy", "preparing": "busy", "AI checking": "busy",
-    "waiting for AI": "busy", "ready for review": "ready", "reviewed": "conf", "auto-confirmed": "conf",
-    "changed since Finish": "conf", "waiting to finish": "busy", "finishing": "busy", "finished": "done", "failed": "fail",
-    "waiting for background render": "busy", "rendering background": "busy", "waiting for depth correction": "busy", "correcting limb depth": "busy", "taken out": "new", "cancelled":"new"}
+PAUSED = "Paused by user"     # the error text of a job put back in the queue by Pause (cleared when it runs / on Resume)
+LABELS = {  # label -> group used by the Clips page
+    "new": "new", "waiting": "busy", "paused": "busy", "processing": "busy", "done": "done",
+    "outdated": "old", "failed": "fail", "cancelled": "new", "taken out": "new"}
 
 
 def status(c, cl, job=None):
-    """flags from the files + the clip's latest job -> one label"""
+    """flags from the files + the clip's latest job -> one label.
+    A queued or running job is shown first; otherwise a valid zip (made from today's video, delivery name and
+    Stage 1 settings) is "done", whatever happened to a later job that is no longer running."""
     f = folders(c, cl)
-    rv = read_json(f["review"]) if os.path.exists(f["review"]) else None
+    has_zip = os.path.exists(f["zip"])
     s = {"marks": os.path.exists(f["pose"]), "fit": os.path.exists(f["preview"]) and os.path.exists(f["scene"]),
-         "ai": os.path.exists(f["ai"]), "reviewed": rv is not None, "confirmed": bool(rv and rv.get("confirmed")),
-         "auto": bool(rv and rv.get("auto")), "done": os.path.exists(f["zip"])}
-    if s["done"]:
+         "zip": has_zip, "done": False}
+    if has_zip:
         last = finished_fp(c, cl)
-        if last:                                             # finished from the app: anything changed since?
-            s["done"] = last == fingerprint(c, cl)
-        elif rv and rv.get("confirmed"):                     # older package: confirmed again after the last render
-            try:
-                s["done"] = os.path.getmtime(f["zip"]) >= os.path.getmtime(f["review"]) - 1
-            except OSError:
-                pass
-    s["changed"] = os.path.exists(f["zip"]) and not s["done"]
+        s["done"] = last is None or last == fingerprint(c, cl)    # None: a zip made outside the app is taken as it is
+    s["outdated"] = has_zip and not s["done"]
     s["held"] = cl.id in held_set(c)
     s["job"] = job and {k: job[k] for k in ("id", "stage", "state", "attempts", "error") if k in job}
-    state, stage = (job or {}).get("state"), (job or {}).get("stage")
-    s["ai_failed"] = state == "failed" and stage == "ai"
-    if state in ("queued", "running"):
-        label = {("fit", "queued"): "waiting to prepare", ("fit", "running"): "preparing",
-                 ('depth','queued'):'waiting for depth correction', ('depth','running'):'correcting limb depth',
-                 ('background','queued'):'waiting for background render', ('background','running'):'rendering background',
-                 ("ai", "queued"): "waiting for AI", ("ai", "running"): "AI checking",
-                 ("all", "queued"): "waiting to finish", ("all", "running"): "finishing"}[(stage, state)]
-        if state == 'queued' and (job or {}).get('error') == 'Paused by user':
-            label = 'processing paused'
-    elif state == 'stopped':
-        label='cancelled'
-    elif state == "failed" and stage != "ai":           # a failed AI suggestion does not block the clip
-        label = "failed"
+    state = (job or {}).get("state")
+    s["stage"] = (job or {}).get("stage") if state in ("queued", "running") else None
+    if state == "running":
+        label = "processing"
+    elif state == "queued":
+        label = "paused" if (job or {}).get("error") == PAUSED else "waiting"
     elif s["done"]:
-        label = "finished"
-    elif s["confirmed"]:
-        label = "changed since Finish" if s["changed"] else ("auto-confirmed" if s["auto"] else "reviewed")
-    elif s["fit"]:
-        label = "ready for review"
+        label = "done"
+    elif s["held"]:
+        label = "taken out"
+    elif state == "failed":
+        label = "failed"
+    elif state == "stopped":
+        label = "cancelled"
+    elif s["outdated"]:
+        label = "outdated"
     else:
-        label = "taken out" if s["held"] else "not prepared"
+        label = "new"
     s["label"] = label
     s["group"] = LABELS[label]
     return s

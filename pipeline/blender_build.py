@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-White-model L3 rebuild - generic Blender builder of the automatic pipeline.
+White-model Blender builder of the automatic pipeline (Stage 1).
 Run by the pipeline:  blender -b -P blender_build.py -- <scene_data.json> [render]
-Builds the grey set, the colour-coded L3 mannequins (teal face / chest markers painted on head and chest),
-the solved camera, saves model_3d/<name>.blend and optionally renders JPEG frames.
+Builds the floor (and any set meshes in scene_data.json), the colour-coded sample-mesh characters (white eye / chest
+bands painted on head and chest), the solved camera (with its zoom keyed on the lens), saves model_3d/<package>.blend
+and optionally renders JPEG frames (Workbench).
 """
 import math, json, os, re, sys
 
@@ -79,7 +80,7 @@ def merge(parts):
         n = len(V); V += list(v); F += [tuple(n + k for k in face) for face in f]
     return V, F
 
-# ------------------------------------------------------------------ L3 rig
+# ------------------------------------------------------------------ character rig
 JOINT_ORDER = ["pelvis", "spine", "chest", "neck", "head",
                "shoulder_L", "elbow_L", "wrist_L", "shoulder_R", "elbow_R", "wrist_R",
                "hip_L", "knee_L", "ankle_L", "hip_R", "knee_R", "ankle_R"]
@@ -125,15 +126,12 @@ def sample_asset():
 
 def rig(kind, height):
     """Both characters use the same mannequin as the client samples (only overall height and colour differ):
-    smooth sphere head on a short neck, box torso, block limbs split at elbow / wrist / knee / ankle, teal face + chest bands.
+    smooth sphere head on a short neck, box torso, block limbs split at elbow / wrist / knee / ankle, white face + chest bands.
     The face and chest markers are painted on the head / chest surfaces (same object, second material).
     Parts: (joint, mesh, colour, smooth[, {face index: colour}])"""
     s = height / 1.75
     S = lambda *a: tuple(x * s for x in a)
     col = DATA["chars"][kind]["colour"]
-    if DATA['chars'][kind].get('style') == 'l3':
-        from l3_blender import descriptor
-        return [(n, par, S(*o)) for n, par, o in descriptor()['joints']], []
     if DATA["chars"][kind].get("style") == "master":
         # official human_master.blend: joints from assets/human_master.json; the meshes are the rig's own pieces,
         # appended and driven in build_blender (add_master), so no geometry here
@@ -151,7 +149,7 @@ def rig(kind, height):
                       part.get("smooth", False), {i: "marker" for i in part["marker_faces"]}))
         return J, P
     if DATA["chars"][kind].get("style", "classic") == "sample":
-        # client's L3 sample (11_2 blend): one torso block with the chest band, sphere head on the torso,
+        # the client's sample character (11_2 blend): one torso block with the chest band, sphere head on the torso,
         # upper / lower arm and leg blocks, no neck, hands or feet
         J = [("pelvis", "root", S(0, 0, 0.94)), ("spine", "pelvis", S(0, 0, 0)), ("chest", "spine", S(0, 0, 0)),
              ("neck", "chest", S(0, 0, 0.52)), ("head", "neck", S(0, 0, 0))]
@@ -216,7 +214,7 @@ def rig(kind, height):
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MASTER = []
 def master_asset():
-    """joint table of the official human_master.blend (extract_human_master.py)"""
+    """joint table of the official human_master.blend (assets/human_master.json; a dormant style, not used by Stage 1)"""
     if not _MASTER:
         with open(os.path.join(ROOT_DIR, "assets", "human_master.json"), encoding="utf-8") as fh:
             _MASTER.append(json.load(fh))
@@ -303,7 +301,7 @@ def prop_pose(p, f):
     return k[0:3], k[3:6], k[6:9]
 
 def lzhd_lighting(bpy, scn):
-    """Eevee, Standard view, one sun (key light) + an even world (fill).  DATA["light"] (hints.json "light"):
+    """Eevee, Standard view, one sun (key light) + an even world (fill).  DATA["light"] (optional):
     az = degrees the light comes from, around the camera's view (0 = from behind the camera, -90 = from screen left,
     90 = from screen right, 180 = back light), el = degrees above the horizon, sun = strength (W/m2), ambient = world
     strength, shadow = soft-shadow angle (deg)."""
@@ -360,9 +358,8 @@ def build_blender():
     for old in ([os.path.join(WORK_DIR, "render_done.txt")] if "render" in ARGS else []) + [BLEND_PATH, BLEND_PATH + "1"]:
         try: os.remove(old)
         except OSError: pass
-    if not any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
-        try: os.remove(os.path.join(WORK_DIR,'l3_geometry.json'))
-        except FileNotFoundError: pass
+    try: os.remove(os.path.join(WORK_DIR,'l3_geometry.json'))     # left by an earlier (L3) build
+    except FileNotFoundError: pass
     try: bpy.context.preferences.filepaths.save_version = 0      # no 1.blend1 backup inside the submission folder
     except Exception: pass
     for ob in list(bpy.data.objects):
@@ -457,11 +454,7 @@ def build_blender():
         for name, parent, off in J:
             e = bpy.data.objects.new(kind + "_" + name, None); e.empty_display_size = 0.06; e.empty_display_type = "SPHERE"
             cc.objects.link(e); e.parent = E[parent]; e.location = off; E[name] = e
-        actor_meshes = None
-        if cdat.get('style') == 'l3':
-            from l3_blender import append_actor
-            actor_meshes = [append_actor(bpy, kind, E, cc, mats[cdat['colour']], cdat['height'])]
-        elif cdat.get("style") == "master":
+        if cdat.get("style") == "master":
             add_master(kind, E, cc, mats, cdat["colour"], cdat["height"])
         for i, part in enumerate(P):
             j, (v, f), colour, smooth = part[:4]
@@ -476,7 +469,7 @@ def build_blender():
                 e.keyframe_insert("rotation_euler", frame=fr + 1)
         vis = cdat.get("visible")
         if vis and not all(vis):                       # hidden before the person enters / after they leave
-            geos = actor_meshes or [o for o in cc.objects if o.type == "MESH" and o.name.startswith(kind + "_")]   # one person in several shots shares a collection
+            geos = [o for o in cc.objects if o.type == "MESH" and o.name.startswith(kind + "_")]   # one person in several shots shares a collection
             prev = None
             for fr, v in enumerate(vis):
                 if v != prev:
@@ -507,9 +500,6 @@ def build_blender():
     if zooms:
         print("camera zoom: lens %.1f -> %.1f mm" % (DATA["lens"] * min(zoom), DATA["lens"] * max(zoom)))
     scn.frame_set(1)
-    if any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
-        from l3_blender import cached_validation
-        validation = cached_validation(bpy, DATA, WORK_DIR)
     scn.use_preview_range = False
     for screen in bpy.data.screens:
         for area in screen.areas:
@@ -537,8 +527,6 @@ def build_blender():
         print("scene.json", sp)
     except Exception as e:                                  # the package step reports a missing scene.json
         import traceback; traceback.print_exc()
-        if any(c.get('style') == 'l3' for c in DATA.get('chars',{}).values()):
-            raise
     scn.render.filepath = rel_out
     if "still" in ARGS:                                   # one preview frame for the AI edit page
         fr = int(ARGS[ARGS.index("still") + 1])

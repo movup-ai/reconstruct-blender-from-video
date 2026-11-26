@@ -1,292 +1,110 @@
 # Blender Agent
 
-Local white-model production app. It turns the film clips in the `SOURCE` folder into the client's submission
-packages (target, white model, comparison video, `.blend`, `meta.jsonl`, zip). Everything runs on this PC.
-Person reconstruction uses **SAM 3 tracking → RTMPose masked joints → SAM 3D Body → editable Blender rigs**.
-New preparations use the previous mannequin by default. The supplied **L3 character standard** is an explicit
-choice in Settings, with its fixed white markings and continuous arm refinement. Render quality is selected
-independently; fast Workbench rendering is the default. Source-exposure matching is optional and off by default.
-Normal processing uses sampled checks,
-bounded repairs, and cached validation results. **Settings → Validation mode → Audit** enables exhaustive checks
-and a frame review page with overlay and playback controls. Existing clips need one Re-check to adopt the new skeleton.
-See [L3 integration, testing, and known limits](docs/L3_PREVIS.md).
-SAM 3 also segments scene objects using the same local `models/sam3/sam3.pt` checkpoint. Its image and video
-workers and the body worker run sequentially in the isolated Python 3.12 CUDA environment. RTMPose uses
-TensorRT or CUDA, and the scene depth model uses CUDA (`onnxruntime-gpu`). MoGe-2, Mask2Former, Grounding DINO
-and CLIP handle scene geometry, semantic labels and carried objects. Every inference stage needs an NVIDIA GPU.
-`Setup.bat` installs the main runtime and RTMPose joint model. The required SAM worker setup and approved
-checkpoint locations are documented in [SAM 3 tracking](docs/SAM3_TRACKING.md) and [SAM 3D Body](docs/SAM3D_BODY.md).
-Use one concurrent job on the RTX 4070. TensorRT joint engines are cached in `models/trt_cache`.
-The clip editor has a **Held-object timeline** for named props, pickups, releases, transfers and visibility.
-Prop edits reuse fitted people and cameras; only changed scene layers and requested outputs are rebuilt.
-On a prepared clip's detail page, draw and name scene objects, then use **Render background only** in
-**Objects in the set**. It saves only object annotations, segments the drawn boxes (or uses drawn outlines),
-updates their models and shows a background preview. Saved people, movement and camera remain unchanged.
-Use **Finish** afterward to update the rendered video and delivery package.
-Prepare/background jobs and Finish jobs have separate slots; the defaults allow one of each concurrently.
-Model inference shares one GPU lease, released before Blender so rendering can overlap the next preparation.
-Trees, bushes, palms and potted plants use recognizable measured prototypes. Object boxes and optional
-dimensions constrain their size, and source-visible people are protected from conflicting background geometry.
-See [props, prototypes and selective rebuilding](docs/PROPS_AND_REBUILDS.md).
-A `3D` folder inside `SOURCE` holds the client's samples and is not treated as clips (`source_exclude` in `config.json`).
+Local white-model production app. It turns raw film clips into the client's v2.1 submission packages
+(`target/original.mp4`, white model, comparison video, `.blend` + `scene.json`, `meta.json`, zip). It is fully
+automatic: there is no review or confirm step. Every model runs on the NVIDIA card of this PC.
 
-Every fit also (see `pipeline\quality.py`, `pipeline\lens_auto.py`):
-- measures the clip's lens from the picture (MoGe-2) instead of the fixed `lens_mm`; `"lens_auto": false` switches it off,
-  and a lens set in `hints.json` or in the review wins;
-- leaves out tracks that are both short and unclear (`"junk_filter": false` switches it off);
-- in partial-body shots, fits visible joints without forcing hidden feet onto an assumed floor; explicit floor,
-  seated-pose and distance controls still take priority;
-- writes quality numbers and flags into `report.json` and the clip's warnings (`python pipeline\quality.py <clip>`);
-- builds what people carry (`pipeline\held_objects.py`): Grounding DINO (`models\grounding_dino`) finds objects in the
-  hands and backpacks on every 2nd frame, CLIP names them (bag, phone, cup, umbrella...), and they are placed on the
-  fitted hand or back, moving with the person (`Work_auto\<clip>\held_check.jpg` shows them over the film). Found once
-  at Prepare (`output\<clip>\held.json`); the set leaves them out. `"held_objects": false` in `config.json` or a
-  clip's `hints.json` switches it off.
+The work is split into two stages:
 
-## Processing upgrades
-
-SAM 3D Body is the metric 3D body backend using tracked masks and the local body
-checkpoints. It adds visible-mesh depth calibration and camera-space pose/placement constraints to the
-editable mannequin fitter. See [SAM 3D Body operation and validation](docs/SAM3D_BODY.md).
-Partial-body placement and arm motion use observation confidence, cropped-joint filtering and temporal
-continuation. Old human fits are invalidated once; subsequent prop edits still reuse fitted people and cameras.
-Gross source/rig misalignment blocks Finish and writes `human_alignment.json` for diagnosis.
-
-SAM 3 video tracking uses the local `models/sam3/sam3.pt` checkpoint. It supplies
-persistent person masks and IDs to RTMPose joint measurements. Prepare/Re-check generates the new tracks and
-backs up previous person edits. See [SAM 3 setup, operation and limitations](docs/SAM3_TRACKING.md).
-
-The existing models now support MAVE-style shared metric evidence, gravity and Manhattan alignment,
-proxy-based depth scale calibration, numerical scene checks and bounded geometry repair. Prepare and
-Finish reuse unchanged validation. Normal mode limits depth views and repairs; optional Audit adds detailed contact,
-surface and full-frame rig checks. Settings has switches for shared geometry, scene checks and repair.
-The clip's Things to check list includes unresolved geometry issues. See [the implementation and testing guide](docs/MAVE_EXISTING_MODELS.md)
-for diagnostics, evidence queries, human scale controls and the differences from the paper.
-
-Settings includes foot contact, adaptive set views, checkpoint locations and the camera solver.
-SAM 3 IDs are retained through pose measurement and body reconstruction. Identity merging and synthetic
-track-gap filling are removed. Fitted visibility follows observed masks, and manual joint corrections,
-roles and camera hints remain available. Foot contact is a soft world-space constraint when visible ankles
-agree with a planted foot; per-person `"foot_contact": false` and keyed leg joints take precedence.
-
-Adaptive set sampling keeps the first and middle views and adds views when the camera travels 0.5 m, turns
-12 degrees or changes zoom by 15 percent relative to the nearest selected view. `set_max_frames` defaults to five.
-For nearly fixed views it also looks for background uncovered when people move away.
-Frames explicitly annotated by an operator are always included. Set caches and completed-job fingerprints
-include the new settings, so a changed configuration can trigger rebuilding.
-
-The human model flow is fixed. Older saved backend choices are migrated automatically. See
-[the active model inventory](docs/MODEL_FLOW.md) for each remaining dependency and the retired components.
-
-The optional `da3` camera backend uses Depth Anything 3 multi-view extrinsics and interpolates between sampled views.
-It scales translation from visible floor contacts, or from the DA3 translation scale in Settings (`da3_meters_per_unit`). When scale cannot be
-estimated, a warning is recorded and the camera uses the predicted rotations. A static-camera review or a hand-authored
-camera path takes precedence. `da3_max_views` defaults to 12 and `da3_resolution` to 504.
-Set `da3_model` to a downloaded checkpoint folder and `da3_python` to a Python executable with DA3 and CUDA PyTorch.
-The worker exchanges NumPy files with the main process. This allows DA3's NumPy 1.x dependencies to live in an
-isolated environment under `downloads\da3-venv`. The upstream package and model are available from
-[Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3).
-`requirements-da3.txt` lists the camera worker's dependencies. For a fresh installation, install CUDA PyTorch 2.8
-and torchvision 0.23 in a Python 3.12 virtual environment at `downloads\da3-venv`, then run these commands.
-
-```powershell
-uv pip install --python downloads\da3-venv\Scripts\python.exe --target third_party\da3 --no-deps https://github.com/ByteDance-Seed/Depth-Anything-3/archive/refs/heads/main.zip
-uv pip install --python downloads\da3-venv\Scripts\python.exe -r requirements-da3.txt
-```
-
-Each pipeline run writes `Work_auto\<clip>\profile_<stage>.json`, including a failed run. It records wall time and
-call count for marks, lens, camera, people fitting, the depth set, carried objects, environment building, Blender,
-and encoding/packaging. These timings include model startup and subprocess work.
-Background jobs also write `environment_profile.json` and `verification_profile.json`: separate model loading,
-SAM inference, classification, joint prototype fitting and verification times, plus cache-hit counts.
-The video detail page shows these under **Background timings**, alongside projected alignment failures.
-See [Background reconstruction](docs/BACKGROUND_RECONSTRUCTION.md) for fitting rules, limits and validation results.
+| Stage | What it does | State |
+|---|---|---|
+| **1 Movement** | people, camera, metric scale, floor → `.blend` (characters + camera + grey floor) → white-model and comparison videos → v2.1 zip → v2.1 package check | implemented |
+| **2 Background** | objects detected on Stage 1's saved depth, placed as prebuilt assets → rebuilt `.blend` → re-render → re-pack | planned, not in this version |
 
 ## Start
 
 Double-click **`Start_Blender_Agent.bat`**. The browser opens at http://127.0.0.1:8765.
 
 - The first start runs `Setup.bat` on its own (Python packages and models, one time, needs internet).
-- Keep the black window open. Closing it stops the app, and unfinished jobs continue at the next start.
+- Keep the black window open. Closing it stops the app; unfinished jobs continue at the next start.
 - If the app crashes, the window restarts it after 5 seconds. Details are in `logs\agent.log`.
-- Starting it a second time just opens the browser on the running app.
 
 ## Work
 
-1. **Copy the videos into `SOURCE\`.** Each one appears on the Clips page as a card by itself; the ✕ on a card takes it
-   off the list (the file stays; `data\removed.json` remembers it, and *Removed from the list* puts it back).
-   *Name them…* gives videos without a v2.1 package name `title-1`, `title-2`… in file-name order from one English
-   title (saved in `data\package_names.json`). Joints, work files and packages go to `output\`, `Work_auto\` and `SUBMIT\`.
-   **Task zips** from the client (the v2.1 layout with the source video at `target/original.mp4` and `meta/task.json`)
-   can go into the folder as they are: the app writes each zip's video next to it as `<zip name>.mp4`, lists it with
-   the task code and name, and uses the zip name as its delivery name. The zip is not changed; a video of that name
-   that is not from the zip is left alone (a note appears at the top of the page). The finished package is the usual
-   v2.1 zip in `SUBMIT\`.
-2. **Start.** Nothing runs until you press **Start** on the Clips page, also after restarting the app (jobs left from
-   last time wait in the queue). Start prepares every video not prepared yet; **Pause processing** stops active jobs
-   and preserves completed caches. **Resume processing** restarts the interrupted stage from those caches; it does
-   not restore an exact in-memory frame. **Cancel pipeline** stops your running and queued jobs without retrying
-   them or deleting completed work. Each running clip also has its own **Cancel** action in Cards/Table and on
-   the detail page. Use **Reset all** when you also want to erase generated work and recorded times.
-   The Clips page shows each video's step and progress.
-3. **Review** a clip marked *ready for review*: **1 Who is who** (cards saying *Not a person?* look like a statue, a
-   picture or a false detection; one click, then *Re-check*), **2 Joints** (the editor opens on the frames where the
-   fitted person moved suddenly), **3 Objects**. Press **✓ Mark reviewed** (finish later) or **▶ Finish now**. Camera, set, held objects and the description
-   are filled in automatically; change them under **More** only if they are wrong.
-4. **Finish all reviewed** (or **Finish** on one clip): final fit, set, Blender, videos and the v2.1 zip in `SUBMIT\`.
-   A clip whose roles, joints, objects, hints and notes are unchanged since its last Finish is skipped
-   (`Work_auto\<clip>\finished.json` holds the fingerprint).
+1. **Put the videos in the source folder** (`SOURCE\` by default, or pick a folder in the app). A `3D` folder inside
+   it holds the client's samples and is not treated as clips (`source_exclude` in `config.json`). Client **task zips**
+   (v2.1 layout with `target/original.mp4` and `meta/task.json`) can go in as they are: the app writes each zip's video
+   next to it and uses the zip name as its delivery name.
+2. **Name the videos** (*Name videos…*): videos without a v2.1 package name get `title-1`, `title-2`… in file-name
+   order from one English title (`data\package_names.json`). A clip without a package name fails with a clear message.
+3. **Start.** Every clip that is not done runs the Movement stage on its own. **Pause / Resume / Cancel** act on the
+   running jobs; **Reset** deletes a clip's generated work so it runs from the video again.
+4. **Download** the zip when the clip shows *done*. A zip is *outdated* when the video, its delivery name or a Stage 1
+   setting changed since it was made.
 
-**Settings → Autopilot → Full auto** does steps 2–4 on its own after Start, without a review. If a DeepSeek key is saved, DeepSeek checks the
-people and the set first. You can still open any clip, change it and finish again.
+From the command line (one clip):
 
-Settings has separate *Prepare / background jobs* and *Finish jobs* limits. Start with one of each on the RTX 4070.
-The start page also has *Retry failed*, *Clear queue*, *Report (CSV)* and a system check.
+```powershell
+.venv\Scripts\python.exe pipeline\run_pipeline.py <video> --stage movement --name <clip> [--force]
+.venv\Scripts\python.exe pipeline\run_pipeline.py <video> --stage render --name <clip>   # re-render a saved scene
+```
 
-## AI suggestions (DeepSeek, optional)
+Exit code 0 = done (or skipped: the zip exists and `--force` was not given), 1 = failed (the last log lines say why).
 
-On the start page, under **AI suggestions · DeepSeek**, paste your API key and press **Save key**, then **Test**.
-The key is stored only in `config.json` on this PC and is never shown again. (You can also put it in `deepseek_key.txt`
-next to the launcher, or set the `DEEPSEEK_API_KEY` environment variable.)
+## Stage 1 Movement, step by step (`pipeline\run_pipeline.py`)
 
-With a key, every prepared clip gets one DeepSeek check:
-- **People:** who is a real person (drivers behind glass, posters and reflections become *Not a person*), and which role.
-  A per-film cast memory gives the same character the same colour in every clip.
-- **Environment:** DeepSeek sees each shot's empty background with every wall (W) and block group (B) numbered. It names
-  what each one is, removes wrong ones (sky, ground, smears), and adds missed objects (cars, tables, doors, trees…) as boxes
-  standing on the ground at the right distance. The clip is then rebuilt with these corrections, and the review page lists them.
-- **Camera type, held objects, and a Chinese description** for `meta.jsonl`.
+1. **Marks** (`automark.py`): SAM 3 tracks person masks with persistent IDs; RTMPose measures 17 joints inside each
+   mask → marks folder `pose.json`, `sam3_masks.npz`, `tracking_report.json`.
+2. **Shots and lens**: hard cuts are found (`shots.py`); the clip's lens is measured from the picture with MoGe-2
+   (`lens_auto.py`). To set the lens by hand, put `"lens_auto": false` and `"lens_mm"` in `config.json`.
+3. **Per shot**:
+   - tracks that are short and unclear are left out (`quality.drop_junk`; SAM 3 tracks are kept);
+   - camera: dense flow tracking with Depth Anything V2 Small depth cues, steadying, level roll, and the per-frame
+     zoom, folded with the measured lens (`camera_estimate.py`);
+   - metric scene: MoGe-2 depth + Mask2Former floor / wall / ceiling labels (`metric_scene.py`, `metric_observe.py`)
+     give gravity, the world yaw and the camera height. The cached `Work_auto\<clip>\metric_observation*.npz` is the
+     saved depth that Stage 2 will build on;
+   - SAM 3D Body recovers metric bodies; their visible surfaces calibrate the depth scale (`sam3d_body.py`);
+   - the characters (the client's sample mesh) are fitted to the joints with the body priors (`fit_people.py`);
+   - half-body shots (nobody's feet in the picture) move the floor under the people when SAM 3D Body could not
+     calibrate the scale (`quality.floor_shift`).
+4. **Floor**: one flat grey ground disc under the people (`scene_depth.flat_set`). No set, no props.
+5. `scene_data.json`, `camera.json`, `clip_info.json`, `preview.jpg`, the quality numbers (`quality.measure`) and the
+   human alignment numbers (`human_alignment.json`) are written. Alignment problems are warnings in `report.json`;
+   they never stop a clip.
+6. **Blender**: the colour card is applied (a failure fails the clip), Blender builds `model_3d\<package>.blend`
+   (camera with its lens keyed when it zooms, Workbench render) and renders the frames (`blender_build.py`).
+7. **Package**: v2.1 layout (`package.py`): the white model fills and centre-crops the 1920×1080 canvas (1080×1920
+   for a vertical source), the comparison stacks source over white model at 1920×2160 (2160×1920 side by side for a
+   vertical source), the source audio is copied, `target/original.mp4` is the source byte for byte.
+8. **Package check**: `agent/validate.py` checks the folders and the six files, meta id and paths, video sizes,
+   H.264, durations, fps, identical audio, the target against the source, the `.blend` header, and zip = folder.
+   Any problem fails the clip.
 
-The environment check needs a DeepSeek model that accepts images. **Test** tells you whether yours does. Frames of the
-clips are sent to DeepSeek when AI suggestions are on.
+Each run writes `Work_auto\<clip>\profile_<stage>.json` (wall time per step: marks, camera, metric observation,
+SAM 3D Body, people fit, Blender, encoding and package, package check), also for a failed run.
 
-## Colours (colour card)
+## Colours
 
-Every video follows the colour card in [docs/COLOUR_CARD.md](docs/COLOUR_CARD.md) (`pipeline\colour_card.py`):
-characters red, blue, green, yellow by role (5th on: cyan, magenta...); background grey `#B8B8B8`; foreground objects
-(in front of people) brown; things people carry or touch orange; interactive things far from people (a distant door)
-pink; lamps and lights white; special objects purple. It is applied when the set is built and again before every
-render, so older clips follow it when they are finished again.
+Every video follows the colour card ([docs/COLOUR_CARD.md](docs/COLOUR_CARD.md), `pipeline\colour_card.py`):
+characters red, blue, green, yellow, the largest and longest-seen person first (5th on: cyan, magenta, teal, olive); the eye and chest bands
+white; the floor grey `#B8B8B8`.
 
-## Object notes on the clip page
+## Setup
 
-Draw a box, keep the type *other*, and describe the object in your own words (up to 200 characters). Prepare and
-Finish build every note at the frame it was drawn on, placed from that frame's camera and measured depth:
-- a thing the description names with a regular shape (door, pillar, table, chair, lamp, car...) -> that model;
-- a plant, curtain, statue, or anything the description does not name -> its measured shape (SAM cuts the thing out
-  of the box, the depth model gives its surface);
-- "held", "in his left hand", "carrying", "backpack", "wearing" -> on that person's hand or back for the whole clip;
-- "interactive", "distant", "special", "foreground", or a light ("ceiling lamp") -> that colour-card meaning.
-A type picked in the list wins over the description. The job log lists what each note became.
-
-## Objects in the set (like the client sample)
-
-Each clip page has an **Objects in the set** editor. Drag a box on the shot's background, pick the type (door, window,
-cabinet, shelf, counter, sink, table, chair, sofa, bed, fridge, car, van, tree, bush, fence, lamp post, stairs, building
-and more), optionally its **Kind** (the colour card's set meanings: background grey, foreground brown, near
-interactive orange, far interactive pink, light source white, special purple; auto decides from what it is and where)
-and the facing direction (library models only), then save. The picture is the original key frame, people included, so
-things partly hidden by a person can be boxed too; one hidden in that frame stands on the floor under its box. Every object is built from `pipeline/props.py` as a
-simple recognisable model (a door has a frame, panel and handle; a car has a body, cabin and wheels), standing where it
-touches the floor and sized from the picture. With a DeepSeek key, DeepSeek fills the list in for every shot.
-
-**Distance** (auto, or 1 near .. 9 far) fixes the order when the depth measures an object at the wrong distance. In a
-shot, an object is pushed back along the camera's view until it is behind every object with a smaller number; the
-biggest number in the shot (2 or more) is the back of the set and also goes behind every person on every frame of the
-shot, so nobody walks through it. Pushing back along the view keeps it where the picture shows it (it just gets bigger).
-Objects left on auto stay where they are measured (`env_auto.by_level`).
-
-## What happens in each step
-
-**Prepare** (Start; one job per clip; timing depends on clip length and crowding):
-1. *People*: SAM 3 tracks person masks and persistent IDs; RTMPose measures 17 joints inside each mask
-   (`automark.py` -> `pose.json` and `sam3_masks.npz`).
-2. *Camera and people in 3D*: cuts are found, the lens is measured (MoGe-2), the camera height / tilt / turn is
-   solved, and SAM 3D Body recovers metric bodies and depth placement that drive editable mannequins -> `scene_data.json`.
-   A zooming lens is tracked too (`scene_data.json` "zoom": focal scale per frame): the people, the set, the drawn
-   objects and the Blender camera (lens keyed every frame) all use each frame's own focal length, so things at the
-   picture's edge in the first frame leave it as the camera zooms in.
-3. *Carried objects*: Grounding DINO + CLIP find what people hold or wear -> `held.json`.
-4. *Background - measured*: on the first and middle frame of each shot, MoGe-2 measures depth, SAM 3 cuts the
-   picture into pieces and Mask2Former names them; walls, floor, furniture and plants are placed from that ->
-   `env_auto.json` (+ `env_auto.jpg`). Your object notes from the clip page are built here too.
-5. *Background - built*: with **Settings -> Background set -> Claude**, Claude now writes the set from the frames,
-   using step 4's numbers as its ruler, checks it over the film and corrects it (`pipeline\claude_set.py` ->
-   `env_claude_ai.json`); otherwise step 4's set is used. `build_env.py` turns the set into meshes, carried objects
-   go on the hands, everything gets the colour card -> `env_check.jpg`. The clip is then *ready for review*.
-
-**Review** (clip page): who is who, joint fixes, object notes. Saving changed notes makes the set be measured and
-built again at Finish.
-
-**Finish** (about 1-2 minutes): the people are fitted again with your fixes, the set from Prepare is reused unless the
-camera or your notes changed (then steps 4-5 run again), Blender renders the white model, the videos are encoded and
-the v2.1 package and zip are written to SUBMIT.
-
-## Background set by Claude
-
-The local models measure well but do not understand a room: a curtain cut into strips, a wall seen through a doorway,
-a pillar behind a person. Claude, looking at the frames like a person building the set by hand, does. In
-**Settings -> Background set** paste an Anthropic API key and choose *Claude* (model: Claude Sonnet 5.5, or Opus 5.5).
-For each shot it gets the first / middle / last frame with a pixel grid, the fitted camera, how far the floor is at
-each picture row, where every person stands, what the depth model measured, and every object you annotated; it writes
-the set (placed by picture box + distance, so it lines up with the film), sees the built set over the film, and
-corrects it once ("Check rounds"). Plants and statues keep their measured shapes. About $0.10-0.40 per clip with
-Sonnet; the cost of each clip is in `output\<clip>\env_claude_ai.json` (`_claude`). If the key is missing or the call
-fails, the local set is used. Frames of the clips are sent to the Claude API.
-
-## How the set is built
-
-Every piece of the background is named by Mask2Former (`models\mask2former_ade`, ADE20K's 150 classes: wall, window,
-door, curtain, plant, flower, vase, table, desk, chair, sofa, cabinet, shelf, lamp, car, tree...), on the NVIDIA card
-(`pipeline\semseg.py`, about 0.1 s a frame). The name picks how the piece is built:
-- walls, floors, ceilings, buildings: from their measured planes, as before;
-- furniture: recognizable library models (`pipeline\props.py`), jointly fitted in position, dimensions and orientation
-  to segmented masks and reliable depth across sampled views. Visible chair backs preserve the complete chair;
-- indoor plants: tapered pots, stems and rounded canopies; outdoor trees: pine prototypes; bushes: rounded shrubs.
-  Vases, pots, curtains, doors and windows use named prototypes;
-- statues, cushions and other unnamed irregular things: from their **measured surface**
-  (`pipeline\relief.py`: the depth model's points inside the piece's outline become a solid with its real silhouette).
-  A drawn box or outline selects the measured object. Known names choose prototypes; unknown irregular things use
-  the measured surface. Explicit user dimensions remain fixed.
-Confident furniture labels can override geometric wall guesses. Without the model, CLIP names the
-pieces and the library shapes are used.
-
-Clips are split at hard cuts, and every shot gets its own camera, ground and set. The ground comes from the solved
-camera height and angle, checked against the depth model. Walls and objects stand where they meet the ground, so they
-are vertical and correctly placed. What doesn't touch the visible ground becomes depth blocks. Colours are taken from
-the video (L2 spec). Each clip's work folder has a `blocks_*.jpg` showing what became ground, sky, walls and blocks.
-
-## Working with Claude (hand-built sets, like the client sample)
-
-1. **Prepare** a clip (local models, on the NVIDIA card): people, joints, camera.
-2. **Confirm** the people in the app. This writes `output\<clip>\claude_brief.json` and `Work_auto\CLAUDE_HANDOFF.md`
-   (the list of all clips), and does not render.
-3. Claude writes two files next to the marks in `output\<clip>\`:
-   - `hints.json` - what the picture cannot show: camera height / tilt / travel, and per person "seated", "legs hidden",
-     distance from the camera. Then `python pipeline\run_pipeline.py <video> --stage fit --name <clip>` fits the people again.
-   - `env_claude.json` - the set, object by object (walls, windows, desk, chairs, rocks, trees...), placed in metres or by
-     their box in the picture. `python pipeline\build_env.py <clip>` puts it into the scene and writes
-     `Work_auto\<clip>\env_check.jpg` (film / overlay / set) to compare.
-4. `python pipeline\run_pipeline.py <video> --stage render --name <clip>` renders in Blender and makes the
-   submission folder and zip in `SUBMIT\`.
-5. Corrections from screenshots go into the same two files, then step 3-4 again.
-
-Running `--stage fit` again replaces the set with the automatic one: run `build_env.py` after it.
+`Setup.bat` installs PyTorch (CUDA 12.6), TensorRT, onnxruntime-gpu, the Python packages (`requirements.txt`),
+RTMPose, Depth Anything V2 Small, MoGe-2 and Mask2Former, and checks the SAM 3 / SAM 3D Body assets. SAM 3 and
+SAM 3D Body run in an isolated Python 3.12 CUDA environment (default `downloads\da3-venv\Scripts\python.exe`, the
+historical folder name) with `requirements-sam3.txt` / `requirements-sam3d-body.txt`; see
+[SAM 3 tracking](docs/SAM3_TRACKING.md) and [SAM 3D Body](docs/SAM3D_BODY.md). Blender 5.x must be installed (or
+its path set in Settings). Use one concurrent job on a 12 GB card. Model folders no longer used
+(`models\grounding_dino`, `models\clip`, `models\da3`) can be deleted by hand.
 
 ## Folders
 
 | Folder | Contents |
 |---|---|
-| `agent\` | the app (server, job queue, review logic, local AI) |
-| `pipeline\` | marks, camera, ground, people fitting, set, Blender build, packaging |
+| `agent\` | the app (server, job queue, clip status, v2.1 package check) |
+| `pipeline\` | Stage 1: marks, camera, metric scene, people fitting, floor, Blender build, packaging |
 | `web\` | the pages |
-| `assets\` | the client's sample character from the November 2 trial Blender file |
-| `models\` | SAM 3, SAM 3D Body/MHR, depth, MoGe-2, semantic and object model weights; `trt_cache\` holds the built TensorRT engines |
-| `downloads\` | saved PyTorch and TensorRT wheels that `Setup.bat` installs |
-| `output\` | joint marks and reviews per clip |
-| `data\jobs.db` | job queue (survives restarts) |
-| `logs\` | app log |
-| `tests\` | `.venv\Scripts\python -m unittest discover -s tests` |
+| `assets\` | the client's sample character, other supplied character definitions, the reconstruction script |
+| `models\` | SAM 3, SAM 3D Body/MHR, Depth Anything V2 Small, MoGe-2, Mask2Former weights; `trt_cache\` TensorRT engines |
+| `output\` | per clip: tracked people and joints (`pose.json`, masks) |
+| `Work_auto\` | per clip: scene, previews, saved depth, renders, reports, job logs |
+| `SUBMIT\` | finished packages and zips |
+| `tools\v21\` | stand-alone v2.1 package checker |
+| `docs\` | [project map](docs/PROJECT_MAP.md), [model flow](docs/MODEL_FLOW.md), colour card, SAM notes, client spec (`docs\v21\`) |
+| `tests\` | `.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"` |
 
-Outputs go to `Work_auto` (previews, logs) and `SUBMIT` (submissions) inside this folder. Change the
-folders in `config.json`.
+The folders are set in `config.json` (`source_root`, `work_root`, `submit_root`). `BA_SANDBOX=<folder>` sends every
+output of a command-line run to that folder instead (test runs that leave the real outputs untouched).

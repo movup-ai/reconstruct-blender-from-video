@@ -1,7 +1,8 @@
-"""MAVE-style shared metric evidence using the installed MoGe, poses and semantics.
+"""Metric scene evidence for Stage 1: MoGe-2 depth + Mask2Former floor/wall/ceiling labels (metric_observe.py).
 
-The fitted mannequin supplies a scale reference, not SAM 3D Body surface geometry.
-All arrays use OpenCV cameras and the pipeline's z-up world, in metres.
+observe() caches metric_observation<shot>.npz in the clip's work folder - Stage 1's saved depth, kept for the
+planned Stage 2 (background).  align() / camera_height() give gravity and the camera height; body_scale() is the
+fallback scale when SAM 3D Body is not calibrated.  All arrays use OpenCV cameras and the pipeline's z-up world, in metres.
 """
 import hashlib
 import math
@@ -19,7 +20,6 @@ from profiling import stage
 VERSION = 1
 FLOOR = {"floor", "ground", "road", "sidewalk", "earth", "grass", "field", "path", "rug", "stage"}
 WALL = {"wall", "building", "house", "skyscraper"}
-SUPPORT = FLOOR | {"table", "desk", "countertop", "step", "stairs", "stairway", "bed", "bench"}
 
 
 def points(depth, K):
@@ -75,9 +75,6 @@ def observe(frames, pose, cam, y0, camj, c):
     """Run isolated GPU observations, cached by the actual images and intrinsics."""
     count = min(len(frames), max(1, int(c.get("metric_max_views", 3))))
     fs = np.unique(np.linspace(0, len(frames)-1, count, dtype=int))
-    if c.get('_da3_depth'):
-        available = sorted(c['_da3_depth'])
-        fs = np.asarray([available[i] for i in np.unique(np.linspace(0,len(available)-1,min(count,len(available)),dtype=int))])
     width = min(cam.W, int(c.get("metric_resolution", 384)))
     height = max(16, round(cam.H * width / cam.W))
     images = np.asarray([cv2.cvtColor(cv2.resize(frames[f][y0:y0+cam.H], (width, height)), cv2.COLOR_BGR2RGB) for f in fs])
@@ -127,14 +124,6 @@ def observe(frames, pose, cam, y0, camj, c):
                 source["valid"][len(groups)][label == i] = False
         people.append(mask); groups.append(group)
     source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source="MoGe-2")
-    if c.get('_da3_depth'):
-        for i,f in enumerate(fs):
-            d = c['_da3_depth'][int(f)]; Kd = c['_da3_intrinsics'][int(f)]
-            warped = cv2.warpPerspective(d,source['K'][i] @ np.linalg.inv(Kd),(width,height),
-                                        flags=cv2.INTER_NEAREST,borderValue=0.)
-            source['depth'][i] = warped
-            source['valid'][i] &= np.isfinite(warped)&(warped>.05)
-        source['source'] = 'DA3'
     return source
 
 
@@ -283,54 +272,3 @@ def camera_height(observation, camj, up):
     if len(offsets)<30: return None
     median = float(np.median(offsets))
     return median if np.median(np.abs(np.asarray(offsets)-median))<.15*median else None
-
-
-def capture(observation, world, work, tag="", start=0, dx=0.):
-    fs = observation["frames"]
-    centers = np.array([world.C_at(f) for f in fs]); centers[:, 0] += dx
-    path = os.path.join(work, "metric_evidence%s.npz" % tag)
-    np.savez_compressed(path, version=VERSION, frames=fs+start,
-        depth=observation["depth"] * observation.get("scale", 1.), K=observation["K"],
-        R=np.asarray([world.R_cw(f) for f in fs]), C=centers,
-        person=observation["person"], valid=observation["valid"], groups=observation["groups"],
-        labels=observation["labels"], names=observation["names"])
-    return path
-
-
-def plane_proposals(bundle, minimum=40):
-    """Measured planar patches as editable meshes, separated by semantic component.
-
-    Retain openings by using each component's convex hull only when it is mostly filled.
-    Non-planar furniture/vegetation is handled by the SAM 3 environment builder.
-    """
-    candidates = []
-    for f, depth, K, R, C, valid, person, labels in zip(bundle["frames"], bundle["depth"], bundle["K"], bundle["R"],
-                                                      bundle["C"], bundle["valid"], bundle["person"], bundle["labels"]):
-        xyz = points(depth, K) @ R + C
-        valid = valid & ~person & np.isfinite(xyz).all(-1) & (depth > .1) & (depth < 80)
-        for label in np.unique(labels[valid]):
-            if label < 0 or label >= len(bundle["names"]): continue
-            name = str(bundle["names"][label])
-            if name not in SUPPORT | WALL | {"ceiling"}: continue
-            count, components = cv2.connectedComponents((valid & (labels == label)).astype(np.uint8))
-            for component in range(1, count):
-                mask = components == component
-                if mask.sum() < minimum: continue
-                yy, xx = np.nonzero(mask)
-                hull = cv2.convexHull(np.c_[xx, yy].astype(np.int32))
-                if cv2.contourArea(hull) > 1.3 * mask.sum(): continue
-                cloud = xyz[mask][::max(1, int(mask.sum())//2000)]
-                center = np.median(cloud, axis=0)
-                _, _, vt = np.linalg.svd(cloud-center, full_matrices=False)
-                distance = (cloud-center) @ vt[2]
-                if np.percentile(np.abs(distance), 85) > max(.08, .025*np.median(depth[mask])): continue
-                local = (cloud-center) @ vt[:2].T
-                hull = cv2.convexHull(local.astype(np.float32)).reshape(-1, 2)
-                vertices = hull @ vt[:2] + center
-                # Trim extreme hull points rather than creating huge surfaces at depth outliers.
-                if np.max(np.linalg.norm(vertices-center, axis=1)) > 40: continue
-                candidates.append({"name": "evidence_%s_f%d_c%d" % (name.replace(" ", "_"), f, component),
-                    "v": vertices.tolist(), "f": [list(range(len(vertices)))], "colour": "set", "role": "bg",
-                    "layer": 1 if name in SUPPORT else 0,
-                    "_evidence": {"frame": int(f), "semantic": name, "samples": int(mask.sum())}})
-    return sorted(candidates, key=lambda m: -m["_evidence"]["samples"])[:60]

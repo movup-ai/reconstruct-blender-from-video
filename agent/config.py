@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Settings and folders.  One config.json next to the launcher holds both the pipeline settings and the app settings."""
 import json
-import math
 import os
 import sys
 import threading
@@ -20,41 +19,38 @@ APP_DEFAULTS = {
     "port": 8765,
     "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app (members log in by name)
     "session_days": 30,               # a login lasts this long on one browser
-    "parallel": 1,                    # Prepare/background slots; model inference shares one GPU lease
-    "finish_parallel": 1,             # separate rendering/packaging slots
-    "autopilot": "off",               # off | prepare | full   (full = prepare, AI fill, auto-confirm, render)
-    "timeout_fit_min": 40,
-    "timeout_ai_min": 20,
-    "timeout_render_min": 180,
+    "parallel": 1,                    # clips processed at once; model inference shares one GPU lease
+    "timeout_movement_min": 220,      # Stage 1 Movement: people, camera, floor, Blender render and the v2.1 zip
     "max_attempts": 2,                # a failed job is tried once more automatically
-    "ai_enabled": True,               # AI suggestions through the DeepSeek API (needs a key)
-    "deepseek_model": "deepseek-flash",    # DeepSeek V4.1 Flash: the model that accepts images
-    "deepseek_url": "https://api.deepseek.com",
-    "ai_send_images": True,           # send frames + person crops (falls back to measurements if the model refuses images)
     "open_browser": True,
-    "render_on_confirm": False,       # False: confirming writes the hand-off for Claude, who builds the set and renders
-    "set_detail": "clean",            # clean = readable L2 set (whole facades, simple masses); detailed = every depth block
-    "set_builder": "auto",            # auto = the local models build the set; claude = Claude does (pipeline/claude_set.py)
-    "set_model": "claude-sonnet-5-5",
-    "set_rounds": 2,                  # Claude: write the set, then check it over the film and correct it once
 }
-SECRETS = ("deepseek_key", "anthropic_key")   # saved in config.json, never sent back to the browser
-SET_BUILDERS = ("auto", "claude")       # who builds the background set: the local models, or Claude (needs a key)
-SET_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")
-EDITABLE = {"parallel": int, "finish_parallel": int, "autopilot": str, "ai_enabled": bool, "deepseek_model": str, "deepseek_key": str,
-            "ai_send_images": bool, "max_attempts": int, "set_detail": str,
-            "set_builder": str, "set_model": str, "set_rounds": int, "anthropic_key": str,
-            "source_root": str, "submit_root": str, "work_root": str, "blender_exe": str, "person_height": float, "lens_mm": float}
-AUTOPILOT_MODES = ("off", "prepare", "full")
-EDITABLE.update({"camera_backend": str, "da3_model": str,
-                 "character_style": str, "render_engine": str, "source_exposure": bool,
-                 "da3_python": str, "da3_meters_per_unit": float,
-                 "foot_contact": bool, "set_adaptive_frames": bool, "set_max_frames": int,
-                 "metric_scene": bool, "scene_verify": bool, "scene_repair": bool, "validation_mode": str,
-                 "sam3_checkpoint": str, "sam3_python": str,
-                 "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int})
+# Older timeouts: Prepare ("fit") and Finish ("render") were separate jobs; Movement does both in one run.
+OLD_TIMEOUTS = {"timeout_fit_min": 40, "timeout_render_min": 180}
+SECRETS = ()                          # nothing secret is stored any more (no AI keys)
+_EDITABLE = {"parallel": int, "max_attempts": int,
+             "source_root": str, "submit_root": str, "work_root": str, "blender_exe": str,
+             "person_height": float, "lens_mm": float,
+             "foot_contact": bool, "metric_scene": bool,
+             "sam3_checkpoint": str, "sam3_python": str,
+             "sam3d_checkpoint": str, "sam3d_mhr": str, "sam3d_python": str, "sam3d_stride": int}
+# only settings the pipeline still has (a setting it dropped is not offered here)
+EDITABLE = {k: t for k, t in _EDITABLE.items() if k in DEFAULT_CFG or k in APP_DEFAULTS}
 
 _lock = threading.Lock()
+
+
+def migrate(saved):
+    """settings saved by an older version -> today's names (unknown or retired keys are simply ignored)"""
+    saved = dict(saved)
+    if "timeout_movement_min" not in saved and any(k in saved for k in OLD_TIMEOUTS):
+        total = 0
+        for k, default in OLD_TIMEOUTS.items():
+            try:
+                total += float(saved.get(k, default))
+            except (TypeError, ValueError):
+                total += default
+        saved["timeout_movement_min"] = total
+    return saved
 
 
 def load():
@@ -65,7 +61,9 @@ def load():
     if os.path.exists(CFG_PATH):
         try:
             with open(CFG_PATH, encoding="utf-8") as fh:
-                c.update(json.load(fh))
+                saved = json.load(fh)
+            if isinstance(saved, dict):
+                c.update(migrate(saved))
         except (OSError, ValueError):
             pass
     c = normalize_backends(c)
@@ -80,43 +78,20 @@ def save(updates):
     for k, v in updates.items():
         if k not in EDITABLE:
             raise ValueError("setting %r cannot be changed here" % k)
-        if k == "da3_meters_per_unit" and v in (None, ""):
-            clean[k] = None
-            continue
         try:
             v = EDITABLE[k](v) if EDITABLE[k] is not bool else (v in (True, "true", "1", 1, "on"))
         except (TypeError, ValueError):
             raise ValueError("bad value for %s: %r" % (k, v))
-        if k in ("parallel", "finish_parallel") and not 1 <= v <= 8:
-            raise ValueError("%s must be 1-8" % k)
-        if k == "camera_backend" and v not in ("flow", "da3"):
-            raise ValueError("camera_backend must be flow or da3")
-        if k == 'validation_mode' and v not in ('normal','audit'):
-            raise ValueError('validation_mode must be normal or audit')
-        if k == 'character_style' and v not in ('sample','l3','classic','base21','master'):
-            raise ValueError('Unknown character style')
-        if k == 'render_engine' and v not in ('workbench','eevee'):
-            raise ValueError('render_engine must be workbench or eevee')
-        if k == 'sam3d_stride' and not 1<=v<=16:
-            raise ValueError('sam3d_stride must be 1-16')
-        if k == "set_max_frames" and not 2 <= v <= 12:
-            raise ValueError("set_max_frames must be 2-12")
-        if k == "da3_meters_per_unit" and (not math.isfinite(v) or v <= 0):
-            raise ValueError("DA3 translation scale must be positive and finite")
-        if k == "set_detail" and v not in ("clean", "detailed"):
-            raise ValueError("set_detail must be clean or detailed")
-        if k == "autopilot" and v not in AUTOPILOT_MODES:
-            raise ValueError("autopilot must be one of %s" % ", ".join(AUTOPILOT_MODES))
-        if k in ("deepseek_key", "anthropic_key"):
-            v = v.strip()
-            if v and (len(v) < 20 or len(v) > 300 or any(ch.isspace() for ch in v)):
-                raise ValueError("that does not look like an API key")
-        if k == "set_builder" and v not in SET_BUILDERS:
-            raise ValueError("set_builder must be one of %s" % ", ".join(SET_BUILDERS))
-        if k == "set_model" and v not in SET_MODELS:
-            raise ValueError("set_model must be one of %s" % ", ".join(SET_MODELS))
-        if k == "set_rounds" and not 1 <= v <= 3:
-            raise ValueError("set_rounds must be 1-3")
+        if k == "parallel" and not 1 <= v <= 8:
+            raise ValueError("parallel must be 1-8")
+        if k == "max_attempts" and not 1 <= v <= 5:
+            raise ValueError("max_attempts must be 1-5")
+        if k == "sam3d_stride" and not 1 <= v <= 16:
+            raise ValueError("sam3d_stride must be 1-16")
+        if k == "person_height" and not 0.5 <= v <= 2.5:
+            raise ValueError("person_height must be 0.5-2.5 m")
+        if k == "lens_mm" and not 5 <= v <= 400:
+            raise ValueError("lens_mm must be 5-400 mm")
         if k in ("source_root", "submit_root", "work_root") and not os.path.isabs(v):
             raise ValueError("%s must be a full path" % k)
         clean[k] = v

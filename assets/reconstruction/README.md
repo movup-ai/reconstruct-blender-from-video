@@ -12,7 +12,7 @@
 - **Objects and hierarchy**: `collections` records collections and their parents; `objects` records names, types, collections, parents, rest transforms, visibility, and parent inverse matrices.
 - **Geometry and appearance**: all mesh vertices, faces, material slots per face, and smoothing flags; `materials` maps material names to colors. No textures are needed.
 - **Characters and motion**: `characters` records labels, colors, heights, root and joint empties, and mesh parts. Root position and heading, pelvis height, and XYZ joint rotations are animated. Mesh parts follow the corresponding joints; white head and chest marker faces use `WM_marker` material.
-- **Animation**: `animation` stores keys as object → property → channel → `[frame, value, interpolation]`, including characters, cameras, visibility changes, and moving props.
+- **Animation**: `animation` stores keys as object → property → channel → `[frame, value, interpolation]`, including characters, the camera and visibility changes. A zooming lens is listed per frame in `camera.lens_mm_per_frame`.
 - **Camera**: `camera` records the camera object, focal length, sensor width, and shot ranges. Position and rotation have keys every frame.
 - **Lighting**: render settings, world data, and supported light objects are exported when present. Workbench scenes use studio lighting.
 

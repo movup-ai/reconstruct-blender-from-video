@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""numpy copy of the L3 mannequin in blender_build.py (same joints, same Blender XYZ euler order).
+"""numpy copy of the character rig in blender_build.py (same joints, same Blender XYZ euler order).
 character faces +Y, its right side is +X, z up."""
 import numpy as np
 
@@ -8,9 +8,8 @@ JOINTS = ["pelvis", "spine", "chest", "neck", "head",
           "hip_L", "knee_L", "ankle_L", "hip_R", "knee_R", "ankle_R"]
 
 _ASSETS = {}
-ASSET_FILES = {"l3": "l3/character.json",
-               "base21": "base_character_v21.json",     # v2.1 supplied base model (extract_base_character.py)
-               "master": "human_master.json"}           # official human_master.blend (extract_human_master.py)
+ASSET_FILES = {"base21": "base_character_v21.json",     # v2.1 supplied base model (extract_base_character.py)
+               "master": "human_master.json"}           # official human_master.blend (dormant: Stage 1 uses "sample")
 def style_asset(style):
     if style not in _ASSETS:
         import json, os
@@ -22,7 +21,7 @@ def style_asset(style):
 def joint_defs(height, style="sample"):
     """style "base21": the v2.1 supplied base model (character-base.blend): torso block, sphere head on the torso,
     upper / lower arm and leg blocks, white eye and chest bands; proportions from the asset.
-    style "sample": the client's L3 sample (11_2 blend): one torso block, head on the torso, no neck / hands / feet.
+    style "sample": the client's sample character (11_2 blend; the default): one torso block, head on the torso, no neck / hands / feet.
     style "classic": the earlier mannequin (neck, hands, feet)."""
     s = height / 1.75
     if style in ASSET_FILES:
@@ -72,15 +71,8 @@ class Rig:
         self.style = style
         self.J, self.s = joint_defs(height, style)
         face = COCO_ON_RIG.get(style)
-        if style == 'l3':
-            asset = style_asset(style)
-            x, y, z = asset['head_centre']; radius = asset['head_radius']
-            front = asset['eye_band_front']
-            face = [('head', (x, front, z-.03)), ('head', (x-.036, front-.008, z)),
-                    ('head', (x+.036, front-.008, z)), ('head', (x-radius, y, z-.005)),
-                    ('head', (x+radius, y, z-.005))]
         self.coco = [(j, np.array(o) * self.s) for j, o in face + BODY_ON_RIG]
-        self.sole = (style_asset(style)["sole"] if style in ('master','l3') else (0.063 if style in ("sample", "base21") else 0.065)) * self.s    # ankle joint height when standing
+        self.sole = (style_asset(style)["sole"] if style == 'master' else (0.063 if style in ("sample", "base21") else 0.065)) * self.s    # ankle joint height when standing
 
     def fk(self, loc, yaw, rot, pelvis_z):
         """world (R, t) of every joint.  rot: {joint: (rx,ry,rz) deg}"""

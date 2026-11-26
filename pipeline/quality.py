@@ -4,16 +4,16 @@
   python pipeline\\quality.py <clip name>        print the numbers of a fitted clip (Work_auto\\<clip>)
 
 Every fit writes the same numbers to report.json ("quality") and adds the flags to its warnings:
-  fit_error_pct   how far the character's joints are from the detected joints, % of the body height (audit.py)
+  fit_error_pct   how far the character's joints are from the detected joints, % of the body height
   jumps_per_100   frames with a sudden movement per 100 frames (a joint turning > 6 deg in one frame, a jerk > 5 deg,
                   or the body's step changing by > 4 cm from one frame to the next)
   feet_seen       share of the frames in which an ankle was detected
-  foot_gap_m      lowest foot above (+) / below (-) the floor, median (foot_gaps.py)
+  foot_gap_m      lowest foot above (+) / below (-) the floor, median
   pose_change     how much the pose itself changes (0 = rigid: a statue, a poster, a picture)
 
 Junk tracks (junk_reason): a track that is BOTH short (under junk_seconds, default 1 s) and weak (fewer than
-junk_joints sure joints a frame, default 8) is left out before the camera, the ground and the fit use it.  A track
-the reviewer gave a role is never left out.  config.json "junk_filter": false switches the filter off."""
+junk_joints sure joints a frame, default 8) is left out before the camera, the ground and the fit use it.
+config.json "junk_filter": false switches the filter off; SAM 3 persistent tracks (the current tracker) are kept as they are."""
 import os, sys
 import numpy as np
 
@@ -49,11 +49,10 @@ def drop_junk(people, c, fps, log=None):
     """people {id: (frames, K)} without the junk tracks; what was left out is added to c["_junk"]"""
     if c.get("junk_filter", True) is False or c.get('_persistent_tracks'):
         return people
-    rv = (c.get("_review") or {}).get("people", {})
     keep = {}
     for pid, (fs, K) in people.items():
         why = junk_reason(track_stats(fs, K, fps), c) if len(fs) else None
-        if why and rv.get(str(pid), {}).get("role") in (None, "", "ignore"):
+        if why:
             c.setdefault("_junk", []).append({"track": pid, "frames": [int(min(fs)), int(max(fs))], "why": why})
             if log:
                 log("    track %s left out: %s" % (pid, why))
@@ -67,7 +66,7 @@ def _wrap(a):
 
 
 def jumps(ch, deg=6.0, acc=5.0, move=0.04):
-    """frames with a sudden movement (jerk_check.py's test), any joint"""
+    """frames with a sudden movement, any joint"""
     root = np.array(ch["root"], float)
     vis = np.array(ch.get("visible") or [1] * len(root), bool)
     series = [root[:, 3]] if root.shape[1] > 3 else []
@@ -78,7 +77,7 @@ def jumps(ch, deg=6.0, acc=5.0, move=0.04):
     for s in series:
         v = _wrap(np.diff(s))
         bad |= set(np.where(np.abs(v) > deg)[0] + 1) | set(np.where(np.abs(np.diff(v)) > acc)[0] + 1)
-    # position: a sudden CHANGE of the step (jerk_check.py flags every step over 4 cm, which is plain walking at 30 fps)
+    # position: a sudden CHANGE of the step (every step over 4 cm would be plain walking at 30 fps)
     step = np.diff(root[:, :3], axis=0)
     bad |= set(np.where(np.linalg.norm(np.diff(step, axis=0), axis=1) > move)[0] + 1)
     return sorted(i for i in bad if vis[i] and vis[i - 1])
@@ -140,7 +139,7 @@ def measure(data, pose, y0):
     fps = float(pose.get("fps") or data.get("fps") or 30.0)
     cam = None
     try:
-        from build_env import Cam
+        from camera_model import Cam
         cam = Cam(data)
     except Exception:
         pass
@@ -183,8 +182,9 @@ def measure(data, pose, y0):
 
 
 def alignment_audit(data, pose, y0=0):
-    """Delivery gate for gross source/rig misalignment, independent of foot or motion guesses."""
-    from build_env import Cam
+    """Gross source/rig misalignment in numbers (report.json "human_alignment"; a warning, never a stop),
+    independent of foot or motion guesses."""
+    from camera_model import Cam
     from rig import Rig, JOINTS
     cam=Cam(data); tracks={p['id']:p for p in (pose or {}).get('people',[])}
     rows=[]
@@ -239,12 +239,6 @@ def cached_alignment(data, pose, y0, work):
     key=V.digest({'geometry':V.geometry(data,people_only=True),'pose':pose,'y0':y0,
                   'assets':V.rig_assets(data),'implementation':V.implementation(('quality.py','rig.py','body_constraints.py'))})
     return V.cached_report(os.path.join(work,'human_alignment.json'),key,lambda:alignment_audit(data,pose,y0))
-
-
-def require_alignment(result):
-    failed=[r['char'] for r in result['people'] if not r['passed']]
-    if failed:
-        raise RuntimeError('Human alignment failed for %s. Re-check people/camera placement before rendering; see human_alignment.json.' % ', '.join(failed))
 
 
 def show(q, log=print):

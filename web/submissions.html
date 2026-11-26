@@ -10,7 +10,7 @@
 <div class="wrap">
   <div class="topline">
     <div><h1>Submissions</h1><p class="sub" id="sub">Finished packages, ready to deliver.</p></div>
-    <div class="right"><button id="openroot">Open SUBMIT folder</button><button id="check" title="Check every package against the v2.1 delivery spec: files, names, video sizes, audio">&#10003; Check packages</button><a class="btn" href="/report.csv" title="One row per clip: its status, people, shots, review, zip, warnings and errors. For a spreadsheet or a report to the client.">Download status (CSV)</a></div>
+    <div class="right"><button id="openroot">Open SUBMIT folder</button><button id="check" title="Check every package against the v2.1 delivery spec: files, names, video sizes, audio">&#10003; Check packages</button><a class="btn" href="/report.csv" title="One row per clip: its status, people, shots, zip, warnings and errors. For a spreadsheet or a report to the client.">Download status (CSV)</a></div>
   </div>
   <p class="deliverhint" id="hint" style="display:none">To deliver a package, use its <b>Zip</b> button: the file downloads under its delivery name, which the client's checker requires.</p>
   <div class="banner" id="sumcard" role="status"></div>
@@ -18,15 +18,15 @@
 
   <div id="emptybox" class="emptycard" style="display:none">
     <b>No packages yet.</b>
-    <p>Review clips on the <a href="/">Clips page</a> and press <i>Finish all reviewed</i>. Each package appears here when it is finished.</p>
+    <p>Press <i>Start</i> on the <a href="/">Clips page</a>. Each package appears here when its clip is done.</p>
   </div>
   <table class="list subs" id="table" style="display:none">
-    <thead><tr><th>Package</th><th class="r">Length</th><th class="r">Size</th><th>Made</th><th class="r" title="How long the computer worked on it; underneath, from Start to the zip with the queue and your review">Took</th><th>Check</th><th><span class="vh">Actions</span></th></tr></thead>
+    <thead><tr><th>Package</th><th class="r">Length</th><th class="r">Size</th><th>Made</th><th class="r" title="How long the computer worked on it; underneath, from Start to the zip with the queue">Took</th><th>Check</th><th><span class="vh">Actions</span></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <div id="incomplete" style="display:none">
     <h2>Incomplete</h2>
-    <p class="hint">These folders in SUBMIT have no zip: a Finish is still running, or it stopped part way. Press <i>Finish now</i> on the clip to make the package.</p>
+    <p class="hint">These folders in SUBMIT have no zip: a run is still working, or it stopped part way. Press <i>Re-run</i> on the clip to make the package.</p>
     <table class="list subs"><tbody id="irows"></tbody></table>
   </div>
 </div>

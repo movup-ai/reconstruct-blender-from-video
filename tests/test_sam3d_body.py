@@ -11,7 +11,6 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [ROOT,os.path.join(ROOT,'pipeline')]
 import sam3d_body as BODY
-import scene_verify
 from camera_solve import Camera
 from ground_solve import World
 from fit_people import p3_target,_P3A,_P3B
@@ -23,7 +22,7 @@ class MeshSurfaceTests(unittest.TestCase):
         vertices=np.array([[-1,-1,3],[1,-1,5],[1,1,5],[-1,1,3]])
         faces=[[0,1,2],[0,2,3]]
         a=BODY.surface_depth(vertices,faces,K,(40,40))
-        b=scene_verify.rasterize(vertices,faces,K,np.eye(3),np.zeros(3),(40,40))
+        b=BODY.rasterize(vertices,faces,K,np.eye(3),np.zeros(3),(40,40))
         np.testing.assert_array_equal(np.isfinite(a),np.isfinite(b))
         np.testing.assert_allclose(a[np.isfinite(a)],b[np.isfinite(b)],atol=1e-12)
 
@@ -105,19 +104,5 @@ class PlacementTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'required file missing'):
                 BODY.recover([],{'people':[]},Camera(320,180,35),0,{}, {},{'sam3d_checkpoint':os.path.join(tmp,'missing.ckpt')})
             run.assert_not_called()
-
-    def test_review_uses_inferred_body_height_and_keeps_short_sam_track(self):
-        from agent import review
-        pose={'tracker_backend':'sam3','people':[{'id':1,'frames':{str(f):[] for f in range(8)}}]}
-        scene={'chars':{'P1':{'track_id':1,'height':1.55,'human_backend':'sam3d_body'}}}
-        def read(path,default=None):
-            return pose if path=='pose' else scene if path.endswith('scene_data.json') else {}
-        folders={'pose':'pose','ai':'ai','work':'work'}
-        c={'person_height':1.72,'lens_mm':35.}
-        with patch.object(review,'folders',return_value=folders),patch.object(review,'read_json',side_effect=read):
-            result=review.suggested(c,types.SimpleNamespace(name='clip',video='video'))
-        self.assertAlmostEqual(result['people']['1']['height'],1.55)
-        self.assertEqual(result['people']['1']['role'],'main')
-
 
 if __name__=='__main__': unittest.main()

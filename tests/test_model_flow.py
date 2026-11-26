@@ -1,4 +1,4 @@
-"""Supported model flow, saved-setting migration, and SAM 3 scene-mask contracts."""
+"""Supported model flow and saved-setting migration."""
 import json
 import os
 from pathlib import Path
@@ -15,8 +15,6 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'pipeline')]
 import automark
 import common
 from agent import config
-import run_pipeline as RP
-import sam3_scene as SCENE
 import sam3_tracking as SAM
 
 
@@ -29,6 +27,8 @@ class ModelFlowTests(unittest.TestCase):
         for key, value in common.FIXED_BACKENDS.items():
             self.assertEqual(migrated[key], value)
         self.assertTrue(set(common.RETIRED_SETTINGS).isdisjoint(migrated))
+        self.assertEqual(common.normalize_backends({'character_style': 'l3', 'camera_backend': 'da3'})['character_style'], 'sample')
+        self.assertNotIn('camera_backend', common.normalize_backends({'camera_backend': 'da3'}))
         self.assertEqual(migrated['pose3d_weight'], .7)
         self.assertEqual(migrated['source_root'], 'my footage')
         self.assertEqual(migrated['sam3_checkpoint'], 'approved.pt')
@@ -98,72 +98,9 @@ class ModelFlowTests(unittest.TestCase):
             self.assertEqual({p['sam3_id'] for p in pose['people']}, {1, 2})
             self.assertEqual(len(pose['people']), 2)
             self.assertTrue(all(len(p['frames']) == 4 for p in pose['people']))
-            self.assertTrue(Path(tmp, 'check.html').is_file())
-
-    def test_background_cache_invalidates_a_retired_segmentation_result(self):
-        old = {'frames': 4, 'lens': 35., 'cam': [[0] * 6] * 4}
-        current = dict(old, segmentation={'backend': 'sam3', 'version': 1})
-        self.assertFalse(RP.same_set_inputs(old, current))
-        self.assertTrue(RP.same_set_inputs(current, dict(current)))
-        self.assertFalse(RP.same_set_inputs(None, current))
-
-
-class SceneMaskTests(unittest.TestCase):
-    def test_quality_filter_rejects_empty_full_unstable_and_nonfinite_masks(self):
-        logits = np.full((5, 4, 4), -3., np.float32)
-        logits[:, :2] = 3.
-        logits[1] = -3.; logits[2] = 3.; logits[3] = .2; logits[4, 0, 0] = np.nan
-        masks, scores = SCENE.grid_candidates(logits, np.ones(5) * .9, .7, .86, .002)
-        self.assertEqual(masks.shape, (1, 4, 4))
-        self.assertEqual(int(masks.sum()), 8)
-        self.assertGreater(scores[0], 1.)
-
-    def test_mask_suppression_keeps_disjoint_objects_and_highest_scored_duplicate(self):
-        masks = np.zeros((3, 8, 8), bool)
-        masks[0, :4, :4] = True; masks[1] = masks[0]; masks[2, 4:, 4:] = True
-        kept = SCENE.suppress_masks(masks, [.8, .9, .7], (16, 16))
-        self.assertEqual(kept.shape, (2, 16, 16))
-        self.assertFalse((kept[0] & kept[1]).any())
-        self.assertEqual(len(SCENE.suppress_masks(masks, [.8, .9, .7], (16, 16), limit=1)), 1)
-
-    def test_empty_masks_keep_output_dimensions(self):
-        self.assertEqual(SCENE.suppress_masks([], [], (10, 20)).shape, (0, 10, 20))
-
-    def test_prompted_boxes_clip_to_image_and_reject_degenerate_geometry(self):
-        np.testing.assert_allclose(SCENE.valid_boxes([[-4, 0, 40, 20]], 30, 15), [[0, 0, 30, 15]])
-        for box in ([3, 4, 2, 8], [0, 0, np.nan, 5], [40, 0, 50, 10]):
-            with self.assertRaises(ValueError):
-                SCENE.valid_boxes([box], 30, 15)
-
-    def test_scene_cache_reuses_validated_output_and_invalidates_changed_grid(self):
-        image = np.zeros((10, 20, 3), np.uint8)
-        with tempfile.TemporaryDirectory() as tmp:
-            checkpoint, python = Path(tmp, 'sam3.pt'), Path(tmp, 'python.exe')
-            checkpoint.touch(); python.touch()
-            c = {'sam3_checkpoint': str(checkpoint), 'sam3_python': str(python)}
-            def worker(command, **kwargs):
-                np.savez_compressed(command[-1], masks=np.zeros((0, 10, 20), bool),
-                                    box_masks=np.ones((1, 10, 20), bool), peak_vram_mb=123.)
-            release = Mock()
-            with patch.object(SCENE.subprocess, 'run', side_effect=worker) as run:
-                for _ in range(2):
-                    output = SCENE.segment(image, c, boxes=[[1, 1, 5, 8]], cache_dir=tmp, before_inference=release)
-                self.assertTrue(output['box_masks'].all())
-                self.assertEqual(run.call_count, 1)
-                release.assert_called_once()
-                SCENE.segment(image, c, boxes=[[1, 1, 5, 8]], cache_dir=tmp, points=16)
-                self.assertEqual(run.call_count, 2)
-
-    def test_worker_failure_does_not_publish_a_cached_result(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            checkpoint, python = Path(tmp, 'sam3.pt'), Path(tmp, 'python.exe')
-            checkpoint.touch(); python.touch()
-            c = {'sam3_checkpoint': str(checkpoint), 'sam3_python': str(python)}
-            with patch.object(SCENE.subprocess, 'run', side_effect=RuntimeError('GPU failure')):
-                with self.assertRaisesRegex(RuntimeError, 'GPU failure'):
-                    SCENE.segment(np.zeros((10, 20, 3), np.uint8), c, cache_dir=tmp)
-            self.assertFalse(list(Path(tmp).glob('*.npz')))
-
+            self.assertFalse(Path(tmp, 'check.html').exists(), 'Stage 1 writes no joint editor')
+            self.assertFalse(Path(tmp, 'review').exists())
+            self.assertNotIn('review_frames', pose)
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,9 +1,0 @@
-{
-  "current": "L3-2026-11-18",
-  "source": "User supplied L3_rigged_white_marks(6).blend",
-  "source_sha256": "78e70ce3171aca0abbd469545f0e18bfc33c14652af1f33a571da5891a526f4f",
-  "geometry": "Same evaluated neutral source mesh; pure-white slot and scale-isolating rigid bind added.",
-  "historical_reference": "assets/reference images are historical V5/client busts; not current model dimensions.",
-  "original_source_sha256": "b60244aad622d13b67ec7e36d041badef93772cdc64dd85b04652c36cca90601",
-  "translation_note": "English collection names; geometry and rest rig preserved. Resaved in Blender 5.3.0. Original upload hash retained separately."
-}

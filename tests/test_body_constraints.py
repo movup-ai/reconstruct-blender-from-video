@@ -131,53 +131,44 @@ class PlacementTests(unittest.TestCase):
         ch,_=self.capture_fit(keys,xyz,reviewed_height=1.25)
         self.assertEqual(ch['height'],1.25)
 
-    def test_old_floor_constrained_scene_is_not_adopted_as_a_new_fit(self):
-        _,_,_,data,pose=fixture(); data['human_backend']='sam3d_body';pose['tracker_backend']='sam3'
-        with tempfile.TemporaryDirectory() as tmp:
-            jsave(os.path.join(tmp,'scene_data.json'),data);jsave(os.path.join(tmp,'pose.json'),pose)
-            dependencies.adopt_existing('video',{},tmp,tmp,tmp)
-            self.assertFalse(pathlib.Path(tmp,'build_state.json').exists())
+    def test_fit_cache_key_is_a_stable_content_digest(self):
+        a={'frames':[0,1],'keys':np.arange(6.).reshape(2,3)}
+        self.assertEqual(dependencies.digest(a),dependencies.digest({'keys':np.arange(6.).reshape(2,3),'frames':[0,1]}))
+        self.assertNotEqual(dependencies.digest(a),dependencies.digest(dict(a,frames=[0,2])))
 
 
-class AlignmentGateTests(unittest.TestCase):
-    def test_correct_projection_passes_and_large_displacement_is_rejected(self):
+class AlignmentWarningTests(unittest.TestCase):
+    def test_correct_projection_passes_and_large_displacement_is_reported(self):
+        import run_pipeline as RP
         _,_,_,data,pose=fixture()
         result=quality.alignment_audit(data,pose)
-        self.assertTrue(result['passed']);quality.require_alignment(result)
+        self.assertTrue(result['passed']);self.assertEqual(RP.alignment_warnings(result),[])
         for r in data['chars']['P1']['root']: r[2]-=1.
         result=quality.alignment_audit(data,pose)
         self.assertFalse(result['passed'])
-        with self.assertRaisesRegex(RuntimeError,'Human alignment failed'): quality.require_alignment(result)
+        warnings=RP.alignment_warnings(result)
+        self.assertEqual(len(warnings),1);self.assertIn('human alignment - P1',warnings[0])
+        self.assertFalse(hasattr(quality,'require_alignment'),'alignment is a number in report.json, never a stop')
 
-    def test_tracked_but_hidden_character_cannot_be_delivered(self):
+    def test_tracked_but_hidden_character_is_reported(self):
         _,_,_,data,pose=fixture();data['chars']['P1']['visible']=[False]*8
         result=quality.alignment_audit(data,pose)
         self.assertFalse(result['passed']);self.assertEqual(result['people'][0]['missing_frames'],8)
 
-    def test_render_path_rejects_bad_cached_scene_before_blender(self):
+    def test_render_path_records_bad_alignment_and_still_renders(self):
         import run_pipeline as RP
         _,_,_,data,pose=fixture()
         for r in data['chars']['P1']['root']: r[2]-=1.
         with tempfile.TemporaryDirectory() as tmp:
             jsave(os.path.join(tmp,'scene_data.json'),data);jsave(os.path.join(tmp,'pose.json'),pose)
-            c=dict(DEFAULT_CFG,submit_root=tmp,scene_verify=False)
-            with patch.object(RP,'marks_dir',return_value=tmp),patch.object(RP.pkg,'package_name',return_value='office-5'), \
-                 patch.object(RP,'blender_render') as render:
-                with self.assertRaisesRegex(RuntimeError,'Human alignment failed'):
-                    RP.render_only('clip','video',tmp,c,types.SimpleNamespace(),0)
-                render.assert_not_called()
-
-    def test_refit_does_not_restore_old_ground_height_for_unanchored_body(self):
-        import run_pipeline as RP
-        _,_,_,data,_=fixture()
-        previous={'frames':8,'chars':{}}
-        previous['chars']=copy.deepcopy(data['chars'])
-        for r in previous['chars']['P1']['root']: r[2]=1.
-        data['chars']['P1']['body_constraints']={'unanchored':True}
-        with tempfile.TemporaryDirectory() as tmp:
-            jsave(os.path.join(tmp,'scene_data.json'),previous)
-            RP.carry_over(tmp,'clip',{},data['chars'],8,None)
-        self.assertTrue(all(r[2]==0 for r in data['chars']['P1']['root']))
+            c=dict(DEFAULT_CFG,submit_root=tmp)
+            with patch.object(RP,'marks_dir',return_value=tmp), \
+                 patch.object(RP,'render_and_pack',return_value={'zip':'z','package_check':'ok'}) as render:
+                rep=RP.render_only('clip','video',tmp,c,types.SimpleNamespace(),0)
+            render.assert_called_once()
+            self.assertFalse(rep['human_alignment']['passed'])
+            self.assertTrue(any('human alignment' in w for w in rep['warnings']))
+            self.assertTrue(os.path.isfile(os.path.join(tmp,'human_alignment.json')))
 
 
 if __name__=='__main__': unittest.main()

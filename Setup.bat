@@ -66,20 +66,15 @@ if errorlevel 1 (
 
 echo Depth model...
 "%VPY%" pipeline\get_model.py || echo   (depth model download failed - run Setup.bat again later)
-echo Lens and set models (MoGe-2, SAM 3, CLIP)...
+echo Lens and depth model (MoGe-2)...
 if not exist "third_party\MoGe\moge\model\v2.py" (
   if not exist third_party mkdir third_party
   curl -sS -L --retry 5 -o "third_party\moge.zip" https://github.com/microsoft/MoGe/archive/refs/heads/main.zip && tar -xf "third_party\moge.zip" -C third_party && del "third_party\moge.zip" && ren "third_party\MoGe-main" MoGe
 )
 if not exist "models\moge2\model.pt" echo   !! MoGe-2 weights missing: models\moge2\model.pt - every clip uses the fixed lens of config.json
-if not exist "models\clip\open_clip_model.safetensors" echo   !! CLIP weights missing: models\clip\open_clip_model.safetensors - set pieces are named from shape and colour only
-echo Carried-object model (Grounding DINO, about 0.9 GB the first time)...
-if not exist "models\grounding_dino\model.safetensors" (
-  "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('IDEA-Research/grounding-dino-base', local_dir=r'models\grounding_dino', allow_patterns=['*.json','*.safetensors','*.txt'])" || echo   !! Grounding DINO not downloaded - bags, phones and backpacks people carry are not built
-)
-echo Set segmentation model (Mask2Former ADE20K, about 0.8 GB the first time)...
+echo Floor / wall segmentation model (Mask2Former ADE20K, about 0.8 GB the first time)...
 if not exist "models\mask2former_ade\model.safetensors" (
-  "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('facebook/mask2former-swin-large-ade-semantic', local_dir=r'models\mask2former_ade', allow_patterns=['*.json','*.safetensors'])" || echo   !! Mask2Former not downloaded - set pieces are named by CLIP and plants / curtains use library shapes
+  "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('facebook/mask2former-swin-large-ade-semantic', local_dir=r'models\mask2former_ade', allow_patterns=['*.json','*.safetensors'])" || echo   !! Mask2Former not downloaded - the camera height and gravity use the people and MoGe-2 only
 )
 echo Masked joint model (RTMPose; no person detector)...
 "%VPY%" -c "from rtmlib import Body; from rtmlib.tools.file import download_checkpoint as d; d(Body.MODE['performance']['pose'])" || goto end_fail
@@ -96,7 +91,6 @@ if not exist "assets\sample_character.json" (
 )
 "%VPY%" -m agent.selftest || goto end_fail
 echo.
-echo Optional AI suggestions: paste your DeepSeek API key in the app (start page, "AI suggestions").
 echo ============================================================
 echo  Setup finished.  Start the app with "Start_Blender_Agent.bat"
 echo ============================================================

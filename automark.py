@@ -1,29 +1,23 @@
 # -*- coding: utf-8 -*-
 """SAM 3 persistent person masks, then RTMPose joints inside each person's mask.
 
-Writes pose.json, sam3_masks.npz, review thumbnails and the editable check.html.
+Writes pose.json, sam3_masks.npz and tracking_report.json (no editor files: Stage 1 is fully automatic).
 SAM 3 exits before loading RTMPose, keeping GPU allocations separate.
 
 Usage: python automark.py VIDEO_OR_FOLDER [...] [--out DIR] [--force]
                          [--mode performance|balanced|lightweight] [--engine tensorrt|cuda]
 """
-import argparse, json, os, sys, time, base64, tempfile
+import argparse, json, os, sys, time, tempfile
 import numpy as np
 import cv2
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "pipeline"))
-from common import read_frames, imwrite_u, cfg, pick_device, jload, jsave
+from common import read_frames, cfg, pick_device, jload, jsave
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 KP_NAMES = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
             "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
             "left_knee", "right_knee", "left_ankle", "right_ankle"]
-# (a, b, side)  side: R = person's right, L = person's left, C = centre
-SKELETON = [(16, 14, "R"), (14, 12, "R"), (15, 13, "L"), (13, 11, "L"), (11, 12, "C"), (5, 11, "L"), (6, 12, "R"),
-            (5, 6, "C"), (5, 7, "L"), (7, 9, "L"), (6, 8, "R"), (8, 10, "R"), (0, 1, "C"), (0, 2, "C"),
-            (1, 3, "L"), (2, 4, "R")]
-
-
 def log(*a):
     print(*a, flush=True)
 
@@ -108,28 +102,6 @@ class Marker:
         return out
 
 
-def draw_marks(img, people, scale=1.0, selected=None):
-    out = img.copy()
-    r = max(3, int(round(4 * scale)))
-    for pid, k, s in people:
-        for a, b, side in SKELETON:
-            if s[a] > 0.2 and s[b] > 0.2:
-                col = (0, 0, 255) if side == "R" else ((255, 0, 255) if side == "L" else (0, 0, 200))
-                cv2.line(out, tuple(np.int32(k[a])), tuple(np.int32(k[b])), col, max(1, int(scale * 1.5)), cv2.LINE_AA)
-        for i in range(17):
-            p = tuple(np.int32(k[i]))
-            if s[i] > 0.3:
-                cv2.circle(out, p, r, (0, 0, 255), -1, cv2.LINE_AA)
-            else:
-                cv2.circle(out, p, r, (0, 0, 255), 1, cv2.LINE_AA)       # low confidence: hollow
-        top = k[s > 0.2].min(0) if (s > 0.2).any() else k.min(0)
-        cv2.putText(out, "P%d" % pid, (int(top[0]), int(top[1]) - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * max(1, scale),
-                    (0, 0, 0), 4, cv2.LINE_AA)
-        cv2.putText(out, "P%d" % pid, (int(top[0]), int(top[1]) - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * max(1, scale),
-                    (0, 255, 255), 2, cv2.LINE_AA)
-    return out
-
-
 def process(path, out_root, args, marker):
     name = os.path.splitext(os.path.basename(path))[0]
     rel = os.path.relpath(os.path.dirname(os.path.abspath(path)), args.base) if args.base else ""
@@ -155,7 +127,7 @@ def process(path, out_root, args, marker):
 
 def _generate_marks(path, out, args, marker, settings):
     name = os.path.splitext(os.path.basename(path))[0]
-    os.makedirs(os.path.join(out, "review"), exist_ok=True)
+    os.makedirs(out, exist_ok=True)
     frames, fps = read_frames(path)
     n = len(frames)
     if n == 0:
@@ -190,9 +162,8 @@ def _generate_marks(path, out, args, marker, settings):
                                                          for (x, y), s in zip(k, sc)] for f, (k, sc, b) in sorted(d.items())},
                        "boxes": {str(f): [round(float(v), 1) for v in b] for f, (k, sc, b) in sorted(d.items())}})
         people[-1]['sam3_id'] = int(t)
-    review = sorted(set(list(range(0, n, args.step)) + [n - 1]))
     data = {"video": os.path.abspath(path), "clip": name, "width": W, "height": H, "fps": fps, "frames": n,
-            "picture_area": [0, y0, W, y1 - y0], "keypoint_names": KP_NAMES, "review_frames": review,
+            "picture_area": [0, y0, W, y1 - y0], "keypoint_names": KP_NAMES,
             "model": "RTMPose (%s; %s)" % (args.mode, marker.engine),
             "people": people}
     from sam3_tracking import signature
@@ -202,28 +173,6 @@ def _generate_marks(path, out, args, marker, settings):
     data['tracking_signature'] = signature(settings)
     with open(os.path.join(out, "pose.json"), "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False)
-    # review images + check page
-    page_frames = []
-    for f in review:
-        ppl = []                                    # full-frame coordinates (what pose.json / checked.json use)
-        for p in people:
-            if str(f) in p["frames"]:
-                a = np.array(p["frames"][str(f)])
-                ppl.append((p["id"], a[:, :2], a[:, 2]))
-        pic = frames[f][y0:y1]
-        imwrite_u(os.path.join(out, "review", "f%03d.jpg" % f),
-                  draw_marks(pic, [(pid, k - [0, y0], s_) for pid, k, s_ in ppl]))
-        jpg = cv2.imencode(".jpg", pic, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
-        page_frames.append({"f": f, "img": "data:image/jpeg;base64," + base64.b64encode(jpg).decode(),
-                            "people": [{"id": pid, "kps": [[round(float(x), 1), round(float(y), 1), round(float(s), 3)]
-                                                            for (x, y), s in zip(k, s_)]} for pid, k, s_ in ppl]})
-    with open(os.path.join(HERE, "check_template.html"), encoding="utf-8") as template:
-        tpl = template.read()
-    page = {"clip": name, "video": os.path.abspath(path), "picture_area": [0, y0, W, y1 - y0], "kp_names": KP_NAMES,
-            "skeleton": SKELETON, "frames": page_frames}
-    html = tpl.replace("__PAGE_DATA__", json.dumps(page, ensure_ascii=False))
-    with open(os.path.join(out, "check.html"), "w", encoding="utf-8") as fh:
-        fh.write(html)
     log("  done: %d people, %.0fs  ->  %s" % (len(people), time.time() - t0, out))
 
 
@@ -232,7 +181,6 @@ def main():
     ap.add_argument("inputs", nargs="*")
     ap.add_argument("--out", default=os.path.join(HERE, "output"))
     ap.add_argument("--base", default=None, help="input root, used to mirror the folder layout under --out")
-    ap.add_argument("--step", type=int, default=8, help="review every Nth frame")
     ap.add_argument("--mode", default=None, choices=["lightweight", "balanced", "performance"],
                     help="pose models: performance (largest, most exact), balanced (faster, "
                          "less exact joints), lightweight. default: config.json pose_mode")

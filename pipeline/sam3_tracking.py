@@ -142,7 +142,7 @@ def archive_previous(out):
 
 
 def publish(staged, out):
-    if not all(os.path.isfile(os.path.join(staged,name)) for name in ('pose.json','check.html')):
+    if not os.path.isfile(os.path.join(staged,'pose.json')):
         raise RuntimeError('Incomplete tracking output; previous marks preserved')
     new_pose = jload(os.path.join(staged,'pose.json'))
     if new_pose.get('tracker_backend')=='sam3' and not os.path.isfile(os.path.join(staged,'sam3_masks.npz')):
@@ -161,10 +161,10 @@ def publish(staged, out):
         values = jload(hints)
         for key in ('people','tracks','scene_justifications'): values.pop(key,None)
         jsave(hints,values)
-    os.makedirs(os.path.join(out,'review'),exist_ok=True)
-    for name in os.listdir(os.path.join(staged,'review')):
-        os.replace(os.path.join(staged,'review',name),os.path.join(out,'review',name))
-    for name in ('sam3_masks.npz','tracking_report.json','check.html','pose.json'):
+    # the joint editor's files of earlier builds (kept in the backup): Stage 1 has no editor
+    if backup and os.path.isfile(os.path.join(out,'check.html')): os.remove(os.path.join(out,'check.html'))
+    if backup and os.path.isdir(os.path.join(out,'review')): shutil.rmtree(os.path.join(out,'review'))
+    for name in ('sam3_masks.npz','tracking_report.json','pose.json'):
         source,target = os.path.join(staged,name),os.path.join(out,name)
         if os.path.isfile(source): os.replace(source,target)
         elif os.path.isfile(target) and name in ('sam3_masks.npz','tracking_report.json'): os.remove(target)
