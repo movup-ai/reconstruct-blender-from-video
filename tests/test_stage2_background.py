@@ -27,16 +27,16 @@ def scene(cam=(0, -5, 1.6, 90, 0, 0), W=640, H=360):
 
 
 class Library(unittest.TestCase):
-    def test_catalog_types_prompts_and_hanging(self):
+    def test_catalog_types_roles_and_hanging(self):
         with tempfile.TemporaryDirectory() as d:
             for fn in ("Coffee Table.blend", "pillar.blend", "painting.blend", "floor.blend", "notes.txt"):
                 open(os.path.join(d, fn), "wb").close()
             with open(os.path.join(d, "objects.json"), "w", encoding="utf-8") as fh:
-                json.dump({"pillar": {"prompt": "column", "role": "bg", "on_floor": True}, "painting": {"on_floor": True}}, fh)
+                json.dump({"pillar": {"role": "bg", "on_floor": True}, "painting": {"on_floor": True}}, fh)
             cat = assets_lib.catalog({"object_assets": d})
             self.assertEqual(sorted(cat), ["coffee_table", "painting", "pillar"])        # the floor is Stage 1's
-            self.assertEqual(cat["coffee_table"]["prompt"], "coffee table")
-            self.assertEqual((cat["pillar"]["prompt"], cat["pillar"]["role"]), ("column", "bg"))
+            self.assertEqual(cat["pillar"]["role"], "bg")
+            self.assertIsNone(cat["coffee_table"]["role"])
             self.assertTrue(cat["painting"]["on_floor"])                                 # objects.json wins
         self.assertFalse(assets_lib.on_floor("wall_mirror"))
         self.assertTrue(assets_lib.on_floor("sofa"))
@@ -94,6 +94,14 @@ class Geometry(unittest.TestCase):
         front = (math.sin(b["yaw"]), -math.cos(b["yaw"]))       # where the model's -Y points after the turn
         self.assertLess(front[1], -0.99)                         # toward the camera (on -y)
 
+    def test_a_flat_thing_keeps_its_own_thinness(self):
+        P = self.front(w=2.0, h=1.0)
+        P[:, 1] += np.random.default_rng(2).uniform(0, 0.8, len(P))   # depth bleeding behind a window: noise
+        window = BG.fit_box(P, [[0, -5, 1.6]], {"size": [1.0, 0.05, 1.0]}, stands=False)
+        self.assertAlmostEqual(window["size"][1], window["size"][0] * 0.05, places=3)   # not 0.8 m deep
+        box = BG.fit_box(P, [[0, -5, 1.6]], {"size": [1.0, 1.0, 1.0]})
+        self.assertGreater(box["size"][1], 0.6)                       # a solid thing keeps what it measured
+
     def test_standing_types_reach_the_floor_hanging_ones_do_not(self):
         model = {"size": [1.0, 0.1, 1.0]}
         P = self.front(h=0.5, z0=0.6)                            # its bottom 0.6 m up: hidden behind people
@@ -115,15 +123,45 @@ class Geometry(unittest.TestCase):
         self.assertGreater(fo, 0.99); self.assertGreater(zo, 0.99)
 
 
-class ScanFrames(unittest.TestCase):
-    def test_scan_spreads_over_the_shot_with_first_and_last(self):
-        import sam3_objects
-        self.assertEqual(sam3_objects.scan_indices(27, 4), [0, 9, 17, 26])      # the last frame: what a zoom ends on
-        self.assertEqual(sam3_objects.scan_indices(2, 4), [0, 1])
-        self.assertEqual(sam3_objects.scan_indices(1, 4), [0])
-        self.assertEqual(sam3_objects.scan_indices(0, 4), [])
-        self.assertEqual(sam3_objects.scan_indices(10, 1), [0])
-        self.assertEqual(sam3_objects.VERSION, 2)                                # older cached detections are not reused
+class Mask2FormerFinder(unittest.TestCase):
+    """Stage 2 finds objects with Mask2Former's 150 names (ade_find.py, ade_objects.py)"""
+
+    def test_every_one_of_the_150_names_has_a_place_in_the_table(self):
+        import ade_objects
+        with open(os.path.join(ROOT, "models", "mask2former_ade", "config.json"), encoding="utf-8") as fh:
+            names = {v.strip() for v in json.load(fh)["id2label"].values()}         # the same 150 ADE20K names
+        self.assertEqual(len(names), 150)
+        self.assertEqual(set(ade_objects.ASSET), names)
+        self.assertIsNone(ade_objects.asset_of("person"))                           # people: Stage 1
+        self.assertIsNone(ade_objects.asset_of("sky"))                              # scenery: not placed
+        self.assertEqual(ade_objects.asset_of("windowpane"), "window")
+        self.assertEqual(ade_objects.asset_of("television receiver"), "tv")
+        self.assertEqual(ade_objects.asset_of("not a name"), None)
+
+    def test_library_holds_only_models_the_table_uses(self):
+        import ade_objects
+        have = set(assets_lib.catalog({}))
+        self.assertTrue(have <= set(ade_objects.wanted()), sorted(have - set(ade_objects.wanted())))
+
+    def test_samples_cover_each_shot_with_its_last_frame(self):
+        import ade_find
+        f = ade_find.sample_frames([(0, 20), (20, 31)], 25.0, {"bg_detect_fps": 5})
+        self.assertEqual(f, [0, 5, 10, 15, 19, 20, 25, 30])
+
+    def test_an_object_keeps_its_id_from_frame_to_frame(self):
+        import ade_find
+        def sq(x, y, s=10):
+            m = np.zeros((60, 60), bool); m[y:y + s, x:x + s] = True; return m
+        active, nid = {}, 1
+        out, nid = ade_find.link(active, [(0, sq(5, 5), .9), (0, sq(40, 40), .8), (1, sq(20, 5), .7)], .3, nid)
+        ids = {(t, tuple(np.argwhere(m)[0])): i for t, i, _, m in out}
+        self.assertEqual(len(set(i for _, i, _, _ in out)), 3)
+        out2, nid = ade_find.link(active, [(0, sq(6, 6), .9), (1, sq(41, 41), .6)], .3, nid)   # moved a little
+        self.assertEqual(out2[0][1], ids[(0, (5, 5))], "the same chair keeps its id")
+        self.assertNotEqual(out2[1][1], ids[(0, (40, 40))], "another type never takes a chair's id")
+        self.assertEqual(nid, 5)
+        out3, nid = ade_find.link(active, [(0, sq(40, 40), .8)], .3, nid)                    # seen again later
+        self.assertEqual(out3[0][1], ids[(0, (40, 40))], "an object hidden for a while keeps its id")
 
 
 class StagesRunOnTheirOwn(unittest.TestCase):

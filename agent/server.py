@@ -344,7 +344,7 @@ STEPS = [("  marks:", 40, "measuring the lens"), ("  camera ...", 45, "solving t
          ("  quality:", 66, "checking the result")]
 # the same for a Background (Stage 2) run
 BG_STEPS = [("  assets:", 3, "reading the object models"), ("  reading ", 6, "reading frames"),
-            ("  SAM 3: looking", 10, "finding objects"), ("  found:", 40, "choosing each object's best views"),
+            ("  Mask2Former: finding", 10, "finding and naming objects"), ("  found:", 40, "choosing each object's best views"),
             ("  depth on", 45, "measuring depth"), ("  placed:", 62, "placing the objects"),
             ("  blender build", 68, "rendering")]
 
@@ -370,10 +370,6 @@ def job_progress(c, cl, job):
     for key, p, s in (BG_STEPS if bg else STEPS):
         if key in txt and p >= pct:
             pct, step = p, s
-    if bg and "  found:" not in txt:
-        m = re.findall(r'SAM 3 "([^"]+)"', txt)
-        if m:
-            step = 'finding objects (done: "%s")' % m[-1]
     shots = re.findall(r"\[shot (\d+): frames", txt)
     if shots and "  quality:" not in txt:
         step += " (shot %s)" % shots[-1]

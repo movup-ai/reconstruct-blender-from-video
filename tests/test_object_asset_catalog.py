@@ -9,7 +9,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'pipeline'))
 import assets_lib
-from object_asset_shapes import EXTRA_KINDS
+import ade_objects
 
 
 class ObjectAssetCatalogTests(unittest.TestCase):
@@ -20,21 +20,22 @@ class ObjectAssetCatalogTests(unittest.TestCase):
 
     def test_every_library_asset_has_geometry_metadata_and_preview(self):
         catalog=assets_lib.catalog({'object_assets':str(self.folder)})
-        self.assertEqual(set(catalog),set(self.manifest))
-        self.assertTrue(set(EXTRA_KINDS)<=set(catalog))
-        self.assertGreaterEqual(len(catalog),390)
+        self.assertTrue(set(self.manifest)<=set(catalog))       # models you add yourself are not in the manifest
+        # only the models Mask2Former's 150 names use (ade_objects.py); the rest of that list is yours to add
+        self.assertTrue(set(catalog)<=set(ade_objects.wanted()))
         for name,info in self.manifest.items():
             with self.subTest(name=name):
                 self.assertTrue((self.folder/info['file']).is_file())
                 self.assertTrue((self.folder/'previews'/(name+'.png')).is_file())
                 self.assertTrue(all(v>0 for v in info['size_m']))
                 self.assertLess(info['faces'],3000)
-                self.assertTrue(self.metadata[name]['prompt'])
+                self.assertIn('on_floor',self.metadata[name])
+                self.assertNotIn('prompt',self.metadata[name])
 
     def test_support_heights_for_small_and_mounted_objects(self):
-        for name in ('smartphone','laptop','kettle','plate','cup','security_camera','power_outlet','whiteboard'):
+        for name in ('plate','vase','monitor','microwave','picture','mirror'):
             self.assertFalse(self.metadata[name]['on_floor'],name)
-        for name in ('bicycle','sofa','workbench','fire_hydrant','gazebo','hospital_bed'):
+        for name in ('bicycle','sofa','bed','fridge','table','car'):
             self.assertTrue(self.metadata[name]['on_floor'],name)
 
     def test_catalog_pages_cover_the_whole_library(self):

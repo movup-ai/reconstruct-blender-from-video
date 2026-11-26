@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """Stage 2's prebuilt object library: one .blend per object type in assets\\objects\\ (config "object_assets").
 
-  assets\\objects\\pillar.blend        type "pillar": SAM 3 looks for "pillar", every one found becomes this model
-  assets\\objects\\coffee_table.blend  type "coffee_table": SAM 3 looks for "coffee table"
-  assets\\objects\\objects.json        optional: {"coffee_table": {"prompt": "low table", "role": "fg", "on_floor": true}}
-                                      prompt = the words SAM 3 searches for; role = a colour-card role that always
-                                      wins (bg, fg, near, far_i, lamp, special); on_floor = false for a thing that
-                                      hangs (default: paintings, mirrors, windows, clocks, shelves... hang, the rest
-                                      stands on the floor); "labels" (Mask2Former classes that count as the type)
-                                      and "size" ([[w0, w1], [h0, h1]] m) are read by object_checks.py, not here
+  assets\\objects\\pillar.blend        type "pillar": every object Mask2Former names "column" becomes this model
+                                      (ade_objects.py: Mask2Former's 150 names -> the asset placed for each)
+  assets\\objects\\objects.json        optional: {"coffee_table": {"role": "fg", "on_floor": true}}
+                                      role = a colour-card role that always wins (bg, fg, near, far_i, lamp,
+                                      special); on_floor = false for a thing that hangs (default: paintings,
+                                      mirrors, windows, clocks, shelves... hang, the rest stands on the floor);
+                                      "size" ([[w0, w1], [h0, h1]] m) is read by object_checks.py, not here
 
 How a model should be made: it stands on the ground (its lowest point is the floor), its front faces -Y (Blender's
 front view looks at it), any size (it is stretched to the size measured in the video).  Every visible mesh in the
@@ -50,7 +49,7 @@ def type_of(path):
 
 
 def catalog(c=None):
-    """{type: {"blend": path, "prompt": words, "role": role or None}} for every .blend in the folder"""
+    """{type: {"blend": path, "role": role or None, "on_floor": bool}} for every .blend in the folder"""
     d = folder(c)
     if not os.path.isdir(d):
         return {}
@@ -67,8 +66,7 @@ def catalog(c=None):
         if not t or t in NOT_OBJECTS:
             continue
         e = extra.get(t, {})
-        prompt = str(e.get("prompt") or t.replace("_", " ")).strip()
-        out[t] = {"blend": os.path.join(d, fn), "prompt": prompt, "role": e.get("role"), "on_floor": on_floor(t, e)}
+        out[t] = {"blend": os.path.join(d, fn), "role": e.get("role"), "on_floor": on_floor(t, e)}
     return out
 
 

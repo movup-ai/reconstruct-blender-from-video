@@ -39,13 +39,13 @@ What each step leaves in `Work_auto\<clip>\`:
 
 | Step | Model | What it gives |
 |---|---|---|
-| find | **SAM 3** (`models\sam3`, text prompts = the `.blend` names in `assets\objects`) | every object of each type, masked and followed through each shot, a few frames per second (`sam3_objects.py`) |
-| depth | **MoGe** (the configured version) + **Mask2Former** (`metric_observe.py`) | depth and floor labels on each object's best views |
+| find | **Mask2Former panoptic** (`models\mask2former_ade_panoptic`, facebook/mask2former-swin-large-ade-panoptic; ADE20K, 150 names) | every object outlined and named, a few frames per second of each shot (`ade_find.py`); the name picks its model (`ade_objects.py`); the same object is followed by overlap from frame to frame |
+| depth | **MoGe** (the configured version) + **Mask2Former** semantic (`metric_observe.py`) | depth and floor labels on each object's best views |
 | place | none (geometry) | depth scaled so the floor lies on Stage 1's floor; points through Stage 1's camera; a box per object |
 
-The models (`assets\objects\*.blend`) are read once with Blender (`asset_export.py`) and cached in
-`assets\objects\_cache`. SAM 3 and depth results are cached in `Work_auto\<clip>\background\` (`sam3_objects.npz`,
-`depth.npz`). The colour card colours the objects with `colour_card.role_of`. The result is a second package in
+The models (`assets\objects\*.blend`, only those `ade_objects.py` uses) are read once with Blender (`asset_export.py`)
+and cached in `assets\objects\_cache`. Found objects and depth are cached in `Work_auto\<clip>\background\`
+(`objects_found.npz`, `depth.npz`). The colour card colours the objects with `colour_card.role_of`. The result is a second package in
 `SUBMIT\_background\`; Stage 1's zip is not changed.
 
 ## Removed

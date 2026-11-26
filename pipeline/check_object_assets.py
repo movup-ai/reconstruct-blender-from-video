@@ -27,7 +27,8 @@ def main():
     manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
     metadata=json.loads((folder/'objects.json').read_text(encoding='utf-8'))
     catalog=assets_lib.catalog({'object_assets':str(folder)})
-    assert set(manifest)==set(catalog),'Catalog and asset manifest differ'
+    assert set(manifest)<=set(catalog),'Generated models missing from the folder: %s'%sorted(set(manifest)-set(catalog))
+    # (models you add yourself are not in the manifest: this check covers the generated ones)
     report=[]
     for kind,expected in manifest.items():
         path=folder/expected['file']

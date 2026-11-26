@@ -1,1570 +1,287 @@
 {
   "sofa": {
-    "prompt": "sofa",
     "on_floor": true
   },
   "armchair": {
-    "prompt": "armchair",
     "on_floor": true
   },
   "ottoman": {
-    "prompt": "ottoman",
     "on_floor": true
   },
   "chair": {
-    "prompt": "chair",
     "on_floor": true
   },
   "office_chair": {
-    "prompt": "office chair",
     "on_floor": true
   },
   "stool": {
-    "prompt": "stool",
     "on_floor": true
   },
   "table": {
-    "prompt": "table",
     "on_floor": true
   },
   "coffee_table": {
-    "prompt": "coffee table",
     "on_floor": true
   },
   "pool_table": {
-    "prompt": "pool table",
     "on_floor": true
   },
   "desk": {
-    "prompt": "desk",
     "on_floor": true
   },
   "bench": {
-    "prompt": "bench",
     "on_floor": true
   },
   "bed": {
-    "prompt": "bed",
     "on_floor": true
   },
   "cabinet": {
-    "prompt": "cabinet",
     "on_floor": true
   },
   "wardrobe": {
-    "prompt": "wardrobe",
     "on_floor": true
   },
   "chest_of_drawers": {
-    "prompt": "chest of drawers",
     "on_floor": true
   },
   "fireplace": {
-    "prompt": "fireplace",
     "on_floor": true
   },
   "arcade_machine": {
-    "prompt": "arcade machine",
     "on_floor": true
   },
   "shelf": {
-    "prompt": "shelf",
     "on_floor": false
   },
   "bookshelf": {
-    "prompt": "bookshelf",
     "on_floor": true
   },
   "counter": {
-    "prompt": "counter",
     "on_floor": true
   },
   "kitchen_island": {
-    "prompt": "kitchen island",
     "on_floor": true
   },
   "sink": {
-    "prompt": "sink",
     "on_floor": false
   },
   "stove": {
-    "prompt": "stove",
     "on_floor": true
   },
   "oven": {
-    "prompt": "oven",
     "on_floor": true
   },
   "fridge": {
-    "prompt": "fridge",
     "on_floor": true
   },
   "tv": {
-    "prompt": "tv",
     "on_floor": false
   },
   "monitor": {
-    "prompt": "monitor",
     "on_floor": false
   },
   "lamp": {
-    "prompt": "lamp",
     "on_floor": true
-  },
-  "floor_lamp": {
-    "prompt": "floor lamp",
-    "on_floor": true
-  },
-  "table_lamp": {
-    "prompt": "table lamp",
-    "on_floor": false
   },
   "box": {
-    "prompt": "box",
     "on_floor": true
   },
   "bathtub": {
-    "prompt": "bathtub",
     "on_floor": true
   },
   "microwave": {
-    "prompt": "microwave",
     "on_floor": false
   },
   "washer": {
-    "prompt": "washer",
     "on_floor": true
   },
   "dishwasher": {
-    "prompt": "dishwasher",
     "on_floor": true
   },
   "radiator": {
-    "prompt": "radiator",
     "on_floor": true
   },
   "shower": {
-    "prompt": "shower",
     "on_floor": true
   },
   "booth": {
-    "prompt": "booth",
     "on_floor": true
   },
   "bin": {
-    "prompt": "bin",
     "on_floor": true
   },
   "barrel": {
-    "prompt": "barrel",
     "on_floor": true
   },
   "vase": {
-    "prompt": "vase",
     "on_floor": false
   },
   "pot": {
-    "prompt": "pot",
-    "on_floor": false
-  },
-  "cup": {
-    "prompt": "cup",
     "on_floor": false
   },
   "door": {
-    "prompt": "door",
     "on_floor": true
   },
   "window": {
-    "prompt": "window",
     "on_floor": false
   },
   "curtain": {
-    "prompt": "curtain",
     "on_floor": false
   },
   "blind": {
-    "prompt": "blind",
     "on_floor": false
   },
   "picture": {
-    "prompt": "picture",
     "on_floor": false
   },
   "mirror": {
-    "prompt": "mirror",
     "on_floor": false
   },
   "pillar": {
-    "prompt": "pillar",
     "on_floor": true
   },
   "pole": {
-    "prompt": "pole",
     "on_floor": true
   },
   "streetlight": {
-    "prompt": "streetlight",
     "on_floor": true
   },
   "traffic_light": {
-    "prompt": "traffic light",
     "on_floor": true
   },
   "stairs": {
-    "prompt": "stairs",
     "on_floor": true
   },
   "railing": {
-    "prompt": "railing",
     "on_floor": true
   },
   "fence": {
-    "prompt": "fence",
     "on_floor": true
   },
   "awning": {
-    "prompt": "awning",
     "on_floor": false
   },
   "car": {
-    "prompt": "car",
     "on_floor": true
   },
   "truck": {
-    "prompt": "truck",
     "on_floor": true
   },
   "van": {
-    "prompt": "van",
     "on_floor": true
   },
   "bus": {
-    "prompt": "bus",
     "on_floor": true
   },
   "wall": {
-    "prompt": "wall",
     "on_floor": true
   },
   "tree": {
-    "prompt": "tree",
-    "on_floor": true
-  },
-  "pine_tree": {
-    "prompt": "pine tree",
-    "on_floor": true
-  },
-  "bush": {
-    "prompt": "bush",
-    "on_floor": true
-  },
-  "round_table": {
-    "prompt": "round table",
-    "on_floor": true
-  },
-  "side_table": {
-    "prompt": "side table",
-    "on_floor": true
-  },
-  "bedside_table": {
-    "prompt": "bedside table",
-    "on_floor": true
-  },
-  "console_table": {
-    "prompt": "console table",
-    "on_floor": true
-  },
-  "folding_table": {
-    "prompt": "folding table",
-    "on_floor": true
-  },
-  "dining_table": {
-    "prompt": "dining table",
-    "on_floor": true
-  },
-  "dining_chair": {
-    "prompt": "dining chair",
-    "on_floor": true
-  },
-  "folding_chair": {
-    "prompt": "folding chair",
-    "on_floor": true
-  },
-  "rocking_chair": {
-    "prompt": "rocking chair",
-    "on_floor": true
-  },
-  "lounge_chair": {
-    "prompt": "lounge chair",
-    "on_floor": true
-  },
-  "recliner": {
-    "prompt": "recliner",
-    "on_floor": true
-  },
-  "beanbag": {
-    "prompt": "beanbag",
-    "on_floor": true
-  },
-  "bunk_bed": {
-    "prompt": "bunk bed",
     "on_floor": true
   },
   "crib": {
-    "prompt": "crib",
-    "on_floor": true
-  },
-  "cot": {
-    "prompt": "cot",
-    "on_floor": true
-  },
-  "dresser": {
-    "prompt": "dresser",
-    "on_floor": true
-  },
-  "nightstand": {
-    "prompt": "nightstand",
-    "on_floor": true
-  },
-  "kitchen_cabinet": {
-    "prompt": "kitchen cabinet",
     "on_floor": true
   },
   "display_cabinet": {
-    "prompt": "display cabinet",
-    "on_floor": true
-  },
-  "filing_cabinet": {
-    "prompt": "filing cabinet",
-    "on_floor": true
-  },
-  "safe": {
-    "prompt": "safe",
-    "on_floor": true
-  },
-  "locker": {
-    "prompt": "locker",
-    "on_floor": true
-  },
-  "reception_desk": {
-    "prompt": "reception desk",
-    "on_floor": true
-  },
-  "workbench": {
-    "prompt": "workbench",
-    "on_floor": true
-  },
-  "coat_rack": {
-    "prompt": "coat rack",
-    "on_floor": true
-  },
-  "clothes_rack": {
-    "prompt": "clothes rack",
-    "on_floor": true
-  },
-  "hanger": {
-    "prompt": "hanger",
-    "on_floor": false
-  },
-  "shoe_rack": {
-    "prompt": "shoe rack",
-    "on_floor": true
-  },
-  "room_divider": {
-    "prompt": "room divider",
     "on_floor": true
   },
   "cushion": {
-    "prompt": "cushion",
     "on_floor": false
   },
   "pillow": {
-    "prompt": "pillow",
     "on_floor": false
-  },
-  "mattress": {
-    "prompt": "mattress",
-    "on_floor": true
   },
   "rug": {
-    "prompt": "rug",
     "on_floor": true
-  },
-  "doormat": {
-    "prompt": "doormat",
-    "on_floor": true
-  },
-  "kettle": {
-    "prompt": "kettle",
-    "on_floor": false
-  },
-  "teapot": {
-    "prompt": "teapot",
-    "on_floor": false
-  },
-  "saucepan": {
-    "prompt": "saucepan",
-    "on_floor": false
-  },
-  "frying_pan": {
-    "prompt": "frying pan",
-    "on_floor": false
-  },
-  "cooking_pot": {
-    "prompt": "cooking pot",
-    "on_floor": false
-  },
-  "bowl": {
-    "prompt": "bowl",
-    "on_floor": false
   },
   "plate": {
-    "prompt": "plate",
     "on_floor": false
   },
   "tray": {
-    "prompt": "tray",
     "on_floor": false
   },
   "bottle": {
-    "prompt": "bottle",
-    "on_floor": false
-  },
-  "wine_bottle": {
-    "prompt": "wine bottle",
-    "on_floor": false
-  },
-  "can": {
-    "prompt": "can",
-    "on_floor": false
-  },
-  "jar": {
-    "prompt": "jar",
     "on_floor": false
   },
   "drinking_glass": {
-    "prompt": "drinking glass",
-    "on_floor": false
-  },
-  "knife": {
-    "prompt": "knife",
-    "on_floor": false
-  },
-  "fork": {
-    "prompt": "fork",
-    "on_floor": false
-  },
-  "spoon": {
-    "prompt": "spoon",
-    "on_floor": false
-  },
-  "cutting_board": {
-    "prompt": "cutting board",
-    "on_floor": false
-  },
-  "toaster": {
-    "prompt": "toaster",
-    "on_floor": false
-  },
-  "blender": {
-    "prompt": "blender",
-    "on_floor": false
-  },
-  "stand_mixer": {
-    "prompt": "stand mixer",
-    "on_floor": false
-  },
-  "coffee_machine": {
-    "prompt": "coffee machine",
-    "on_floor": false
-  },
-  "rice_cooker": {
-    "prompt": "rice cooker",
-    "on_floor": false
-  },
-  "vacuum_cleaner": {
-    "prompt": "vacuum cleaner",
-    "on_floor": true
-  },
-  "upright_vacuum": {
-    "prompt": "upright vacuum",
-    "on_floor": true
-  },
-  "broom": {
-    "prompt": "broom",
-    "on_floor": true
-  },
-  "mop": {
-    "prompt": "mop",
-    "on_floor": true
-  },
-  "dustpan": {
-    "prompt": "dustpan",
-    "on_floor": false
-  },
-  "bucket": {
-    "prompt": "bucket",
-    "on_floor": true
-  },
-  "drying_rack": {
-    "prompt": "drying rack",
-    "on_floor": true
-  },
-  "ironing_board": {
-    "prompt": "ironing board",
-    "on_floor": true
-  },
-  "iron": {
-    "prompt": "iron",
-    "on_floor": false
-  },
-  "sewing_machine": {
-    "prompt": "sewing machine",
     "on_floor": false
   },
   "toilet": {
-    "prompt": "toilet",
     "on_floor": true
-  },
-  "bidet": {
-    "prompt": "bidet",
-    "on_floor": true
-  },
-  "urinal": {
-    "prompt": "urinal",
-    "on_floor": false
-  },
-  "washbasin": {
-    "prompt": "washbasin",
-    "on_floor": true
-  },
-  "toilet_paper_roll": {
-    "prompt": "toilet paper roll",
-    "on_floor": false
   },
   "towel": {
-    "prompt": "towel",
     "on_floor": false
-  },
-  "towel_rail": {
-    "prompt": "towel rail",
-    "on_floor": false
-  },
-  "soap_dispenser": {
-    "prompt": "soap dispenser",
-    "on_floor": false
-  },
-  "toothbrush": {
-    "prompt": "toothbrush",
-    "on_floor": false
-  },
-  "toothbrush_holder": {
-    "prompt": "toothbrush holder",
-    "on_floor": false
-  },
-  "hair_dryer": {
-    "prompt": "hair dryer",
-    "on_floor": false
-  },
-  "bathtub_faucet": {
-    "prompt": "bathtub faucet",
-    "on_floor": false
-  },
-  "shower_head": {
-    "prompt": "shower head",
-    "on_floor": false
-  },
-  "water_dispenser": {
-    "prompt": "water dispenser",
-    "on_floor": true
-  },
-  "water_heater": {
-    "prompt": "water heater",
-    "on_floor": true
   },
   "fan": {
-    "prompt": "fan",
     "on_floor": true
-  },
-  "ceiling_fan": {
-    "prompt": "ceiling fan",
-    "on_floor": false
-  },
-  "air_conditioner": {
-    "prompt": "air conditioner",
-    "on_floor": false
-  },
-  "tissue_box": {
-    "prompt": "tissue box",
-    "on_floor": false
-  },
-  "alarm_clock": {
-    "prompt": "alarm clock",
-    "on_floor": false
   },
   "wall_clock": {
-    "prompt": "wall clock",
     "on_floor": false
-  },
-  "grandfather_clock": {
-    "prompt": "grandfather clock",
-    "on_floor": true
-  },
-  "laundry_basket": {
-    "prompt": "laundry basket",
-    "on_floor": true
-  },
-  "trash_bag": {
-    "prompt": "trash bag",
-    "on_floor": true
-  },
-  "umbrella": {
-    "prompt": "umbrella",
-    "on_floor": false
-  },
-  "umbrella_stand": {
-    "prompt": "umbrella stand",
-    "on_floor": true
   },
   "desktop_computer": {
-    "prompt": "desktop computer",
-    "on_floor": false
-  },
-  "computer_tower": {
-    "prompt": "computer tower",
-    "on_floor": true
-  },
-  "laptop": {
-    "prompt": "laptop",
-    "on_floor": false
-  },
-  "keyboard": {
-    "prompt": "keyboard",
-    "on_floor": false
-  },
-  "mouse": {
-    "prompt": "mouse",
-    "on_floor": false
-  },
-  "telephone": {
-    "prompt": "telephone",
-    "on_floor": false
-  },
-  "smartphone": {
-    "prompt": "smartphone",
-    "on_floor": false
-  },
-  "tablet": {
-    "prompt": "tablet",
-    "on_floor": false
-  },
-  "speaker": {
-    "prompt": "speaker",
-    "on_floor": false
-  },
-  "headphones": {
-    "prompt": "headphones",
-    "on_floor": false
-  },
-  "game_console": {
-    "prompt": "game console",
-    "on_floor": false
-  },
-  "camera": {
-    "prompt": "camera",
-    "on_floor": false
-  },
-  "projector": {
-    "prompt": "projector",
-    "on_floor": false
-  },
-  "router": {
-    "prompt": "router",
-    "on_floor": false
-  },
-  "printer": {
-    "prompt": "printer",
-    "on_floor": false
-  },
-  "scanner": {
-    "prompt": "scanner",
-    "on_floor": false
-  },
-  "calculator": {
-    "prompt": "calculator",
     "on_floor": false
   },
   "book": {
-    "prompt": "book",
-    "on_floor": false
-  },
-  "stack_of_books": {
-    "prompt": "stack of books",
-    "on_floor": false
-  },
-  "open_book": {
-    "prompt": "open book",
-    "on_floor": false
-  },
-  "newspaper": {
-    "prompt": "newspaper",
-    "on_floor": false
-  },
-  "folder": {
-    "prompt": "folder",
-    "on_floor": false
-  },
-  "notebook": {
-    "prompt": "notebook",
-    "on_floor": false
-  },
-  "pen": {
-    "prompt": "pen",
-    "on_floor": false
-  },
-  "pencil": {
-    "prompt": "pencil",
-    "on_floor": false
-  },
-  "scissors": {
-    "prompt": "scissors",
-    "on_floor": false
-  },
-  "stapler": {
-    "prompt": "stapler",
-    "on_floor": false
-  },
-  "tape_dispenser": {
-    "prompt": "tape dispenser",
-    "on_floor": false
-  },
-  "whiteboard": {
-    "prompt": "whiteboard",
     "on_floor": false
   },
   "noticeboard": {
-    "prompt": "noticeboard",
     "on_floor": false
-  },
-  "easel": {
-    "prompt": "easel",
-    "on_floor": true
-  },
-  "desk_organizer": {
-    "prompt": "desk organizer",
-    "on_floor": false
-  },
-  "power_outlet": {
-    "prompt": "power outlet",
-    "on_floor": false
-  },
-  "light_switch": {
-    "prompt": "light switch",
-    "on_floor": false
-  },
-  "thermostat": {
-    "prompt": "thermostat",
-    "on_floor": false
-  },
-  "security_camera": {
-    "prompt": "security camera",
-    "on_floor": false
-  },
-  "smoke_detector": {
-    "prompt": "smoke detector",
-    "on_floor": false
-  },
-  "fire_alarm": {
-    "prompt": "fire alarm",
-    "on_floor": false
-  },
-  "electrical_panel": {
-    "prompt": "electrical panel",
-    "on_floor": false
-  },
-  "cable_reel": {
-    "prompt": "cable reel",
-    "on_floor": false
-  },
-  "fire_hydrant": {
-    "prompt": "fire hydrant",
-    "on_floor": true
-  },
-  "mailbox": {
-    "prompt": "mailbox",
-    "on_floor": true
-  },
-  "parking_meter": {
-    "prompt": "parking meter",
-    "on_floor": true
-  },
-  "bollard": {
-    "prompt": "bollard",
-    "on_floor": true
-  },
-  "road_sign": {
-    "prompt": "road sign",
-    "on_floor": true
-  },
-  "stop_sign": {
-    "prompt": "stop sign",
-    "on_floor": true
-  },
-  "traffic_cone": {
-    "prompt": "traffic cone",
-    "on_floor": true
-  },
-  "road_barrier": {
-    "prompt": "road barrier",
-    "on_floor": true
-  },
-  "concrete_barrier": {
-    "prompt": "concrete barrier",
-    "on_floor": true
-  },
-  "bike_rack": {
-    "prompt": "bike rack",
-    "on_floor": true
-  },
-  "manhole_cover": {
-    "prompt": "manhole cover",
-    "on_floor": true
-  },
-  "storm_drain": {
-    "prompt": "storm drain",
-    "on_floor": true
-  },
-  "curb": {
-    "prompt": "curb",
-    "on_floor": true
-  },
-  "bus_shelter": {
-    "prompt": "bus shelter",
-    "on_floor": true
-  },
-  "vending_machine": {
-    "prompt": "vending machine",
-    "on_floor": true
-  },
-  "atm": {
-    "prompt": "atm",
-    "on_floor": true
-  },
-  "ticket_machine": {
-    "prompt": "ticket machine",
-    "on_floor": true
-  },
-  "turnstile": {
-    "prompt": "turnstile",
-    "on_floor": true
-  },
-  "gate": {
-    "prompt": "gate",
-    "on_floor": true
-  },
-  "garage_door": {
-    "prompt": "garage door",
-    "on_floor": true
-  },
-  "roller_door": {
-    "prompt": "roller door",
-    "on_floor": true
-  },
-  "doorway": {
-    "prompt": "doorway",
-    "on_floor": true
-  },
-  "arch": {
-    "prompt": "arch",
-    "on_floor": true
-  },
-  "balcony": {
-    "prompt": "balcony",
-    "on_floor": true
   },
   "handrail": {
-    "prompt": "handrail",
-    "on_floor": true
-  },
-  "ramp": {
-    "prompt": "ramp",
     "on_floor": true
   },
   "escalator": {
-    "prompt": "escalator",
     "on_floor": true
-  },
-  "elevator": {
-    "prompt": "elevator",
-    "on_floor": true
-  },
-  "drainpipe": {
-    "prompt": "drainpipe",
-    "on_floor": true
-  },
-  "gutter": {
-    "prompt": "gutter",
-    "on_floor": false
-  },
-  "vent": {
-    "prompt": "vent",
-    "on_floor": false
-  },
-  "chimney": {
-    "prompt": "chimney",
-    "on_floor": false
-  },
-  "roof": {
-    "prompt": "roof",
-    "on_floor": false
   },
   "house": {
-    "prompt": "house",
     "on_floor": false
   },
   "shed": {
-    "prompt": "shed",
     "on_floor": false
   },
   "flag": {
-    "prompt": "flag",
     "on_floor": false
-  },
-  "flagpole": {
-    "prompt": "flagpole",
-    "on_floor": false
-  },
-  "antenna": {
-    "prompt": "antenna",
-    "on_floor": false
-  },
-  "satellite_dish": {
-    "prompt": "satellite dish",
-    "on_floor": false
-  },
-  "solar_panel": {
-    "prompt": "solar panel",
-    "on_floor": false
-  },
-  "fire_extinguisher": {
-    "prompt": "fire extinguisher",
-    "on_floor": false
-  },
-  "fire_hose_reel": {
-    "prompt": "fire hose reel",
-    "on_floor": false
-  },
-  "electrical_box": {
-    "prompt": "electrical box",
-    "on_floor": false
-  },
-  "drinking_fountain": {
-    "prompt": "drinking fountain",
-    "on_floor": true
-  },
-  "outdoor_bin": {
-    "prompt": "outdoor bin",
-    "on_floor": true
-  },
-  "dumpster": {
-    "prompt": "dumpster",
-    "on_floor": true
-  },
-  "speed_bump": {
-    "prompt": "speed bump",
-    "on_floor": true
-  },
-  "construction_fence": {
-    "prompt": "construction fence",
-    "on_floor": true
-  },
-  "scaffold": {
-    "prompt": "scaffold",
-    "on_floor": true
-  },
-  "ladder": {
-    "prompt": "ladder",
-    "on_floor": true
-  },
-  "power_line_pole": {
-    "prompt": "power line pole",
-    "on_floor": true
   },
   "bicycle": {
-    "prompt": "bicycle",
     "on_floor": true
   },
   "motorcycle": {
-    "prompt": "motorcycle",
-    "on_floor": true
-  },
-  "scooter": {
-    "prompt": "scooter",
-    "on_floor": true
-  },
-  "kick_scooter": {
-    "prompt": "kick scooter",
-    "on_floor": true
-  },
-  "wheelchair": {
-    "prompt": "wheelchair",
-    "on_floor": true
-  },
-  "stroller": {
-    "prompt": "stroller",
-    "on_floor": true
-  },
-  "shopping_cart": {
-    "prompt": "shopping cart",
-    "on_floor": true
-  },
-  "wheelbarrow": {
-    "prompt": "wheelbarrow",
-    "on_floor": true
-  },
-  "hand_truck": {
-    "prompt": "hand truck",
-    "on_floor": true
-  },
-  "trolley": {
-    "prompt": "trolley",
-    "on_floor": true
-  },
-  "pallet_jack": {
-    "prompt": "pallet jack",
-    "on_floor": true
-  },
-  "forklift": {
-    "prompt": "forklift",
-    "on_floor": true
-  },
-  "tractor": {
-    "prompt": "tractor",
-    "on_floor": true
-  },
-  "trailer": {
-    "prompt": "trailer",
-    "on_floor": true
-  },
-  "pickup_truck": {
-    "prompt": "pickup truck",
-    "on_floor": true
-  },
-  "ambulance": {
-    "prompt": "ambulance",
-    "on_floor": true
-  },
-  "fire_truck": {
-    "prompt": "fire truck",
-    "on_floor": true
-  },
-  "police_car": {
-    "prompt": "police car",
     "on_floor": true
   },
   "boat": {
-    "prompt": "boat",
     "on_floor": true
-  },
-  "canoe": {
-    "prompt": "canoe",
-    "on_floor": true
-  },
-  "sailboat": {
-    "prompt": "sailboat",
-    "on_floor": true
-  },
-  "traffic_buoy": {
-    "prompt": "traffic buoy",
-    "on_floor": true
-  },
-  "shipping_container": {
-    "prompt": "shipping container",
-    "on_floor": true
-  },
-  "cardboard_box": {
-    "prompt": "cardboard box",
-    "on_floor": true
-  },
-  "crate": {
-    "prompt": "crate",
-    "on_floor": true
-  },
-  "pallet": {
-    "prompt": "pallet",
-    "on_floor": true
-  },
-  "toolbox": {
-    "prompt": "toolbox",
-    "on_floor": true
-  },
-  "suitcase": {
-    "prompt": "suitcase",
-    "on_floor": true
-  },
-  "backpack": {
-    "prompt": "backpack",
-    "on_floor": false
   },
   "handbag": {
-    "prompt": "handbag",
-    "on_floor": false
-  },
-  "briefcase": {
-    "prompt": "briefcase",
     "on_floor": false
   },
   "basket": {
-    "prompt": "basket",
-    "on_floor": true
-  },
-  "shopping_basket": {
-    "prompt": "shopping basket",
-    "on_floor": true
-  },
-  "shopping_bag": {
-    "prompt": "shopping bag",
-    "on_floor": false
-  },
-  "duffel_bag": {
-    "prompt": "duffel bag",
-    "on_floor": true
-  },
-  "storage_tub": {
-    "prompt": "storage tub",
-    "on_floor": true
-  },
-  "oil_drum": {
-    "prompt": "oil drum",
-    "on_floor": true
-  },
-  "gas_cylinder": {
-    "prompt": "gas cylinder",
-    "on_floor": true
-  },
-  "jerry_can": {
-    "prompt": "jerry can",
-    "on_floor": true
-  },
-  "fuel_pump": {
-    "prompt": "fuel pump",
     "on_floor": true
   },
   "palm_tree": {
-    "prompt": "palm tree",
-    "on_floor": true
-  },
-  "deciduous_tree": {
-    "prompt": "deciduous tree",
-    "on_floor": true
-  },
-  "hedge": {
-    "prompt": "hedge",
-    "on_floor": true
-  },
-  "cactus": {
-    "prompt": "cactus",
     "on_floor": true
   },
   "flower": {
-    "prompt": "flower",
     "on_floor": true
   },
   "planter": {
-    "prompt": "planter",
-    "on_floor": true
-  },
-  "tree_stump": {
-    "prompt": "tree stump",
-    "on_floor": true
-  },
-  "log": {
-    "prompt": "log",
     "on_floor": true
   },
   "rock": {
-    "prompt": "rock",
-    "on_floor": true
-  },
-  "boulder": {
-    "prompt": "boulder",
     "on_floor": true
   },
   "fountain": {
-    "prompt": "fountain",
-    "on_floor": true
-  },
-  "statue": {
-    "prompt": "statue",
     "on_floor": true
   },
   "sculpture": {
-    "prompt": "sculpture",
-    "on_floor": true
-  },
-  "picnic_table": {
-    "prompt": "picnic table",
-    "on_floor": true
-  },
-  "gazebo": {
-    "prompt": "gazebo",
-    "on_floor": true
-  },
-  "park_bench": {
-    "prompt": "park bench",
-    "on_floor": true
-  },
-  "swing": {
-    "prompt": "swing",
-    "on_floor": true
-  },
-  "slide": {
-    "prompt": "slide",
-    "on_floor": true
-  },
-  "seesaw": {
-    "prompt": "seesaw",
-    "on_floor": true
-  },
-  "sandbox": {
-    "prompt": "sandbox",
     "on_floor": true
   },
   "tent": {
-    "prompt": "tent",
     "on_floor": true
-  },
-  "beach_umbrella": {
-    "prompt": "beach umbrella",
-    "on_floor": true
-  },
-  "deck_chair": {
-    "prompt": "deck chair",
-    "on_floor": true
-  },
-  "campfire": {
-    "prompt": "campfire",
-    "on_floor": true
-  },
-  "firewood": {
-    "prompt": "firewood",
-    "on_floor": true
-  },
-  "pond": {
-    "prompt": "pond",
-    "on_floor": true
-  },
-  "rock_wall": {
-    "prompt": "rock wall",
-    "on_floor": true
-  },
-  "flower_bed": {
-    "prompt": "flower bed",
-    "on_floor": true
-  },
-  "basketball_hoop": {
-    "prompt": "basketball hoop",
-    "on_floor": true
-  },
-  "soccer_goal": {
-    "prompt": "soccer goal",
-    "on_floor": true
-  },
-  "tennis_net": {
-    "prompt": "tennis net",
-    "on_floor": true
-  },
-  "pingpong_table": {
-    "prompt": "pingpong table",
-    "on_floor": true
-  },
-  "dumbbell": {
-    "prompt": "dumbbell",
-    "on_floor": false
-  },
-  "barbell": {
-    "prompt": "barbell",
-    "on_floor": false
-  },
-  "weight_bench": {
-    "prompt": "weight bench",
-    "on_floor": true
-  },
-  "treadmill": {
-    "prompt": "treadmill",
-    "on_floor": true
-  },
-  "exercise_bike": {
-    "prompt": "exercise bike",
-    "on_floor": true
-  },
-  "punching_bag": {
-    "prompt": "punching bag",
-    "on_floor": true
-  },
-  "yoga_mat": {
-    "prompt": "yoga mat",
-    "on_floor": true
-  },
-  "surfboard": {
-    "prompt": "surfboard",
-    "on_floor": false
-  },
-  "skateboard": {
-    "prompt": "skateboard",
-    "on_floor": false
-  },
-  "snowboard": {
-    "prompt": "snowboard",
-    "on_floor": false
-  },
-  "skis": {
-    "prompt": "skis",
-    "on_floor": false
-  },
-  "tennis_racket": {
-    "prompt": "tennis racket",
-    "on_floor": false
-  },
-  "baseball_bat": {
-    "prompt": "baseball bat",
-    "on_floor": false
-  },
-  "football": {
-    "prompt": "football",
-    "on_floor": false
-  },
-  "basketball": {
-    "prompt": "basketball",
-    "on_floor": false
-  },
-  "tennis_ball": {
-    "prompt": "tennis ball",
-    "on_floor": false
-  },
-  "helmet": {
-    "prompt": "helmet",
-    "on_floor": false
-  },
-  "guitar": {
-    "prompt": "guitar",
-    "on_floor": false
-  },
-  "piano": {
-    "prompt": "piano",
-    "on_floor": true
-  },
-  "drum": {
-    "prompt": "drum",
-    "on_floor": true
-  },
-  "music_stand": {
-    "prompt": "music stand",
-    "on_floor": true
-  },
-  "microphone": {
-    "prompt": "microphone",
-    "on_floor": false
-  },
-  "microphone_stand": {
-    "prompt": "microphone stand",
-    "on_floor": true
-  },
-  "toy_block": {
-    "prompt": "toy block",
-    "on_floor": false
-  },
-  "teddy_bear": {
-    "prompt": "teddy bear",
-    "on_floor": false
   },
   "ball": {
-    "prompt": "ball",
-    "on_floor": false
-  },
-  "chessboard": {
-    "prompt": "chessboard",
-    "on_floor": false
-  },
-  "drill": {
-    "prompt": "drill",
-    "on_floor": false
-  },
-  "hammer": {
-    "prompt": "hammer",
-    "on_floor": false
-  },
-  "handsaw": {
-    "prompt": "handsaw",
-    "on_floor": false
-  },
-  "shovel": {
-    "prompt": "shovel",
-    "on_floor": false
-  },
-  "rake": {
-    "prompt": "rake",
-    "on_floor": false
-  },
-  "axe": {
-    "prompt": "axe",
-    "on_floor": false
-  },
-  "wrench": {
-    "prompt": "wrench",
-    "on_floor": false
-  },
-  "pliers": {
-    "prompt": "pliers",
-    "on_floor": false
-  },
-  "paint_bucket": {
-    "prompt": "paint bucket",
-    "on_floor": true
-  },
-  "paint_roller": {
-    "prompt": "paint roller",
-    "on_floor": false
-  },
-  "paint_brush": {
-    "prompt": "paint brush",
-    "on_floor": false
-  },
-  "generator": {
-    "prompt": "generator",
-    "on_floor": true
-  },
-  "air_compressor": {
-    "prompt": "air compressor",
-    "on_floor": true
-  },
-  "industrial_pipe": {
-    "prompt": "industrial pipe",
-    "on_floor": true
-  },
-  "pipe_elbow": {
-    "prompt": "pipe elbow",
-    "on_floor": false
-  },
-  "work_light": {
-    "prompt": "work light",
-    "on_floor": true
-  },
-  "shopping_display": {
-    "prompt": "shopping display",
-    "on_floor": true
-  },
-  "checkout_counter": {
-    "prompt": "checkout counter",
-    "on_floor": true
-  },
-  "cash_register": {
-    "prompt": "cash register",
     "on_floor": false
   },
   "shop_sign": {
-    "prompt": "shop sign",
-    "on_floor": false
-  },
-  "clothing_rack": {
-    "prompt": "clothing rack",
-    "on_floor": true
-  },
-  "mannequin": {
-    "prompt": "mannequin",
-    "on_floor": true
-  },
-  "hospital_bed": {
-    "prompt": "hospital bed",
-    "on_floor": true
-  },
-  "examination_table": {
-    "prompt": "examination table",
-    "on_floor": true
-  },
-  "iv_stand": {
-    "prompt": "iv stand",
-    "on_floor": true
-  },
-  "stretcher": {
-    "prompt": "stretcher",
-    "on_floor": true
-  },
-  "medical_cart": {
-    "prompt": "medical cart",
-    "on_floor": true
-  },
-  "microscope": {
-    "prompt": "microscope",
-    "on_floor": false
-  },
-  "first_aid_box": {
-    "prompt": "first aid box",
-    "on_floor": false
-  },
-  "safety_sign": {
-    "prompt": "safety sign",
-    "on_floor": false
-  },
-  "dog": {
-    "prompt": "dog",
-    "on_floor": true
-  },
-  "cat": {
-    "prompt": "cat",
-    "on_floor": true
-  },
-  "horse": {
-    "prompt": "horse",
-    "on_floor": true
-  },
-  "bird": {
-    "prompt": "bird",
-    "on_floor": false
-  },
-  "cow": {
-    "prompt": "cow",
-    "on_floor": true
-  },
-  "sheep": {
-    "prompt": "sheep",
-    "on_floor": true
-  },
-  "duck": {
-    "prompt": "duck",
-    "on_floor": false
-  },
-  "fish": {
-    "prompt": "fish",
-    "on_floor": false
-  },
-  "apple": {
-    "prompt": "apple",
-    "on_floor": false
-  },
-  "orange": {
-    "prompt": "orange",
-    "on_floor": false
-  },
-  "banana": {
-    "prompt": "banana",
-    "on_floor": false
-  },
-  "bread": {
-    "prompt": "bread",
-    "on_floor": false
-  },
-  "cake": {
-    "prompt": "cake",
-    "on_floor": false
-  },
-  "pizza": {
-    "prompt": "pizza",
-    "on_floor": false
-  },
-  "egg": {
-    "prompt": "egg",
     "on_floor": false
   }
 }

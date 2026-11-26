@@ -267,6 +267,10 @@ HANGING={'shelf','sink','tv','monitor','microwave','vase','pot','cup','table_lam
 KINDS += extra_shapes.EXTRA_KINDS
 HANGING |= extra_shapes.FLOATING
 assert len(KINDS)==len(set(KINDS)), 'Duplicate object asset names'
+# The library holds only the models Stage 2 can place: the assets Mask2Former's 150 names use (ade_objects.py).
+# The other recipes stay here, unused; a name with no recipe (airplane, chandelier...) is a .blend you add yourself.
+import ade_objects
+KINDS = [k for k in KINDS if k in set(ade_objects.wanted())]
 
 
 def save_asset(kind):
@@ -314,7 +318,7 @@ def main():
     metadata_path=OUT/'objects.json';metadata=json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     for kind in args.types or KINDS:
         if args.overwrite or not (OUT/(kind+'.blend')).exists():manifest[kind]=save_asset(kind)
-        metadata.setdefault(kind,{'prompt':kind.replace('_',' '),'on_floor':kind not in HANGING})
+        metadata.setdefault(kind,{'on_floor':kind not in HANGING})
         # Persist completed assets so a stopped build can resume without losing its index.
         manifest_path.write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
         metadata_path.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8')

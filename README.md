@@ -81,11 +81,13 @@ Started by hand on a clip whose Stage 1 is done (its page: **Add background**; o
 `run_pipeline.py <video> --stage background --name <clip>`). It adds your object models to Stage 1's scene and packs
 a **second** zip; Stage 1's zip is never changed.
 
-1. **Models**: one `.blend` per object type in `assets\objects\` (see `assets\objects\README.md`); the file name is
-   what SAM 3 looks for. No models: the run stops and says so.
-2. **Find**: SAM 3 looks for each type by name in a few frames per second of every shot (`sam3_objects.py`), so an
-   object that only comes into view later (zoom, pan) is found where it appears. Views mostly hidden by a person
-   are not used.
+1. **Models**: the `.blend` files in `assets\objects\` (see `assets\objects\README.md`): one for each object
+   Mask2Former can name. No models: the run stops and says so.
+2. **Find**: Mask2Former panoptic (ADE20K, 150 names; `models\mask2former_ade_panoptic`, `ade_find.py`) outlines and
+   names every object in a few frames per second of every shot, so an object that only comes into view later (zoom,
+   pan) is found where it appears. `ade_objects.py` turns each name into its model (`windowpane` → `window`); people
+   and scenery are not placed; a name whose model is missing is reported. The same object in the next frame is the
+   outline of the same name that overlaps it most. Views mostly hidden by a person are not used.
 3. **Depth**: each object's best views (big, whole, not hidden) get MoGe depth and Mask2Former floor labels
    (`metric_observe.py`, the configured MoGe version).
 4. **Scale**: each frame's depth is matched to Stage 1's floor (its floor pixels must land on z = 0), so the objects
@@ -93,11 +95,11 @@ a **second** zip; Stage 1's zip is never changed.
 5. **Place**: the object's pixels become 3D points through Stage 1's camera of that frame (with its zoom); a box
    facing the camera is fitted (the hidden depth from the model's own proportions; standing types reach down to the
    floor, hanging ones stay where they are seen); one object found twice is kept once; the model is stretched into
-   the box. A person standing inside an object is reported as a warning.
+   the box. Checked first (`object_checks.py`): a real size for its type, and no person standing inside it.
 6. **Build**: Stage 1's scene + the objects -> Blender (colour card) -> v2.1 package -> v2.1 package check.
 
 Files: `Work_auto\<clip>\background\` (`report.json` with every object, `preview.jpg` with the boxes drawn over the
-video, the SAM 3 and depth caches, the render) and `SUBMIT\_background\<clip>\` + `<clip>.zip` (downloaded as
+video, the found objects and depth caches, the render) and `SUBMIT\_background\<clip>\` + `<clip>.zip` (downloaded as
 `<package>_background.zip`). When Stage 1 is made again later, the background zip shows as out of date.
 
 ## Colours

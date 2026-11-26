@@ -4,16 +4,18 @@
   python run_pipeline.py VIDEO --stage background --name CLIP
 
   1. assets      every assets\\objects\\<type>.blend (assets_lib.py); none -> the run stops and says so
-  2. find        SAM 3 looks for each type by name, a few frames per second of every shot (sam3_objects.py):
-                 an object that only comes into view later (zoom, pan) is found where it appears
+  2. find        Mask2Former panoptic (ADE20K, 150 names) outlines and names every object, a few frames per second of
+                 every shot (ade_find.py); ade_objects.py turns each name into its asset (people and scenery are not
+                 placed; a name whose .blend is missing is reported).  An object that only comes into view later
+                 (zoom, pan) is found where it appears
   3. depth       per object its best views (big, whole, not hidden by people); MoGe (the configured version) depth +
                  Mask2Former floor labels on those frames (metric_observe.py)
   4. scale       each frame's depth is matched to Stage 1's floor: the floor pixels must land on z = 0 of the scene,
                  so objects stand on the floor the people stand on
   5. place       the object's pixels -> 3D points (Stage 1's camera of that frame, with its zoom) -> a box on the
                  floor (or on the wall, when it hangs) facing the camera -> the asset stretched into that box.
-                 Checked first (object_checks.py): Mask2Former must agree on what it is, the box must have a real
-                 size for its type (too wide: split by its 3D points), and people must not stand inside it
+                 Checked first (object_checks.py): the box must have a real size for its type (too wide: split by
+                 its 3D points), and people must not stand inside it
   6. build       Stage 1's scene_data.json + the objects -> Work\\<clip>\\background\\scene_data.json -> Blender
                  (colour card) -> SUBMIT\\_background\\<clip>.zip -> the v2.1 package check
 
@@ -43,6 +45,7 @@ import object_checks
 
 VERSION = 1
 FLOOR_ROLES = ("floor", "ground")
+SURFACES = ("wall",)            # large surfaces: they never count as a duplicate of the things standing against them
 
 
 def bg_root(c):
@@ -133,7 +136,10 @@ def fit_box(P, cams, model, stands=True, ground_gap=0.3, raised=1.2):
     w = max(0.05, float(np.percentile(t1, 99) - np.percentile(t1, 1)))
     dm = float(np.percentile(tn, 97) - np.percentile(tn, 3))
     sx, sy, sz = (float(x) for x in model["size"])
-    d = max(0.05, dm, w * sy / max(sx, 1e-6))
+    if sy < 0.2 * sx:                                      # a flat thing (wall, window, picture, door, blind): its
+        d = max(0.02, w * sy / max(sx, 1e-6))              # depth is its own; the measured spread is noise and bleed
+    else:
+        d = max(0.05, dm, w * sy / max(sx, 1e-6))
     front = float(np.percentile(tn, 90))
     c1 = (np.percentile(t1, 99) + np.percentile(t1, 1)) / 2.0
     cxy = mu + a1 * c1 + n * (front - d / 2.0)
@@ -297,14 +303,17 @@ def run(name, video, work, marks, c, render_and_pack):
     if not cat:
         raise RuntimeError("no object models: put one .blend per object type in %s (e.g. pillar.blend, wall.blend)"
                            % assets_lib.folder(c))
-    log("  assets: %s" % ", ".join("%s (\"%s\")" % (t, cat[t]["prompt"]) for t in cat))
+    log("  assets: %d object models in %s" % (len(cat), assets_lib.folder(c)))
     models = {t: assets_lib.load(t, c) for t in cat}          # read every model before the GPU work: fail early
     types = list(cat)
     y0, Hp, N, fps = int(ci["y0"]), int(ci["Hpic"]), int(data["frames"]), float(data["fps"])
     cam = Cam(data)
     shots = [(int(s["frames"][0]), int(s["frames"][1]) + 1) for s in data.get("shots") or []] or [(0, N)]
-    import sam3_objects
-    sample = sam3_objects.sample_frames(shots, fps, c)
+    import ade_find
+    if not ade_find.available():                              # before any GPU work
+        raise RuntimeError("Mask2Former panoptic is missing: put config.json, preprocessor_config.json and model.safetensors "
+                           "of facebook/mask2former-swin-large-ade-panoptic in %s" % ade_find.MODEL_DIR)
+    sample = ade_find.sample_frames(shots, fps, c)
     gpu_lease.acquire()
     log("  reading %d frames ..." % len(sample))
     pics = {f: img[y0:y0 + Hp] for f, img in read_frames_at(video, sample).items()}
@@ -322,23 +331,25 @@ def run(name, video, work, marks, c, render_and_pack):
         m = union_at(people, f, shape[1], shape[0])
         return cv2.dilate(m.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
 
-    # 2. find (cached: frames, prompts, settings)
-    prompts = [cat[t]["prompt"] for t in types]
-    key = hashlib.sha256(json.dumps([VERSION, sam3_objects.VERSION, sample, prompts, os.path.getsize(video), os.path.getmtime(video),
-                                     c.get("bg_probability", .5), c.get("bg_max_objects", 12), c.get("sam3_mask_side", 640),
-                                     c.get("bg_scan_frames", 4), c.get("bg_scan_threshold")]).encode()).hexdigest()
-    dp = os.path.join(out, "sam3_objects.npz")
+    # 2. find: Mask2Former panoptic outlines and names every object (ade_find.py; cached: frames, models, settings)
+    key = hashlib.sha256(json.dumps([VERSION, ade_find.VERSION, sample, types, os.path.getsize(video), os.path.getmtime(video),
+                                     c.get("bg_detect_fps", 5), c.get("bg_find_width", 1024), c.get("bg_ade_threshold", .5),
+                                     c.get("bg_min_area", .002), c.get("bg_link_iou", .3), c.get("sam3_mask_side", 640)]).encode()).hexdigest()
+    dp = os.path.join(out, "objects_found.npz")
     bundle = None
     if os.path.isfile(dp):
         with np.load(dp, allow_pickle=False) as got:
             if str(got["key"]) == key:
-                bundle = {k: got[k].copy() for k in got.files}
+                bundle = {k: got[k].copy() for k in got.files if k != "missing"}
+                missing = json.loads(str(got["missing"])) if "missing" in got.files else {}
     if bundle is None:
-        log("  SAM 3: looking for %s ..." % ", ".join(prompts))
-        tf = time.time()
-        bundle = sam3_objects.detect(pics, shots, prompts, out, c)
-        np.savez_compressed(dp, key=key, **bundle)
-        log("    SAM 3 %.0fs" % (time.time() - tf))
+        log("  Mask2Former: finding objects on %d frames ..." % len(pics))
+        bundle, finfo = ade_find.find(pics, shots, types, c)
+        missing = finfo["missing"]
+        np.savez_compressed(dp, key=key, missing=json.dumps(missing), **bundle)
+        log("    Mask2Former %.0fs: %d object(s)" % (finfo["seconds"], finfo["objects"]))
+    if missing:
+        log("    no model for: %s" % ", ".join("%s (add %s.blend)" % (n, a) for n, a in sorted(missing.items())))
     tracks = tracks_of(bundle, types, people_mask)
     log("  found: %d object(s)%s" % (len(tracks), "" if not tracks else " - " + ", ".join(
         "%s %d" % (t, sum(1 for x in tracks.values() if x["type"] == t)) for t in types if any(x["type"] == t for x in tracks.values()))))
@@ -383,26 +394,19 @@ def run(name, video, work, marks, c, render_and_pack):
                 return float(np.median(list(scales.values()))), "floor of other shots"
             return 1.0, "depth model's own metres (no floor seen)"
         idx = {f: k for k, f in enumerate(key_frames)}
-        # 5. place (object_checks.py: each detection is checked against Mask2Former, real sizes and the people)
+        # 5. place (object_checks.py: each object must have a real size for its type, and people not stand in it)
         checks = object_checks.enabled(c)
         extra = object_checks.extras(c) if checks else {}
         boxes = []
         for oid, t in tracks.items():
             ty = t["type"]; ex = extra.get(ty, {})
-            acc = object_checks.accepted_ids(ty, names, ex) if checks else None
-            P, cams, how, agree, seen_as = [], [], set(), [], []
+            P, cams, how = [], [], set()
             for f in views[oid]:
                 row = t["rows"][t["frames"].index(f)]
-                m = sam3_objects.mask_of(bundle, row, cam.W, cam.H) & ~people_mask(f, (cam.H, cam.W))
+                m = ade_find.mask_of(bundle, row, cam.W, cam.H) & ~people_mask(f, (cam.H, cam.W))
                 k = idx[f]; s, why = scale_at(f); how.add(why)
-                if acc is not None:
-                    a, top = object_checks.agreement(m, depth["labels"][k], acc, names)
-                    agree.append(a); seen_as.append(top)
                 P.append(object_points(cam, f, depth["depth"][k], depth["valid"][k], m, s))
                 cams.append(cam_mats(data["cam"][f])[1])
-            if agree and max(agree) < object_checks.AGREE_MIN:
-                warns.append("%s #%d: the picture shows %s there, not a %s (left out)"
-                             % (ty, oid, max(set(seen_as), key=seen_as.count), ty.replace("_", " "))); continue
             P = np.vstack(P) if P else np.zeros((0, 3))
             fit = lambda Q: fit_box(Q, cams, models[ty], cat[ty]["on_floor"])
             parts = object_checks.split_if_too_wide(ty, P, fit, ex) if checks else [P]
@@ -418,15 +422,17 @@ def run(name, video, work, marks, c, render_and_pack):
                     warns.append("%s #%d: %s (left out)" % (ty, oid, bad)); continue
                 box.update(type=ty, id=oid * 100 + j if len(parts) > 1 else oid, frames=[t["frames"][0], t["frames"][-1]],
                            seen=len(t["frames"]), views=views[oid], prob=float(np.mean(t["probs"])), scale=sorted(how),
-                           shot=shot_of(t["frames"][0]), pts=Pj, agree=max(agree) if agree else None)
+                           shot=shot_of(t["frames"][0]), pts=Pj)
                 boxes.append(box)
-        # one object found twice (SAM 3 lost and found it again, or two names for one thing): keep one
-        # (the one Mask2Former agrees with wins: a round table SAM 3 also called "chair" stays a table)
-        boxes.sort(key=lambda b: -(b["prob"] * b["seen"] * ((b["agree"] if b.get("agree") is not None else .5) + .1)))
+        # one object found twice (lost behind a person and found again, or two names for one thing): keep the one
+        # seen most surely and most often
+        boxes.sort(key=lambda b: -(b["prob"] * b["seen"]))
         kept = []
         for b in boxes:
             dup = None
             for a in kept:
+                if (a["type"] in SURFACES) != (b["type"] in SURFACES):
+                    continue                     # furniture against a wall is not the wall seen twice
                 fo, zo = overlap(a, b)
                 if a["shot"] == b["shot"] and fo > 0.5 and zo > 0.5:
                     dup = a; break
@@ -435,6 +441,8 @@ def run(name, video, work, marks, c, render_and_pack):
             elif dup["type"] == b["type"]:                       # the same object: measure it from both sets of views
                 cams = [cam_mats(data["cam"][f])[1] for f in dup["views"] + b["views"]]
                 nb = fit_box(np.vstack([dup["pts"], b["pts"]]), cams, models[dup["type"]], cat[dup["type"]]["on_floor"])
+                if nb and checks and object_checks.size_problem(dup["type"], nb, extra.get(dup["type"], {})):
+                    nb = None                    # measured together it has no real size: keep the first measurement
                 if nb:
                     for k_ in ("centre", "yaw", "size", "grounded", "points", "seen_z"):
                         dup[k_] = nb[k_]

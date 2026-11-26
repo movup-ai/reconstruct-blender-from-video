@@ -9,33 +9,31 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'pipeline')]
 
 import object_checks as oc
 
-NAMES = ["wall", "floor", "cabinet", "person", "door", "chair", "table", "swivel chair", "desk", "sofa"]
-
-
 def box(w, h):
     return {"size": [w, w, h]}
 
 
-class Agreement(unittest.TestCase):
-    def test_types_map_to_mask2former_classes(self):
+class Kinds(unittest.TestCase):
+    def test_size_class_of_each_model(self):
         self.assertEqual(oc.role("coffee_table"), "table")
-        self.assertEqual(oc.role("couch"), "sofa")
+        self.assertEqual(oc.role("office_chair"), "chair")
         self.assertEqual(oc.role("fridge"), "fridge")
-        self.assertIsNone(oc.role("spaceship_console"))
-        ids = oc.accepted_ids("office_chair", NAMES)
-        self.assertEqual(sorted(NAMES[i] for i in ids), ["chair", "swivel chair"], "related classes count")
-        self.assertIsNone(oc.accepted_ids("bush", NAMES), "a type with no class is not checked")
-        self.assertEqual(oc.accepted_ids("door", NAMES, {"labels": ["cabinet"]}), [2], "objects.json labels win")
+        self.assertEqual(oc.role("spaceship_console"), "spaceship_console")      # no range: not size-checked
+        self.assertIsNone(oc.size_range("spaceship_console"))
+        self.assertTrue(oc.is_seat("armchair") and oc.is_seat("stool") and not oc.is_seat("table"))
 
-    def test_a_cabinet_called_door_disagrees(self):
-        labels = np.full((20, 20), 2)                  # all cabinet
-        labels[:, :5] = 3                              # a person in front: not counted
-        mask = np.ones((40, 40), bool)
-        share, top = oc.agreement(mask, labels, oc.accepted_ids("door", NAMES), NAMES)
-        self.assertEqual((share, top), (0.0, "cabinet"))
-        labels[:, 10:] = 4                             # most of it is a door
-        share, _ = oc.agreement(mask, labels, oc.accepted_ids("door", NAMES), NAMES)
-        self.assertGreater(share, oc.AGREE_MIN)
+
+class EvenSplit(unittest.TestCase):
+    def test_a_row_with_no_gap_is_cut_into_real_widths(self):
+        rng = np.random.default_rng(0)
+        P = np.c_[rng.uniform(-1.05, 1.05, 3000), rng.normal(0, .01, 3000), rng.uniform(0, 1.0, 3000)]   # 3 washers, touching
+        def fit(Q):
+            return {"size": [float(np.ptp(Q[:, 0])), 0.6, float(np.ptp(Q[:, 2]))], "yaw": 0.0,
+                    "centre": [float(Q[:, 0].mean()), 0.0, 0.0]}
+        parts = oc.split_if_too_wide("washer", P, fit)
+        self.assertEqual(len(parts), 3)
+        self.assertTrue(all(0.5 <= np.ptp(q[:, 0]) <= 0.9 for q in parts))
+        self.assertEqual(len(oc.split_if_too_wide("washer", P[np.abs(P[:, 0]) < 0.35], fit)), 1, "one washer stays whole")
 
 
 class Sizes(unittest.TestCase):
