@@ -64,7 +64,9 @@ segInit($('viewsw'), v => { VIEW = v; try { localStorage.setItem('clipsView', v)
 // ---- each stage of a clip on its own: Movement (Stage 1) and Background (Stage 2) - where it is, how long its run
 //      took and when it finished
 const BG_GROUP = { waiting: 'busy', paused: 'busy', processing: 'busy', done: 'done', outdated: 'old', failed: 'fail', cancelled: 'new' };
-const BG_LABEL = { waiting: 'waiting', paused: 'paused', processing: 'processing', done: 'done', outdated: 'out of date', failed: 'failed', cancelled: 'cancelled' };
+const BG_LABEL = { waiting: 'waiting', paused: 'paused', processing: 'running', done: 'done', outdated: 'out of date', failed: 'failed', cancelled: 'cancelled' };
+// Movement's words for its chip ("Movement done", "Movement running"...); a skipped video is skipped as a whole
+const MV_LABEL = { new: 'new', waiting: 'waiting', paused: 'paused', processing: 'running', done: 'done', failed: 'failed', cancelled: 'cancelled', outdated: 'out of date' };
 const bgState = c => (c.status.background || {}).state || 'none';
 function stageState(c, step) {                         // one word per stage: running / waiting / paused / done / ...
   if (step === 'background') { const b = bgState(c); return b === 'processing' ? 'running' : b; }
@@ -89,21 +91,30 @@ function stepCell(c, step, p) {
   if (step === 'background' && c.status.done) return '<div class="pst muted">ready</div>';
   return '<div class="pst muted">–</div>';
 }
-function bgChip(c) {                                   // a card's second chip: its Background, once there is one
+// a card's chips name their stage: "Movement done" and, once it has one, "Background waiting"
+function mvChip(c) {
+  const l = c.status.label;
+  if (l === 'skipped') return `<span class="chip g-${c.status.group}" title="Start leaves this video out">Skipped</span>`;
+  return `<span class="chip g-${c.status.group}" title="Stage 1 · Movement: ${esc(MV_LABEL[l] || l)}">Movement ${esc(MV_LABEL[l] || l)}</span>`;
+}
+function bgChip(c) {
   const b = bgState(c);
-  return b === 'none' ? '' : `<span class="chip g-${BG_GROUP[b]}" title="Stage 2 · Background: ${esc(BG_LABEL[b])}">BG ${esc(BG_LABEL[b])}</span>`;
+  return b === 'none' ? '' : `<span class="chip g-${BG_GROUP[b]}" title="Stage 2 · Background: ${esc(BG_LABEL[b])}">Background ${esc(BG_LABEL[b])}</span>`;
 }
 // one labelled action per clip, by its state (the chips show the state; the zips are in the SUBMIT folder, the
-// Submissions page and the clip's page):  a job running or waiting (either stage) -> Cancel;  idle -> Skip (Start
-// leaves it out, it stays listed, greyed);  skipped -> Include
+// Submissions page and the clip's page):  a job running or waiting (either stage) -> Cancel;  skipped -> Include;
+// both stages done -> nothing (nothing is left for Start to leave out);  otherwise -> Skip (Start leaves it out, it
+// stays listed, greyed)
 function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
   const job = c.status.job, busy = !!job && /queued|running/.test(job.state);
   const skipped = c.status.label === 'skipped';
+  const finished = !!c.status.done && bgState(c) === 'done';
   const stage = busy ? (job.stage === 'background' ? 'Background' : 'Movement') : '';
   const action = busy ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control title="Stop this clip’s ${stage} job${job.state === 'queued' ? ' (it is waiting)' : ''}. Finished files are kept.">Cancel</button>`
     : skipped ? `<button class="qb add" data-include="${c.id}" data-name="${short}" title="Process this video again when you press Start">Include</button>`
-    : `<button class="qb" data-skip="${c.id}" data-name="${short}" title="Start leaves this video out. It stays on the list, greyed; the file and any finished zips are kept. Include brings it back.">Skip</button>`;
+    : finished ? ''
+    : `<button class="qb" data-skip="${c.id}" data-name="${short}" title="Start${c.status.done ? ' background' : ''} leaves this video out. It stays on the list, greyed; the file and any finished zips are kept. Include brings it back.">Skip</button>`;
   return {skipped, action};
 }
 function renderTable(list, clips, prog) {
@@ -242,8 +253,8 @@ function render() {
     group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, '');
       const {skipped, action} = clipActions(c);
       const step = p && p.step ? ` · ${p.step}` : '';
-      g.insertAdjacentHTML('beforeend', `<div class="clipcard hasq${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
-        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span class="chips" title="${esc('Movement: ' + c.status.label + step)}">${chip(c.status)}${bgChip(c)}</span></div>
+      g.insertAdjacentHTML('beforeend', `<div class="clipcard${action ? ' hasq' : ''}${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
+        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span class="chips" title="${esc('Movement: ' + c.status.label + step)}">${mvChip(c)}${bgChip(c)}</span></div>
         <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
         ${action}</div>`); });

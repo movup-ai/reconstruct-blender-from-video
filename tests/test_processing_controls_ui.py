@@ -48,7 +48,12 @@ assert(vm.runInContext("stepCell(ready,'background')",context).includes('ready')
 context.notyet={status:{label:'new',background:{state:'none'}}};
 assert(vm.runInContext("stepCell(notyet,'background')",context).includes('–'));
 assert.equal(vm.runInContext("bgChip(notyet)",context),'','no Background chip before there is one');
-assert(vm.runInContext("bgChip(bgdone)",context).includes('BG done'));
+assert(vm.runInContext("bgChip(bgdone)",context).includes('Background done'));
+assert(vm.runInContext("bgChip(bgrun)",context).includes('Background running'));
+context.mv={status:{label:'done',group:'done'}};
+assert(vm.runInContext("mvChip(mv)",context).includes('Movement done'),'each chip names its stage');
+context.mv.status={label:'skipped',group:'skip'};
+assert(vm.runInContext("mvChip(mv)",context).includes('>Skipped<'));
 '''
         result=subprocess.run(['node','-e',script],cwd=ROOT,capture_output=True,text=True,encoding='utf-8')
         self.assertEqual(result.returncode,0,result.stderr)
@@ -73,11 +78,14 @@ for(const stage of ['movement','background'])for(const state of ['running','queu
  assert(!a.includes('disabled'));
 }
 // idle (new or done): Skip, labelled, and no download links (the zips are in SUBMIT and on the clip page)
-for(const status of [{label:'new'},{label:'done',done:true,job:{stage:'movement',state:'done'},background:{state:'done'}}]){
+for(const status of [{label:'new'},{label:'done',done:true,job:{stage:'movement',state:'done'},background:{state:'none'}}]){
  context.clip={id:'abc',name:'film_clip',package:'film-1',status};
  const a=one();assert(a.includes('data-skip="abc"')&&a.includes('>Skip<'));
  assert(!a.includes('/download/'),'no download buttons on the list');
 }
+// both stages done: nothing left to skip, no button at all
+context.clip={id:'abc',name:'film_clip',package:'film-1',status:{label:'done',done:true,job:{stage:'background',state:'done'},background:{state:'done'}}};
+assert.equal(vm.runInContext('clipActions(clip).action',context),'','a finished video has no button');
 // skipped: Include
 context.clip={id:'abc',name:'film_clip',status:{label:'skipped',skipped:true}};
 assert(one().includes('data-include="abc"'),'a skipped video offers Include');
