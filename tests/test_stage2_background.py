@@ -115,6 +115,17 @@ class Geometry(unittest.TestCase):
         self.assertGreater(fo, 0.99); self.assertGreater(zo, 0.99)
 
 
+class ScanFrames(unittest.TestCase):
+    def test_scan_spreads_over_the_shot_with_first_and_last(self):
+        import sam3_objects
+        self.assertEqual(sam3_objects.scan_indices(27, 4), [0, 9, 17, 26])      # the last frame: what a zoom ends on
+        self.assertEqual(sam3_objects.scan_indices(2, 4), [0, 1])
+        self.assertEqual(sam3_objects.scan_indices(1, 4), [0])
+        self.assertEqual(sam3_objects.scan_indices(0, 4), [])
+        self.assertEqual(sam3_objects.scan_indices(10, 1), [0])
+        self.assertEqual(sam3_objects.VERSION, 2)                                # older cached detections are not reused
+
+
 class StagesRunOnTheirOwn(unittest.TestCase):
     """Movement and Background: each has its own Start / Pause, its own jobs and its own status"""
 

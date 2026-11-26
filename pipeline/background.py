@@ -324,8 +324,9 @@ def run(name, video, work, marks, c, render_and_pack):
 
     # 2. find (cached: frames, prompts, settings)
     prompts = [cat[t]["prompt"] for t in types]
-    key = hashlib.sha256(json.dumps([VERSION, sample, prompts, os.path.getsize(video), os.path.getmtime(video),
-                                     c.get("bg_probability", .5), c.get("bg_max_objects", 12), c.get("sam3_mask_side", 640)]).encode()).hexdigest()
+    key = hashlib.sha256(json.dumps([VERSION, sam3_objects.VERSION, sample, prompts, os.path.getsize(video), os.path.getmtime(video),
+                                     c.get("bg_probability", .5), c.get("bg_max_objects", 12), c.get("sam3_mask_side", 640),
+                                     c.get("bg_scan_frames", 4), c.get("bg_scan_threshold")]).encode()).hexdigest()
     dp = os.path.join(out, "sam3_objects.npz")
     bundle = None
     if os.path.isfile(dp):
