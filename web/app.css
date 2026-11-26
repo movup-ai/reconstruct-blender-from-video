@@ -198,7 +198,7 @@ header.bar2 { position:sticky; top:52px; z-index:5; background:rgba(244,246,247,
 .stepper a:hover { color:var(--ink); border-color:var(--seam-strong); text-decoration:none; }
 .stepper a b { color:var(--accent); margin-right:2px; }
 .stepper .film { align-self:center; font-size:12.5px; color:var(--slate); padding-left:6px; white-space:nowrap; }
-main.page { max-width:var(--page); margin:0 auto; padding:16px 16px 132px; }
+main.page { max-width:var(--page); margin:0 auto; padding:16px 16px 48px; }
 .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; } @media (max-width:900px) { .grid2 { grid-template-columns:1fr; } }
 section.step, details.step { background:var(--paper); border:1px solid var(--seam); border-radius:var(--r-lg); margin-top:16px; box-shadow:var(--shadow-1); }
 section.step { padding:18px; scroll-margin-top:170px; }
@@ -372,5 +372,13 @@ table.progtable .pbar { margin:6px 0 2px; max-width:200px; }
   table.progtable td[data-k] > .pst { display:inline-block; }
 }
 
+
 /* a clip card's two stage chips: Movement and (once there is one) Background */
 .chips { display:inline-flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+/* clip page: each stage's row carries its own actions (no shared bottom bar) */
+table.stages td.acts { text-align:right; white-space:nowrap; }
+table.stages td.acts > * + * { margin-left:6px; }
+table.stages td.acts [hidden] { display:none; }
+@media (max-width:700px) { table.stages td.acts { white-space:normal; text-align:left; } table.stages tr { display:grid; } }
+#bgassets details.names { display:inline; } #bgassets details.names summary { display:inline; cursor:pointer; color:var(--slate); }
+#bgassets details.names[open] div { margin-top:6px; }

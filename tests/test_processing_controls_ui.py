@@ -81,23 +81,26 @@ assert.equal(vm.runInContext('clipActions(clip).remove',context),'','a skipped v
 context.clip={id:'abc',name:'film_clip',status:{job:{stage:'movement',state:'running'}}};
 assert(vm.runInContext('clipActions(clip).remove',context).includes('disabled'),'a running video cannot be skipped');
 const detail=fs.readFileSync(root+'/web/clip.html','utf8');
-const begin=detail.indexOf("  const finishQueue = $('finishqueue');");
+const begin=detail.indexOf("  for (const stage of ['movement', 'background']) {           // each stage's row has its own Pause / Cancel");
 const end=detail.indexOf("  // ---- end of the processing controls",begin);
 assert(begin>=0&&end>begin);
 vm.runInContext("const CID='abc';function refresh(){};processingControl=async(url)=>calls.push(url);function wire(){"+detail.slice(begin,end)+'}',context);
+const other={movement:'background',background:'movement'};
 (async()=>{
  for(const stage of ['movement','background']){
   context.INFO={job:{stage,state:'running'},paused:false};vm.runInContext('wire()',context);
-  assert.equal(elements.finishqueue.hidden,false);assert.equal(elements['cancel-processing'].hidden,false);
-  await elements.finishqueue.onclick();assert.equal(calls.pop(),'/api/pause?stage='+stage,'pauses only this job\'s stage');
-  await elements['cancel-processing'].onclick();assert.equal(calls.pop(),'/api/clip/abc/cancel');
+  assert.equal(elements[stage+'-pause'].hidden,false);assert.equal(elements[stage+'-cancel'].hidden,false);
+  assert.equal(elements[other[stage]+'-pause'].hidden,true,'the other stage\'s row has no Pause');
+  assert.equal(elements[other[stage]+'-cancel'].hidden,true,'nor Cancel');
+  await elements[stage+'-pause'].onclick();assert.equal(calls.pop(),'/api/pause?stage='+stage,'pauses only this job\'s stage');
+  await elements[stage+'-cancel'].onclick();assert.equal(calls.pop(),'/api/clip/abc/cancel');
  }
  context.INFO={job:{stage:'movement',state:'queued'},paused:true};vm.runInContext('wire()',context);
- assert.equal(elements.finishqueue.textContent,'Resume processing');await elements.finishqueue.onclick();assert.equal(calls.pop(),'/api/resume?stage=movement');
+ assert.equal(elements['movement-pause'].textContent,'Resume');await elements['movement-pause'].onclick();assert.equal(calls.pop(),'/api/resume?stage=movement');
  context.INFO={job:{stage:'movement',state:'running'},paused:true};vm.runInContext('wire()',context);
- await elements.finishqueue.onclick();assert.equal(calls.pop(),'/api/pause?stage=movement');
+ await elements['movement-pause'].onclick();assert.equal(calls.pop(),'/api/pause?stage=movement');
  context.INFO={job:{stage:'movement',state:'stopped'},paused:true};vm.runInContext('wire()',context);
- assert.equal(elements.finishqueue.hidden,true);assert.equal(elements['cancel-processing'].hidden,true);
+ assert.equal(elements['movement-pause'].hidden,true);assert.equal(elements['movement-cancel'].hidden,true);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
         result=subprocess.run(['node','-e',script,str(ROOT)],capture_output=True,text=True,encoding='utf-8')
