@@ -288,8 +288,10 @@ table.list td > button ~ button, table.list td > button ~ .btn { margin-left:4px
 .clipcard .qb, .table-actions .qb { min-height:0; height:22px; padding:0 8px; font-size:11px; border-radius:999px; }
 .clipcard .qb { position:absolute; right:11px; bottom:6px; }
 :is(.clipcard, .table-actions) .qb.add { background:var(--accent-tint); border-color:#b9d6d8; color:var(--accent); font-weight:600; }
-.clipcard.hasq a.clip .pk { padding-right:86px; }
-.clipcard.hasq a.clip .pk .took { display:none; }
+.clipcard.hasq a.clip .pk { padding-right:72px; }
+/* the delivery name comes first; the time shrinks (and is cut short) before the name does */
+.clipcard.hasq a.clip .pk .pkn { flex:none; max-width:60%; }
+.clipcard.hasq a.clip .pk .took { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
 .clipcard.skipped img { filter:grayscale(1); opacity:.55; }
 .clipcard.skipped .n { color:var(--slate); }
 /* Start over with every clip: its own quiet block at the bottom, a clearly dangerous button */

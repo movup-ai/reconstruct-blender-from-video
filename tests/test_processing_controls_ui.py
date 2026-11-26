@@ -62,24 +62,25 @@ const calls=[];const context=vm.createContext({localStorage:{removeItem(){}},
 vm.runInContext(fs.readFileSync(root+'/web/common.js','utf8'),context);
 const index=fs.readFileSync(root+'/web/index.html','utf8');
 const line=key=>index.slice(index.indexOf(key),index.indexOf('\n',index.indexOf(key)))+'\n';
-const actions=line('const downloadUrl =')+line('const bgState =')+
+const actions=line('const bgState =')+
   index.slice(index.indexOf('function clipActions('),index.indexOf('function renderTable('));
 vm.runInContext(actions,context);
-context.clip={id:'abc',name:'film_clip',status:{job:{stage:'movement',state:'running'}}};
-assert(vm.runInContext('clipActions(clip).queue',context).includes('data-cancel-job="abc"'));
-context.clip={id:'abc',name:'film_clip',package:'film-1',status:{done:true,label:'done',job:{stage:'movement',state:'done'}}};
-assert(vm.runInContext('clipActions(clip).queue',context).includes('href="/download/film_clip"'),'a done clip offers its zip');
-assert(!vm.runInContext('clipActions(clip).queue',context).includes('?bg=1'),'no Background zip before there is one');
-context.clip.status.background={state:'done'};
-assert(vm.runInContext('clipActions(clip).queue',context).includes('href="/download/film_clip?bg=1"'),'and the Background zip once done');
-context.clip={id:'abc',name:'film_clip',status:{label:'new'}};
-assert(vm.runInContext('clipActions(clip).remove',context).includes('data-skip="abc"'),'one button skips a video');
-assert.equal(vm.runInContext('clipActions(clip).queue',context),'','no second "take out" button');
+const one=()=>{const a=vm.runInContext('clipActions(clip).action',context);assert.equal((a.match(/<button/g)||[]).length,1,'exactly one button');return a;};
+// a job running or waiting, in either stage: Cancel (never a disabled skip next to it)
+for(const stage of ['movement','background'])for(const state of ['running','queued']){
+ context.clip={id:'abc',name:'film_clip',status:{label:'done',job:{stage,state}}};
+ const a=one();assert(a.includes('data-cancel-job="abc"')&&a.includes('>Cancel<'),stage+' '+state);
+ assert(!a.includes('disabled'));
+}
+// idle (new or done): Skip, labelled, and no download links (the zips are in SUBMIT and on the clip page)
+for(const status of [{label:'new'},{label:'done',done:true,job:{stage:'movement',state:'done'},background:{state:'done'}}]){
+ context.clip={id:'abc',name:'film_clip',package:'film-1',status};
+ const a=one();assert(a.includes('data-skip="abc"')&&a.includes('>Skip<'));
+ assert(!a.includes('/download/'),'no download buttons on the list');
+}
+// skipped: Include
 context.clip={id:'abc',name:'film_clip',status:{label:'skipped',skipped:true}};
-assert(vm.runInContext('clipActions(clip).queue',context).includes('data-include="abc"'),'a skipped video offers Include');
-assert.equal(vm.runInContext('clipActions(clip).remove',context),'','a skipped video has no skip button');
-context.clip={id:'abc',name:'film_clip',status:{job:{stage:'movement',state:'running'}}};
-assert(vm.runInContext('clipActions(clip).remove',context).includes('disabled'),'a running video cannot be skipped');
+assert(one().includes('data-include="abc"'),'a skipped video offers Include');
 const detail=fs.readFileSync(root+'/web/clip.html','utf8');
 const begin=detail.indexOf("  for (const stage of ['movement', 'background']) {           // each stage's row has its own Pause / Cancel");
 const end=detail.indexOf("  // ---- end of the processing controls",begin);

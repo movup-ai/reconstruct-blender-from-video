@@ -60,7 +60,6 @@ const GROUPS = [['busy', 'Waiting or working', '#6f97d6'], ['done', 'Done', '#3a
 let FILTER = 'all', DATA = null;
 let VIEW = (() => { try { return localStorage.getItem('clipsView') || 'cards'; } catch (e) { return 'cards'; } })();
 segInit($('viewsw'), v => { VIEW = v; try { localStorage.setItem('clipsView', v); } catch (e) {} render(); });
-const downloadUrl = c => '/download/' + encodeURIComponent(c.name);
 
 // ---- each stage of a clip on its own: Movement (Stage 1) and Background (Stage 2) - where it is, how long its run
 //      took and when it finished
@@ -94,19 +93,18 @@ function bgChip(c) {                                   // a card's second chip: 
   const b = bgState(c);
   return b === 'none' ? '' : `<span class="chip g-${BG_GROUP[b]}" title="Stage 2 · Background: ${esc(BG_LABEL[b])}">BG ${esc(BG_LABEL[b])}</span>`;
 }
-// one way to leave a video out: ✕ skips it (it stays on the list, greyed); Include brings it back
+// one labelled action per clip, by its state (the chips show the state; the zips are in the SUBMIT folder, the
+// Submissions page and the clip's page):  a job running or waiting (either stage) -> Cancel;  idle -> Skip (Start
+// leaves it out, it stays listed, greyed);  skipped -> Include
 function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
-  const running = c.status.job?.state === 'running';
+  const job = c.status.job, busy = !!job && /queued|running/.test(job.state);
   const skipped = c.status.label === 'skipped';
-  const queue = running ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control>Cancel</button>`
+  const stage = busy ? (job.stage === 'background' ? 'Background' : 'Movement') : '';
+  const action = busy ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control title="Stop this clip’s ${stage} job${job.state === 'queued' ? ' (it is waiting)' : ''}. Finished files are kept.">Cancel</button>`
     : skipped ? `<button class="qb add" data-include="${c.id}" data-name="${short}" title="Process this video again when you press Start">Include</button>`
-    : c.status.done && c.package ? `<a class="qb btn" href="${downloadUrl(c)}" title="Download the Movement zip as ${esc(c.package)}.zip">Download</a>` +
-      (bgState(c) === 'done' ? `<a class="qb btn" href="${downloadUrl(c)}?bg=1" title="Download the Background zip as ${esc(c.package)}_background.zip">BG zip</a>` : '') : '';
-  const remove = skipped ? '' : `<button class="rm" data-skip="${c.id}" data-name="${short}" ${running
-    ? 'disabled title="Being processed: cancel it first, then skip it"'
-    : 'title="Skip: Start leaves this video out. It stays on the list; the file and any finished zip are kept."'} aria-label="Skip ${short}">&#10005;</button>`;
-  return {skipped, queue, remove};
+    : `<button class="qb" data-skip="${c.id}" data-name="${short}" title="Start leaves this video out. It stays on the list, greyed; the file and any finished zips are kept. Include brings it back.">Skip</button>`;
+  return {skipped, action};
 }
 function renderTable(list, clips, prog) {
   const rows = clips.map(c => {
@@ -117,7 +115,7 @@ function renderTable(list, clips, prog) {
       <td data-k="Movement">${stepCell(c, 'movement', prog[c.id])}</td>
       <td data-k="Background">${stepCell(c, 'background', prog[c.id])}</td>
       <td data-k="Computer time" class="r nowrap" title="Movement and Background together: all recorded processing time since reset, including repeated jobs; excludes queue waits">${tot != null ? fmtDur(tot) : '–'}</td>
-      <td data-k="Actions"><div class="table-actions">${actions.queue}${actions.remove}</div></td></tr>`; }).join('');
+      <td data-k="Actions"><div class="table-actions">${actions.action}</div></td></tr>`; }).join('');
   list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th>
     <th title="Stage 1: status, how long its run took and when it finished">Movement</th><th title="Stage 2: status, how long its run took and when it finished">Background</th>
     <th class="r" title="Movement and Background together (all jobs since reset), excluding queue waits">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -242,13 +240,13 @@ function render() {
     if (Object.keys(films).length > 1 || film) list.insertAdjacentHTML('beforeend', `<h2>${esc(film || 'Videos')} · ${group.length}</h2>`);
     const g = el('div', { class: 'grid' });
     group.forEach(c => { const p = prog[c.id], short = c.name.replace(/^[^_]+_/, '');
-      const {skipped, queue: qb, remove} = clipActions(c);
+      const {skipped, action} = clipActions(c);
       const step = p && p.step ? ` · ${p.step}` : '';
-      g.insertAdjacentHTML('beforeend', `<div class="clipcard${qb ? ' hasq' : ''}${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
+      g.insertAdjacentHTML('beforeend', `<div class="clipcard hasq${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
         <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span class="chips" title="${esc('Movement: ' + c.status.label + step)}">${chip(c.status)}${bgChip(c)}</span></div>
         <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
-        ${remove}${qb}</div>`); });
+        ${action}</div>`); });
     list.appendChild(g);
   }
   bindCardButtons(list);
