@@ -149,7 +149,7 @@ class TestAutoNames(unittest.TestCase):
         ws.store = SimpleNamespace(enqueue=lambda cid, stage, force=False: jobs.append((cid, stage)) or len(jobs))
         cl = SimpleNamespace(id="x1", name="brand new clip")
         self.assertEqual(ws.enqueue(cl), 1)
-        self.assertEqual(jobs, [("x1", "movement")])
+        self.assertEqual(jobs, [("x1", "run")])
         self.assertEqual(pkg.package_name("brand new clip"), "clip-1")
         ws.enqueue(cl, "render")
         self.assertEqual(pkg.package_name("brand new clip"), "clip-1", "queued again: the name stays")
@@ -157,7 +157,7 @@ class TestAutoNames(unittest.TestCase):
 
     def test_the_pipeline_names_a_clip_before_any_gpu_work(self):
         """run_clip gives a nameless clip a made-up name first; a later failure must not be the missing name"""
-        args = mock.Mock(stage="movement", force=False, device="cuda"); args.name = "nameless"
+        args = mock.Mock(stage="run", force=False, device="cuda"); args.name = "nameless"
         c = dict(config.load(), work_root=os.path.join(self.d, "w"), submit_root=os.path.join(self.d, "s"))
         with mock.patch.object(rp.gpu_lease, "acquire", side_effect=RuntimeError("stop: GPU work would start here")):
             with self.assertRaisesRegex(RuntimeError, "stop: GPU work"):
@@ -397,7 +397,7 @@ class TestJobResult(unittest.TestCase):
         zp = clipsmod.folders(self.r.app.c, self.cl)["zip"]
         return "import os; os.makedirs(os.path.dirname(%r), exist_ok=True); open(%r, 'w').close(); " % (zp, zp)
 
-    def run_job(self, code, stage="movement"):
+    def run_job(self, code, stage="run"):
         make = self.zip_maker() if code == 0 else ""
         self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('working'); raise SystemExit(%d)" % code]
         jid = self.store.enqueue(self.cl.id, stage)
@@ -409,11 +409,11 @@ class TestJobResult(unittest.TestCase):
         make = self.zip_maker()
         self.r._cmd = lambda job, cl: [sys.executable, "-c", make + "print('source=' + os.environ['BA_SOURCE'] + "
                                        "'|user=' + str(os.environ.get('BA_USER')) + '|lock=' + str(bool(os.environ.get('BA_GPU_LOCK'))))"]
-        jid = self.store.enqueue(self.cl.id, "movement")
+        jid = self.store.enqueue(self.cl.id, "run")
         with mock.patch.dict(os.environ):
             os.environ.pop("BA_USER", None)
             self.r._run(self.store.take())
-        with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_movement.log"), encoding="utf-8") as fh:
+        with open(os.path.join(clipsmod.folders(self.r.app.c, self.cl)["work"], "job_run.log"), encoding="utf-8") as fh:
             self.assertIn("source=%s|user=None|lock=True" % self.r.app.c["source_root"], fh.read())
         self.assertEqual((self.store.latest_for(self.cl.id)["id"], self.store.latest_for(self.cl.id)["state"]), (jid, "done"),
                          "a job runs without any member")
@@ -426,13 +426,13 @@ class TestJobResult(unittest.TestCase):
         self.r._run(self.store.take())
         self.assertEqual(self.store.latest_for(self.cl.id)["state"], "failed")
         work = clipsmod.folders(self.r.app.c, self.cl)["work"]
-        self.assertTrue(os.path.exists(os.path.join(work, "job_movement.previous.log")), "the first attempt's log is kept")
+        self.assertTrue(os.path.exists(os.path.join(work, "job_run.previous.log")), "the first attempt's log is kept")
 
     def test_movement_command(self):
         """the contract with run_pipeline.py: one movement stage, the clip's name, no review gate"""
-        cmd = self.r._cmd({"stage": "movement"}, self.cl)
+        cmd = self.r._cmd({"stage": "run"}, self.cl)
         self.assertIn("run_pipeline.py", os.path.basename(cmd[1]))
-        self.assertEqual(cmd[cmd.index("--stage") + 1], "movement")
+        self.assertEqual(cmd[cmd.index("--stage") + 1], "run")
         self.assertEqual(cmd[cmd.index("--name") + 1], self.cl.name)
         self.assertNotIn("--require-confirm", cmd)
         self.assertIn("--force", cmd)
@@ -483,26 +483,29 @@ class TestProgress(unittest.TestCase):
     def test_progress_from_log(self):
         d = tempfile.mkdtemp()
         try:
-            lp = os.path.join(d, "job_movement.log")
+            lp = os.path.join(d, "job_run.log")
             cl = mock.Mock(); cl.name = "x"
             with mock.patch.object(server, "folders", return_value={"work": d}):
                 with open(lp, "w", encoding="utf-8") as fh:
                     fh.write("  marks: x\n  lens: 40.7 mm\n  [shot 1: frames 0-136]\n  camera ...\n")
-                p = server.job_progress({}, cl, {"stage": "movement", "log": lp})
+                p = server.job_progress({}, cl, {"stage": "run", "log": lp})
                 self.assertIn("camera", p["step"])
                 with open(lp, "a", encoding="utf-8") as fh:
-                    fh.write("  people ...\n  set ...  (Stage 1: the floor only)\n  quality:\n  blender build + render (10 frames) ...\n")
-                p2 = server.job_progress({}, cl, {"stage": "movement", "log": lp})
+                    fh.write("  people ...\n  floor ...\n  quality:\n  blender build + render (10 frames) ...\n")
+                p2 = server.job_progress({}, cl, {"stage": "run", "log": lp})
                 self.assertGreater(p2["pct"], p["pct"]); self.assertIn("rendering", p2["step"])
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
     def test_pipeline_still_writes_the_parsed_lines(self):
-        with open(os.path.join(ROOT, "pipeline", "run_pipeline.py"), encoding="utf-8") as fh:
-            src = fh.read()
-        for line in ('"  marks: %s"', '"  camera ..."', '"  people ..."', '"  set ...', '"  quality:"',
-                     '"  [shot %d: frames %d-%d]"', '"  blender build + render (%d frames) ..."', '"  videos + zip ..."'):
+        src = ""
+        for fn in ("run_pipeline.py", "scene_objects.py"):
+            with open(os.path.join(ROOT, "pipeline", fn), encoding="utf-8") as fh:
+                src += fh.read()
+        for line in ('"  [shot %d: frames %d-%d]"', '"  blender build + render (%d frames) ..."', '"  videos + zip ..."'):
             self.assertIn(line, src)
+        for key, _, _ in server.STEPS:                       # every step the progress bar looks for is written
+            self.assertIn('"' + key, src, key)
 
 
 class TestSubmissionsPage(unittest.TestCase):

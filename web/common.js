@@ -1,7 +1,6 @@
 // Blender Agent - shared helpers for the pages
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-const STAGE = { movement: 'Movement', background: 'Background' };
 function el(tag, attrs = {}, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) if (v !== '' && v != null) e.setAttribute(k, v);
@@ -52,10 +51,6 @@ function fmtDur(s) { s = Math.max(0, Math.round(s)); if (s < 60) return s + ' s'
 function computerSeconds(t) {
   if (!t) return null;
   if (Number.isFinite(t.machine)) return t.machine;
-  // Older running servers expose only per-run totals. Sum the latest steps
-  // until the server restarts with the cumulative ledger field.
-  const steps = Object.values(t.steps || {}).map(s => s.ran).filter(Number.isFinite);
-  if (steps.length) return steps.reduce((total, seconds) => total + seconds, 0);
   const runs = [t.done?.machine, t.open?.machine].filter(Number.isFinite);
   return runs.length ? runs.reduce((total, seconds) => total + seconds, 0) : null;
 }

@@ -15,9 +15,9 @@
 
 apply(data) recolours a scene (scene_data.json) to the card, in place: the palette gets the card's values, the eye /
 chest marks are white, characters keep their role colour (red, blue, green, yellow; 5th and later: cyan, magenta,
-teal, olive - never a set-piece colour), and every mesh gets the colour of its meaning.  Stage 1 has one mesh per
-shot, the floor (colour "ground"), so it is always background: grey #B8B8B8.  The role rules below are kept for the
-set pieces and props of the planned Stage 2 (a mesh's "role" always wins):
+teal, olive - never a set-piece colour), and every mesh gets the colour of its meaning.  The floor (one mesh per
+shot, colour "ground") is always background: grey #B8B8B8.  The placed objects (scene_objects.py) get their role from
+the rules below (a mesh's "role" always wins):
   light source   lamps, chandeliers, sconces, street lights, ceiling lights;
   nearby / distant interactive   things a hand comes within 12 cm of; interactive kinds (door, cup, phone, car,
                  fridge, tv...) within reach (1 m) of a person = nearby, farther = distant;

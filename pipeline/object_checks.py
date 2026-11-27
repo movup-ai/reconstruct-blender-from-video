@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Stage 2's checks on each object Mask2Former found (ade_find.py) before it is placed (background.py).  Each
-check uses what Stage 2 already has.
+"""The checks on each object Mask2Former found (ade_find.py) before it is placed (scene_objects.py).  Each
+check uses what the run already has.
 
   size        a placed box outside the real-world size range of its type is left out (a 2 m chair, a 12 cm chair);
               objects.json "size": [[min width, max width], [min height, max height]] in metres sets it for a type.

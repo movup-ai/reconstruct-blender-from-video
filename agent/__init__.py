@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Blender Agent - local white-model production app.
 
-Stage 1 Movement, fully automatic: video clip -> local models (people, joints, camera, metric scale, floor)
--> Blender build with the sample character -> white-model and comparison videos -> checked v2.1 zip.
-Stage 2 Background (later): objects placed from Stage 1's saved depth.
+One automatic run per video clip: local models (people, joints, camera, metric scale, floor, objects from
+assets\\objects) -> Blender build with the sample character -> white-model and comparison videos -> checked v2.1 zip.
 
 Start:  "Start_Blender_Agent.bat"   (or  .venv\\Scripts\\python -m agent)
 """

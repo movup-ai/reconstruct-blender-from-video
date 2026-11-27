@@ -12,22 +12,22 @@ rendered in other colours. Colours are never sampled from the source video.
 | 4th character | yellow | `#D9A014` | fourth character |
 | 5th character on | cyan, magenta, teal, olive | `#20A8B8`, `#B02878`, `#1F7A6E`, `#7E8B2A` | one stable colour per character for the whole clip |
 | Eye and chest bands | white | `#FFFFFF` | the marks on every character's head and chest |
-| Background | grey | `#B8B8B8` | the floor (Stage 1); background and surroundings (Stage 2) |
-| Foreground object | brown | `#9A6B3B` | Stage 2: things in front of people, such as a table |
-| Nearby interactive object | orange | `#DF872F` | Stage 2: something a person can interact with close by, such as a cup |
-| Distant interactive object | pink | `#D4689E` | Stage 2: something interactive far from people, such as a distant door |
-| Light source | white | `#F5F5F5` | Stage 2: marks a light and its position |
-| Special object | purple | `#7A4EC2` | Stage 2: anything the rules don't cover |
+| Background | grey | `#B8B8B8` | the floor; background objects and surroundings |
+| Foreground object | brown | `#9A6B3B` | things in front of people, such as a table |
+| Nearby interactive object | orange | `#DF872F` | something a person can interact with close by, such as a cup |
+| Distant interactive object | pink | `#D4689E` | something interactive far from people, such as a distant door |
+| Light source | white | `#F5F5F5` | marks a light and its position |
+| Special object | purple | `#7A4EC2` | anything the rules don't cover |
 
-## Stage 1 (Movement)
+## People and the floor
 
 - **Characters**: the fit numbers people by how large and how long they are on screen; the first four get red, blue,
   green and yellow. A 5th, 6th... person gets cyan, magenta, teal, olive (never a set-piece colour). A character
   with any other colour (an older fit or a `colours` list in `config.json`) is moved to the next free extra colour.
 - **Marks**: the eye and chest bands are pure white.
-- **Floor**: the only mesh of Stage 1, one ground disc per shot, is background: grey `#B8B8B8`.
+- **Floor**: one ground disc per shot, background: grey `#B8B8B8`.
 
-## Stage 2 (Background)
+## Objects
 
 Each placed object (`kind` / `label` = its model's type, e.g. `chair`) gets its role from these rules; a `"role"` in
 `assets\objects\objects.json` always wins.

@@ -61,52 +61,69 @@ class TestJobStore(unittest.TestCase):
                           (clip, stage, state, started, started, ended))
 
     def test_stages(self):
-        self.assertEqual(jobs.STAGES, ("movement", "background"))
-        self.assertIsNotNone(self.s.enqueue("a", "background"), "background stays valid in the store")
-        for old in ("fit", "all", "ai", "depth", "nope"):
+        self.assertEqual(jobs.STAGES, ("run",))
+        self.assertIsNotNone(self.s.enqueue("a", "run"))
+        for old in ("fit", "all", "ai", "depth", "movement", "background", "nope"):
             with self.assertRaises(ValueError):
                 self.s.enqueue("b", old)
 
     def test_timing_from_start_to_package(self):
-        self.row("movement", "done", 100, 400)
+        self.row("run", "done", 100, 400)
         t = self.s.timing(now=5000)["a"]
         self.assertEqual(t["machine"], 300)
         self.assertEqual(t["done"], {"start": 100, "end": 400, "wall": 300, "machine": 300})
-        self.assertEqual(t["steps"], {"movement": {"state": "done", "ran": 300, "ended": 400}})
         self.assertIsNone(t["open"])
-        self.row("movement", "running", 2000, None)                     # run again after the package: still going
+        self.row("run", "running", 2000, None)                     # run again after the package: still going
         t = self.s.timing(now=2600)["a"]
         self.assertEqual(t["done"]["wall"], 300, "the last finished run stays")
         self.assertEqual(t["open"], {"start": 2000, "so_far": 600, "machine": 600})
-        self.assertEqual(t["last"], {"stage": "movement", "state": "running", "ran": 600})
-        self.assertEqual(t["steps"]["movement"]["state"], "running")
+        self.assertEqual(t["last"], {"stage": "run", "state": "running", "ran": 600})
         self.assertEqual(t["machine"], 900, "computer time includes the previous package and the current job")
 
     def test_computer_time_accumulates_until_reset(self):
-        self.row("movement", "cancelled", 100, 580, "clip")              # interrupted by Pause: 8 minutes
-        self.row("movement", "done", 900, 1020, "clip")                  # the resumed run: 2 minutes
-        self.row("movement", "done", 2000, 2180, "clip")                 # a Re-run: 3 minutes
+        self.row("run", "cancelled", 100, 580, "clip")              # interrupted by Pause: 8 minutes
+        self.row("run", "done", 900, 1020, "clip")                  # the resumed run: 2 minutes
+        self.row("run", "done", 2000, 2180, "clip")                 # a Re-run: 3 minutes
         timing = self.s.timing(now=3000)["clip"]
         self.assertEqual(timing["machine"], 780)
-        self.assertEqual(timing["steps"]["movement"]["ran"], 180)
+        self.assertEqual(timing["last"], {"stage": "run", "state": "done", "ran": 180})
         self.s.cancel_for_reset({"clip"})
         self.s.clear_clip("clip")
         self.assertNotIn("clip", self.s.timing(now=3010))
 
-    def test_dedupe_priority_recover(self):
-        self.assertIsNotNone(self.s.enqueue("a", "background"))
-        self.assertIsNone(self.s.enqueue("a", "background"), "one job per clip at a time")
-        self.assertIsNotNone(self.s.enqueue("b", "movement"))
+    def test_dedupe_recover(self):
+        self.assertIsNotNone(self.s.enqueue("a", "run"))
+        self.assertIsNone(self.s.enqueue("a", "run"), "one job per clip at a time")
+        self.assertIsNotNone(self.s.enqueue("b", "run"))
         j = self.s.take()
-        self.assertEqual((j["clip"], j["stage"]), ("b", "movement"), "movement goes first")
+        self.assertEqual((j["clip"], j["stage"]), ("a", "run"), "first queued, first run")
         self.assertEqual(self.s.recover(), 1)
-        self.assertEqual(self.s.take()["clip"], "b")
+        self.assertEqual(self.s.take()["clip"], "a")
+
+    def test_the_two_stage_apps_jobs_become_history(self):
+        """Movement jobs of the two-stage app are this run's history; waiting Background jobs are cancelled and
+        never count as a clip's latest job"""
+        path = os.path.join(self.d, "old.db")
+        old = jobs.JobStore(path)
+        for clip, stage, state in (("a", "movement", "done"), ("a", "background", "failed"), ("b", "background", "queued")):
+            old.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, started, ended) VALUES (?,?,?,0,1,1,2)",
+                           (clip, stage, state))
+        old.db.close()
+        s = jobs.JobStore(path)                                          # the app starts with the old database
+        try:
+            self.assertEqual(s.latest()["a"]["state"], "done")
+            self.assertEqual(s.latest()["a"]["stage"], "run")
+            self.assertNotIn("b", s.latest())
+            self.assertEqual(s.counts().get("queued", 0), 0)
+            self.assertEqual(s.timing(now=10)["a"]["machine"], 2, "the Background job's time still counts")
+        finally:
+            s.db.close()
 
     def test_recover_requeues_running_jobs_and_keeps_waiting_ones(self):
         """restart: the running job waits again; waiting jobs (also ones queued by the older multi-member app) are
         kept, never cancelled"""
-        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('old','movement','queued',0,1)")
-        self.s.enqueue("a", "movement"); self.s.enqueue("b", "movement")
+        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('old','run','queued',0,1)")
+        self.s.enqueue("a", "run"); self.s.enqueue("b", "run")
         self.assertEqual(self.s.take()["clip"], "old", "first queued, first run")
         self.assertEqual(self.s.counts(), {"running": 1, "queued": 2})
         self.assertEqual(self.s.recover(), 1)
@@ -117,41 +134,41 @@ class TestJobStore(unittest.TestCase):
         self.assertEqual(self.s.counts(), {"running": 1, "cancelled": 2})
 
     def test_force_replaces_queued(self):
-        self.s.enqueue("a", "background")
-        self.assertIsNotNone(self.s.enqueue("a", "movement", force=True))
+        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('a','render','queued',0,1)")
+        self.assertIsNotNone(self.s.enqueue("a", "run", force=True))
         j = self.s.take()
-        self.assertEqual(j["stage"], "movement")
+        self.assertEqual(j["stage"], "run")
         self.assertIsNone(self.s.take())
 
     def test_finish_and_latest(self):
-        jid = self.s.enqueue("a", "movement")
+        jid = self.s.enqueue("a", "run")
         self.s.take()
         self.s.finish(jid, False, "boom")
         self.assertEqual(self.s.latest()["a"]["state"], "failed")
         self.assertEqual(self.s.latest()["a"]["error"], "boom")
 
     def test_limit_and_busy_clips(self):
-        self.s.enqueue("a", "movement"); self.s.enqueue("b", "movement")
+        self.s.enqueue("a", "run"); self.s.enqueue("b", "run")
         self.assertEqual(self.s.take(exclude={"a"})["clip"], "b", "a clip whose old process may still run waits")
         self.assertIsNone(self.s.take(limit=1), "one running job fills one slot")
         self.assertEqual(self.s.take(limit=2)["clip"], "a")
 
     def test_old_stage_jobs_are_cancelled_when_the_queue_opens(self):
         self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('a','fit','queued',2,1)")
-        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('b','movement','queued',0,2)")
+        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES ('b','run','queued',0,2)")
         self.s.db.close()
         self.s = jobs.JobStore(os.path.join(self.d, "j.db"))
         self.assertEqual(self.s.db.execute("SELECT state FROM jobs WHERE clip='a'").fetchone()[0], "cancelled")
         self.assertEqual(self.s.take()["clip"], "b")
 
     def test_paused_job_keeps_its_place_and_loses_the_mark_when_it_runs(self):
-        self.s.enqueue("b-first", "movement")                          # waiting before the job that runs
+        self.s.enqueue("b-first", "run")                          # waiting before the job that runs
         time.sleep(0.01)
-        jid = self.s.enqueue("a", "movement")
+        jid = self.s.enqueue("a", "run")
         job = self.s.take(exclude={"b-first"})
         self.assertEqual(job["id"], jid)
         time.sleep(0.01)
-        self.s.enqueue("c-later", "movement")                          # queued while a ran
+        self.s.enqueue("c-later", "run")                          # queued while a ran
         pending = self.s.cancel_for_reset(set(), all_clips=True, return_jobs=True, running_only=True)
         self.assertEqual([p["id"] for p in pending], [jid], "Pause interrupts only the running job")
         self.s.restore_paused(pending)
@@ -166,7 +183,7 @@ class TestJobStore(unittest.TestCase):
         self.assertIsNone(self.s.latest_for("a")["error"], "the paused mark is cleared when it runs")
 
     def test_resume_clears_the_paused_mark(self):
-        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, error) VALUES ('a','movement','queued',0,1,?)",
+        self.s.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, error) VALUES ('a','run','queued',0,1,?)",
                           (clipsmod.PAUSED,))
         self.assertEqual(self.s.clear_paused(), 1)
         self.assertIsNone(self.s.latest_for("a")["error"])
@@ -200,33 +217,33 @@ class TestStatus(StatusCase):
 
     def test_labels(self):
         self.assertEqual(self.label(), "new")
-        self.assertEqual(self.label({"stage": "movement", "state": "queued"}), "waiting")
-        self.assertEqual(self.label({"stage": "movement", "state": "queued", "error": clipsmod.PAUSED}), "paused")
-        st = clipsmod.status(self.c, self.cl, {"stage": "movement", "state": "running"})
-        self.assertEqual((st["label"], st["stage"], st["group"]), ("processing", "movement", "busy"))
-        self.assertEqual(self.label({"stage": "movement", "state": "failed", "error": "x"}), "failed")
-        self.assertEqual(self.label({"stage": "movement", "state": "stopped"}), "cancelled")
+        self.assertEqual(self.label({"stage": "run", "state": "queued"}), "waiting")
+        self.assertEqual(self.label({"stage": "run", "state": "queued", "error": clipsmod.PAUSED}), "paused")
+        st = clipsmod.status(self.c, self.cl, {"stage": "run", "state": "running"})
+        self.assertEqual((st["label"], st["stage"], st["group"]), ("processing", "run", "busy"))
+        self.assertEqual(self.label({"stage": "run", "state": "failed", "error": "x"}), "failed")
+        self.assertEqual(self.label({"stage": "run", "state": "stopped"}), "cancelled")
         clipsmod.set_skipped(self.cl.id, True, self.c)
         self.assertEqual(self.label(), "skipped")
         self.assertEqual(clipsmod.status(self.c, self.cl)["group"], "skip")
-        self.assertEqual(self.label({"stage": "movement", "state": "running"}), "processing")
+        self.assertEqual(self.label({"stage": "run", "state": "running"}), "processing")
         clipsmod.set_skipped(self.cl.id, False, self.c)
 
     def test_done_beats_a_later_cancelled_or_failed_job_but_not_a_running_one(self):
         self.make_zip()
         st = clipsmod.status(self.c, self.cl)
         self.assertEqual((st["label"], st["done"], st["group"]), ("done", True, "done"))
-        self.assertEqual(self.label({"stage": "movement", "state": "stopped"}), "done")
-        self.assertEqual(self.label({"stage": "movement", "state": "failed"}), "done")
-        self.assertEqual(self.label({"stage": "movement", "state": "running"}), "processing")
-        self.assertEqual(self.label({"stage": "movement", "state": "queued"}), "waiting")
+        self.assertEqual(self.label({"stage": "run", "state": "stopped"}), "done")
+        self.assertEqual(self.label({"stage": "run", "state": "failed"}), "done")
+        self.assertEqual(self.label({"stage": "run", "state": "running"}), "processing")
+        self.assertEqual(self.label({"stage": "run", "state": "queued"}), "waiting")
 
     def test_outdated_when_stage1_settings_change(self):
         self.make_zip()
         c2 = dict(self.c, person_height=self.c["person_height"] + 0.1)
         st = clipsmod.status(c2, self.cl)
         self.assertEqual((st["label"], st["done"], st["outdated"]), ("outdated", False, True))
-        self.assertEqual(clipsmod.status(c2, self.cl, {"stage": "movement", "state": "failed"})["label"], "failed")
+        self.assertEqual(clipsmod.status(c2, self.cl, {"stage": "run", "state": "failed"})["label"], "failed")
 
     def test_fingerprint_is_video_package_and_stage1_settings_only(self):
         fp = clipsmod.fingerprint(self.c, self.cl)
@@ -273,8 +290,8 @@ class TestRunner(StatusCase):
         super().tearDown()
 
     def test_command_runs_stage_movement(self):
-        cmd = self.runner._cmd({"stage": "movement"}, self.cl)
-        self.assertEqual(cmd[cmd.index("--stage") + 1], "movement")
+        cmd = self.runner._cmd({"stage": "run"}, self.cl)
+        self.assertEqual(cmd[cmd.index("--stage") + 1], "run")
         self.assertIn("--force", cmd)
         self.assertEqual(cmd[cmd.index("--name") + 1], self.cl.name)
         self.assertNotIn("--require-confirm", cmd)
@@ -284,7 +301,7 @@ class TestRunner(StatusCase):
         self.runner.active = True
         self.assertEqual(self.runner.autopilot_pass(), 1)
         job = self.store.latest_for(self.cl.id)
-        self.assertEqual((job["stage"], job["state"]), ("movement", "queued"))
+        self.assertEqual((job["stage"], job["state"]), ("run", "queued"))
         self.assertEqual(self.runner.autopilot_pass(), 0, "already waiting")
 
     def test_autopilot_leaves_done_held_failed_and_cancelled_clips(self):
@@ -292,7 +309,7 @@ class TestRunner(StatusCase):
         for state in ("failed", "stopped"):
             self.store.db.execute("DELETE FROM jobs")
             self.store.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES (?,?,?,0,1)",
-                                  (self.cl.id, "movement", state))
+                                  (self.cl.id, "run", state))
             self.assertEqual(self.runner.autopilot_pass(), 0, state)
         self.store.db.execute("DELETE FROM jobs")
         clipsmod.set_skipped(self.cl.id, True, self.c)
@@ -304,7 +321,7 @@ class TestRunner(StatusCase):
     def test_successful_run_without_a_zip_fails(self):
         self.runner.active = True
         self.ws.lib.get = lambda cid: self.cl
-        jid = self.store.enqueue(self.cl.id, "movement")
+        jid = self.store.enqueue(self.cl.id, "run")
         job = self.store.take()
         self.runner._cmd = lambda *_: [sys.executable, "-c", "print('done')"]
         self.app.c["max_attempts"] = 1
@@ -437,15 +454,14 @@ class TestApi(unittest.TestCase):
         d = json.loads(self.get("/api/clips")[1])
         self.assertNotIn("me", d)
         self.assertIs(d["local"], True, "the test runs on this PC")
-        self.assertEqual(set(d["queue"]), {"running", "queued", "failed", "parallel", "now", "paused", "stages"})
-        self.assertEqual(set(d["queue"]["stages"]), {"movement", "background"})          # each stage on its own
+        self.assertEqual(set(d["queue"]), {"running", "queued", "failed", "parallel", "now", "paused", "models", "models_folder"})
         self.assertEqual(d["source"]["path"], os.path.join(self.d, "src"))
         self.assertEqual(config.load()["source_root"], os.path.join(self.d, "src"), "the source folder is saved in the settings")
         f = clipsmod.folders(self.ws.c, self.ws.lib.clips[0])
         for k in ("marks", "work", "submit"):
             self.assertNotIn("_users", f[k], k)
         self.assertEqual(self.post("/api/start")[1]["queued"], 1, "Start without a login")
-        self.assertFalse(self.app.runner.is_paused())
+        self.assertFalse(self.app.runner.paused)
 
     def test_folder_open_and_quit_only_on_this_pc(self):
         h = self.app.server.RequestHandlerClass
@@ -460,7 +476,7 @@ class TestApi(unittest.TestCase):
         os.makedirs(f["work"], exist_ok=True)
         with open(os.path.join(f["work"], "old.txt"), "w") as fh:
             fh.write("x")
-        jid = self.app.store.enqueue(cl.id, "movement")
+        jid = self.app.store.enqueue(cl.id, "run")
         self.assertEqual(self.app.store.take()["id"], jid)
         self.app.store.finish(jid, True)
         self.assertIn(cl.id, self.app.store.timing())
@@ -480,25 +496,25 @@ class TestApi(unittest.TestCase):
         self.app.runner.pause()
         with unittest.mock.patch.object(self.ws, "start", side_effect=AssertionError("unexpected Start")):
             self.assertEqual(self.post("/api/resume")[0], 200)
-            self.assertFalse(self.app.runner.is_paused())
+            self.assertFalse(self.app.runner.paused)
 
     def test_start_queues_failed_and_cancelled_clips_and_resumes_paused_work(self):
         for state in ("failed", "stopped"):
             self.app.runner.pause()
             self.app.store.db.execute("DELETE FROM jobs")
             self.app.store.db.execute("INSERT INTO jobs(clip, stage, state, priority, created) VALUES (?,?,?,0,1)",
-                                      (self.cid, "movement", state))
+                                      (self.cid, "run", state))
             code, d = self.post("/api/start")
             self.assertEqual((code, d["queued"]), (200, 1), state)
-            self.assertFalse(self.app.runner.is_paused())
+            self.assertFalse(self.app.runner.paused)
             self.assertEqual(self.status_of()["label"], "waiting")
         self.app.runner.pause()
         self.app.store.db.execute("DELETE FROM jobs")
         self.app.store.db.execute("INSERT INTO jobs(clip, stage, state, priority, created, error) VALUES (?,?,?,0,1,?)",
-                                  (self.cid, "movement", "queued", clipsmod.PAUSED))
+                                  (self.cid, "run", "queued", clipsmod.PAUSED))
         self.assertEqual(self.status_of()["label"], "paused")
         self.assertEqual(self.post("/api/start")[1]["queued"], 0, "the paused job keeps its place")
-        self.assertFalse(self.app.runner.is_paused())
+        self.assertFalse(self.app.runner.paused)
         self.assertEqual(self.status_of()["label"], "waiting", "after Resume the job is no longer shown as paused")
 
     def test_new_pages_and_endpoints(self):
@@ -520,8 +536,8 @@ class TestApi(unittest.TestCase):
                      "/api/clip/%s/finish" % self.cid, "/api/finish_reviewed", "/api/render_confirmed",
                      "/api/ai_test", "/api/claude_test"):
             self.assertEqual(self.post(path, {})[0], 404, path)
-        for stage in ("fit", "all", "ai", "depth", "background"):
-            self.assertEqual(self.post("/api/clip/%s/run?stage=%s" % (self.cid, stage))[0], 400, stage)
+        for action in ("background", "finish", "review"):                   # one stage: no Background of its own
+            self.assertEqual(self.post("/api/clip/%s/%s" % (self.cid, action))[0], 404, action)
 
     def test_pages_and_health(self):
         for p in ("/", "/clip/" + self.cid, "/static/app.css", "/static/common.js"):
@@ -547,7 +563,8 @@ class TestApi(unittest.TestCase):
         info = json.loads(body)
         for gone in ("review", "suggested", "ai", "env_ai", "regions", "flagged", "prop_warnings", "limb_depth_report", "blocks"):
             self.assertNotIn(gone, info)
-        self.assertEqual((info["background"]["state"], info["background"]["download"]), ("none", None))   # Stage 2: not run
+        self.assertNotIn("background", info)
+        self.assertEqual(info["objects"]["placed"], [])                         # not run yet: no objects
         self.assertIn("timing", info)
         self.assertEqual((info["outputs"]["zip"], info["outputs"]["download"]), (False, None))
 
@@ -584,14 +601,14 @@ class TestApi(unittest.TestCase):
         self.assertTrue(q["paused"], "the app starts paused")
         code, d = self.post("/api/start")
         self.assertEqual((code, d["queued"]), (200, 1))
-        self.assertEqual(self.app.store.latest_for(self.cid)["stage"], "movement")
+        self.assertEqual(self.app.store.latest_for(self.cid)["stage"], "run")
         self.assertFalse(json.loads(self.get("/api/clips")[1])["queue"]["paused"])
         self.assertEqual(self.post("/api/start")[1]["queued"], 0, "a queued clip is not queued twice")
         self.post("/api/pause")
         self.assertTrue(json.loads(self.get("/api/clips")[1])["queue"]["paused"])
 
     def test_skip_keeps_the_clip_listed_and_include_brings_it_back(self):
-        self.app.store.enqueue(self.cid, "movement")
+        self.app.store.enqueue(self.cid, "run")
         code, d = self.post("/api/clip/%s/skip" % self.cid)
         self.assertEqual((code, d["cancelled"]), (200, 1), "its waiting job leaves the line")
         lst = json.loads(self.get("/api/clips")[1])
@@ -618,8 +635,8 @@ class TestApi(unittest.TestCase):
         self.assertTrue(self.post(path + "/run")[1]["queued"])
         st = self.status_of()
         self.assertEqual((st["skipped"], st["label"]), (False, "waiting"))
-        self.assertEqual(self.app.store.latest_for(self.cid)["stage"], "movement")
-        self.assertFalse(self.app.runner.is_paused(), "an explicit run lets the queue run")
+        self.assertEqual(self.app.store.latest_for(self.cid)["stage"], "run")
+        self.assertFalse(self.app.runner.paused, "an explicit run lets the queue run")
 
     def test_zip_downloads_under_its_package_name(self):
         import package as pkg

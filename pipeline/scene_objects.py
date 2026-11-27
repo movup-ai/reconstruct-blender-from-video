@@ -1,32 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Stage 2 "Background": Stage 1's scene + your prebuilt objects -> a second v2.1 zip (Stage 1's zip is kept).
+"""The objects of a clip's set, part of the one run (run_pipeline.py): your prebuilt models (assets\\objects) placed
+where the video shows the things they stand for.
 
-  python run_pipeline.py VIDEO --stage background --name CLIP
+  load_assets(c)   every assets\\objects\\<type>.blend (assets_lib.py) and the Mask2Former panoptic model must be
+                   there; read before any GPU work, so a missing one fails the clip at once
+  find(...)        Mask2Former panoptic (ADE20K, 150 names) outlines and names every object, a few frames per second
+                   of every shot, plus the depth step's view frames (ade_find.py); ade_objects.py turns each name into
+                   its asset (people and scenery are not placed; a name whose .blend is missing is reported).  The
+                   same pass names every pixel: floor, wall and ceiling for the depth step's gravity and floor
+  place(...)       per object its best views (big, whole, not hidden by people); MoGe depth on those frames
+                   (metric_observe.py); each frame's depth matched to the fitted floor (the floor pixels land on z = 0,
+                   so objects stand on the floor the people stand on); the object's pixels -> 3D points (the fitted
+                   camera of that frame, with its zoom) -> a box on the floor (or on the wall, when it hangs) facing
+                   the camera -> the asset stretched into that box.  Checked first (object_checks.py): the box must
+                   have a real size for its type (too wide: split by its 3D points), and people must not stand in it
 
-  1. assets      every assets\\objects\\<type>.blend (assets_lib.py); none -> the run stops and says so
-  2. find        Mask2Former panoptic (ADE20K, 150 names) outlines and names every object, a few frames per second of
-                 every shot (ade_find.py); ade_objects.py turns each name into its asset (people and scenery are not
-                 placed; a name whose .blend is missing is reported).  An object that only comes into view later
-                 (zoom, pan) is found where it appears
-  3. depth       per object its best views (big, whole, not hidden by people); MoGe (the configured version) depth +
-                 Mask2Former floor labels on those frames (metric_observe.py)
-  4. scale       each frame's depth is matched to Stage 1's floor: the floor pixels must land on z = 0 of the scene,
-                 so objects stand on the floor the people stand on
-  5. place       the object's pixels -> 3D points (Stage 1's camera of that frame, with its zoom) -> a box on the
-                 floor (or on the wall, when it hangs) facing the camera -> the asset stretched into that box.
-                 Checked first (object_checks.py): the box must have a real size for its type (too wide: split by
-                 its 3D points), and people must not stand inside it
-  6. build       Stage 1's scene_data.json + the objects -> Work\\<clip>\\background\\scene_data.json -> Blender
-                 (colour card) -> SUBMIT\\_background\\<clip>.zip -> the v2.1 package check
-
-Files: Work\\<clip>\\background\\ (objects.json report, preview.jpg, caches, render) and SUBMIT\\_background\\<clip>\\.
-Stage 1's files are only read."""
-import copy
+Files: Work\\<clip>\\objects\\ (objects_found.npz and depth.npz caches, preview.jpg)."""
 import hashlib
 import json
 import math
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,23 +31,21 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from common import jload, jsave, log, read_frames_at, imwrite_u
+from common import log, imwrite_u
 from camera_model import Cam, cam_mats
+from profiling import stage
 import assets_lib
 import object_checks
 
-VERSION = 1
-FLOOR_ROLES = ("floor", "ground")
+VERSION = 2
+# ADE names of the ground objects stand on (their floor scale)
+FLOOR_NAMES = {"floor", "rug", "stage", "pier", "road", "sidewalk", "earth", "field", "sand", "path", "land", "dirt track",
+               "runway", "grass", "water", "sea", "lake", "river", "swimming pool"}
 SURFACES = ("wall",)            # large surfaces: they never count as a duplicate of the things standing against them
 
 
-def bg_root(c):
-    """where the Stage 1 + Stage 2 packages go: SUBMIT\\_background (the "_" keeps it out of Stage 1's list)"""
-    return os.path.join(c["submit_root"], "_background")
-
-
-def bg_work(work):
-    return os.path.join(work, "background")
+def folder(work):
+    return os.path.join(work, "objects")
 
 
 # ------------------------------------------------------------------ geometry
@@ -171,8 +162,8 @@ def overlap(a, b):
 
 # ------------------------------------------------------------------ steps
 def tracks_of(bundle, types, people_mask, min_frames=2, min_area=0.002, best_area=0.004, max_hidden=0.4):
-    """SAM 3 detections -> {id: {"type", "frames": [clip frames], "rows": [bundle rows], "views": [how well it is
-    seen], "probs"}}.  A view mostly covered by a person is not used (SAM 3 then often names part of the person);
+    """Mask2Former detections -> {id: {"type", "frames": [clip frames], "rows": [bundle rows], "views": [how well it is
+    seen], "probs"}}.  A view mostly covered by a person is not used (the outline is then often part of the person);
     an object never seen clearly at <best_area> of the picture or more is left out."""
     out = {}
     shape = tuple(int(x) for x in bundle["shape"])
@@ -213,12 +204,9 @@ def best_views(t, k=3):
 
 
 def run_depth(images, fovs, out, c):
-    """MoGe depth + Mask2Former labels of the chosen frames (metric_observe.py, cached by images + fov + version)"""
-    try:                                                   # the MoGe version switch (moge_model.py), when present
-        import moge_model
-        mv = moge_model.version(c)
-    except ImportError:
-        mv = None                                          # metric_observe.py's own MoGe
+    """MoGe depth of the chosen frames (metric_observe.py, cached by images + fov + version)"""
+    import moge_model
+    mv = moge_model.version(c)
     refine = int(c.get("moge_refine_steps", 3))
     digest = hashlib.sha256(images.tobytes() + np.asarray(fovs, float).tobytes() + ("%s/%d/%d" % (mv, refine, VERSION)).encode()).hexdigest()
     path = os.path.join(out, "depth.npz")
@@ -229,8 +217,8 @@ def run_depth(images, fovs, out, c):
     with tempfile.TemporaryDirectory(dir=out, prefix="depth_") as tmp:
         inp, res = os.path.join(tmp, "input.npz"), os.path.join(tmp, "result.npz")
         np.savez_compressed(inp, images=images, fov=np.asarray(fovs, float))
-        p = subprocess.run([sys.executable, os.path.join(HERE, "metric_observe.py"), "--input", inp, "--output", res] +
-                           (["--moge", mv, "--refine", str(refine)] if mv else []), capture_output=True, text=True, encoding="utf-8",
+        p = subprocess.run([sys.executable, os.path.join(HERE, "metric_observe.py"), "--input", inp, "--output", res,
+                            "--moge", mv, "--refine", str(refine)], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=1800)
         if p.returncode:
             raise RuntimeError("depth failed: " + (p.stderr or p.stdout)[-600:])
@@ -286,104 +274,112 @@ def walk_through(box, data, step=2):
     return hits * step
 
 
-# ------------------------------------------------------------------ the run
-def run(name, video, work, marks, c, render_and_pack):
-    """Stage 2 for one clip -> report dict.  render_and_pack(name, video, work, c) is Stage 1's (run_pipeline)"""
-    import gpu_lease
-    t0 = time.time()
-    sp, cp = os.path.join(work, "scene_data.json"), os.path.join(work, "clip_info.json")
-    if not (os.path.isfile(sp) and os.path.isfile(cp)):
-        raise RuntimeError("Stage 1 (Movement) has not finished for this clip: run it first")
-    s1zip = os.path.join(c["submit_root"], name + ".zip")
-    if not os.path.isfile(s1zip):
-        raise RuntimeError("Stage 1's zip is missing (%s): run Movement first" % s1zip)
-    out = bg_work(work); os.makedirs(out, exist_ok=True)
-    data = jload(sp); ci = jload(cp)
+# ------------------------------------------------------------------ the steps of the run
+def load_assets(c):
+    """-> (catalog, {type: model}, [types]).  Every model is read before the GPU work, so a broken one fails at once"""
+    import ade_find
+    if not ade_find.available():
+        raise RuntimeError("Mask2Former panoptic is missing: put config.json, preprocessor_config.json and model.safetensors "
+                           "of facebook/mask2former-swin-large-ade-panoptic in %s" % ade_find.MODEL_DIR)
     cat = assets_lib.catalog(c)
     if not cat:
         raise RuntimeError("no object models: put one .blend per object type in %s (e.g. pillar.blend, wall.blend)"
                            % assets_lib.folder(c))
     log("  assets: %d object models in %s" % (len(cat), assets_lib.folder(c)))
-    models = {t: assets_lib.load(t, c) for t in cat}          # read every model before the GPU work: fail early
-    types = list(cat)
-    y0, Hp, N, fps = int(ci["y0"]), int(ci["Hpic"]), int(data["frames"]), float(data["fps"])
-    cam = Cam(data)
-    shots = [(int(s["frames"][0]), int(s["frames"][1]) + 1) for s in data.get("shots") or []] or [(0, N)]
-    import ade_find
-    if not ade_find.available():                              # before any GPU work
-        raise RuntimeError("Mask2Former panoptic is missing: put config.json, preprocessor_config.json and model.safetensors "
-                           "of facebook/mask2former-swin-large-ade-panoptic in %s" % ade_find.MODEL_DIR)
-    sample = ade_find.sample_frames(shots, fps, c)
-    gpu_lease.acquire()
-    log("  reading %d frames ..." % len(sample))
-    pics = {f: img[y0:y0 + Hp] for f, img in read_frames_at(video, sample).items()}
+    models = {t: assets_lib.load(t, c) for t in cat}
+    return cat, models, list(cat)
 
-    # people's masks (Stage 1's SAM 3 tracks): an object hidden by a person is measured around them
+
+def people_masks(marks):
+    """f, (h, w) -> where people are in clip frame f (SAM 3's masks, a little wider), or nothing"""
     people = None
     mp = os.path.join(marks, "sam3_masks.npz")
     if os.path.isfile(mp):
-        from sam3_tracking import read_masks, union_at
+        from sam3_tracking import read_masks
         people = read_masks(mp)
 
-    def people_mask(f, shape):
+    def at(f, shape):
         if people is None:
             return np.zeros(shape, bool)
+        from sam3_tracking import union_at
         m = union_at(people, f, shape[1], shape[0])
         return cv2.dilate(m.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+    return at
 
-    # 2. find: Mask2Former panoptic outlines and names every object (ade_find.py; cached: frames, models, settings)
-    key = hashlib.sha256(json.dumps([VERSION, ade_find.VERSION, sample, types, os.path.getsize(video), os.path.getmtime(video),
+
+@stage("scene_finder")
+def find(pics, shots, types, video, work, c):
+    """Mask2Former panoptic on pics {clip frame: picture} -> the bundle of ade_find.find (objects + every frame's name
+    map); cached by the frames, the models and the settings"""
+    import ade_find
+    out = folder(work); os.makedirs(out, exist_ok=True)
+    key = hashlib.sha256(json.dumps([VERSION, ade_find.VERSION, sorted(pics), types, os.path.getsize(video), os.path.getmtime(video),
                                      c.get("bg_detect_fps", 5), c.get("bg_find_width", 1024), c.get("bg_ade_threshold", .5),
                                      c.get("bg_min_area", .002), c.get("bg_link_iou", .3), c.get("sam3_mask_side", 640)]).encode()).hexdigest()
     dp = os.path.join(out, "objects_found.npz")
-    bundle = None
     if os.path.isfile(dp):
         with np.load(dp, allow_pickle=False) as got:
             if str(got["key"]) == key:
-                bundle = {k: got[k].copy() for k in got.files if k != "missing"}
-                missing = json.loads(str(got["missing"])) if "missing" in got.files else {}
-    if bundle is None:
-        log("  Mask2Former: finding objects on %d frames ..." % len(pics))
-        bundle, finfo = ade_find.find(pics, shots, types, c)
-        missing = finfo["missing"]
-        np.savez_compressed(dp, key=key, missing=json.dumps(missing), **bundle)
-        log("    Mask2Former %.0fs: %d object(s)" % (finfo["seconds"], finfo["objects"]))
+                bundle = {k: got[k].copy() for k in got.files if k not in ("missing", "key")}
+                missing = json.loads(str(got["missing"]))
+                log("  Mask2Former: %d frames (kept from the last run)" % len(pics))
+                return bundle, missing
+    log("  Mask2Former: objects and surfaces on %d frames ..." % len(pics))
+    bundle, info = ade_find.find(pics, shots, types, c)
+    np.savez_compressed(dp, key=key, missing=json.dumps(info["missing"]), **bundle)
+    log("    Mask2Former %.0fs: %d object(s)" % (info["seconds"], info["objects"]))
+    return bundle, info["missing"]
+
+
+@stage("objects")
+def place(data, pics, bundle, missing, people_mask, assets, work, c):
+    """the found objects -> (meshes for scene_data, objects report, warnings).  data: the fitted scene (cameras,
+    people, shots); pics {clip frame: picture} as given to find()"""
+    import ade_find
+    cat, models, types = assets
+    out = folder(work); os.makedirs(out, exist_ok=True)
+    N = int(data["frames"])
+    cam = Cam(data)
+    shots = [(int(s["frames"][0]), int(s["frames"][1]) + 1) for s in data.get("shots") or []] or [(0, N)]
+    warns = []
     if missing:
         log("    no model for: %s" % ", ".join("%s (add %s.blend)" % (n, a) for n, a in sorted(missing.items())))
     tracks = tracks_of(bundle, types, people_mask)
-    log("  found: %d object(s)%s" % (len(tracks), "" if not tracks else " - " + ", ".join(
+    log("  objects found: %d%s" % (len(tracks), "" if not tracks else " - " + ", ".join(
         "%s %d" % (t, sum(1 for x in tracks.values() if x["type"] == t)) for t in types if any(x["type"] == t for x in tracks.values()))))
 
-    # 3. depth on each object's best views
+    # depth on each object's best views
     views = {oid: [t["frames"][j] for j in best_views(t)] for oid, t in tracks.items()}
     key_frames = sorted({f for fs in views.values() for f in fs})
     if len(key_frames) > int(c.get("bg_max_depth_frames", 48)):
         keep = set(np.asarray(key_frames)[np.linspace(0, len(key_frames) - 1, int(c.get("bg_max_depth_frames", 48))).astype(int)])
         views = {oid: [f for f in fs if f in keep] or fs[:1] for oid, fs in views.items()}
         key_frames = sorted({f for fs in views.values() for f in fs})
-    objects, meshes, warns = [], [], []
-    if key_frames:
+    objects, meshes = [], []
+    if not key_frames:
+        warns.append("no object of the asset types was found: the scene has people and the floor only")
+    else:
         width = int(c.get("bg_depth_width", 640)); width = min(width, cam.W); height = max(16, round(cam.H * width / cam.W))
         images = np.asarray([cv2.cvtColor(cv2.resize(pics[f], (width, height)), cv2.COLOR_BGR2RGB) for f in key_frames])
         fovs = [math.degrees(2 * math.atan(cam.W / (2 * cam.f_at(f)))) for f in key_frames]
-        log("  depth on %d frame(s) ..." % len(key_frames))
+        log("  object depth on %d frame(s) ..." % len(key_frames))
         td = time.time()
         depth = run_depth(images, fovs, out, c)
         log("    depth %.0fs" % (time.time() - td))
-        gpu_lease.release()
-        names = [str(x) for x in depth.get("names", [])]
-        import semseg
-        floor_ids = [i for i, nm in enumerate(names) if semseg.role(nm) in FLOOR_ROLES]
-        # 4. scale: each frame's floor onto z = 0
+        names = [str(x) for x in bundle["names"]]
+        floor_ids = [i for i, nm in enumerate(names) if nm in FLOOR_NAMES]
+        # scale: each frame's floor onto z = 0
         scales = {}
         for k, f in enumerate(key_frames):
             D, ok = depth["depth"][k], depth["valid"][k]
-            fl = np.isin(depth["labels"][k], floor_ids) & ok if floor_ids else np.zeros_like(ok)
+            lab = ade_find.labels_at(bundle, f, ok.shape[1], ok.shape[0])
+            fl = np.isin(lab, floor_ids) & ok if lab is not None and floor_ids else np.zeros_like(ok)
             fl &= ~cv2.resize(people_mask(f, fl.shape).astype(np.uint8), (fl.shape[1], fl.shape[0])).astype(bool)
             s = floor_scale(cam, f, D, fl)
             if s:
                 scales[f] = s[0]
         shot_of = lambda f: next((i for i, (a, b) in enumerate(shots) if a <= f < b), 0)
+
         def scale_at(f):
             if f in scales:
                 return scales[f], "floor"
@@ -394,7 +390,7 @@ def run(name, video, work, marks, c, render_and_pack):
                 return float(np.median(list(scales.values()))), "floor of other shots"
             return 1.0, "depth model's own metres (no floor seen)"
         idx = {f: k for k, f in enumerate(key_frames)}
-        # 5. place (object_checks.py: each object must have a real size for its type, and people not stand in it)
+        # place (object_checks.py: each object must have a real size for its type, and people not stand in it)
         checks = object_checks.enabled(c)
         extra = object_checks.extras(c) if checks else {}
         boxes = []
@@ -472,29 +468,9 @@ def run(name, video, work, marks, c, render_and_pack):
                             "seen_frames": b["frames"], "detections": b["seen"], "depth_frames": b["views"],
                             "probability": round(b["prob"], 3), "depth_scale_from": b["scale"], "points": b["points"],
                             "person_inside_frames": through})
-    else:
-        gpu_lease.release()
-        warns.append("no object of the asset types was found: the package is Stage 1's scene re-rendered")
     log("  placed: %d object(s)" % len(objects))
     for o in objects:
         log("    %-18s %5.2f x %5.2f x %5.2f m at (%.2f, %.2f, %.2f)%s" % (o["name"], *o["size_m"], *o["position_m"],
                                                                          "" if o["on_floor"] else "  (hanging)"))
-    preview(pics, cam, meshes, os.path.join(out, "preview.jpg"))
-
-    # 6. build: Stage 1's scene + the objects -> render, pack, check (into SUBMIT\_background)
-    scene = copy.deepcopy(data)
-    scene["meshes"] = [m for m in scene.get("meshes", []) if m.get("layer", 2) != 2] + meshes
-    scene["stage"] = "background"
-    for fn in ("clip_info.json",):
-        shutil.copyfile(os.path.join(work, fn), os.path.join(out, fn))
-    jsave(os.path.join(out, "scene_data.json"), scene)
-    rep = {"clip": name, "video": video, "stage": "background", "assets": {t: models[t]["source"] for t in types},
-           "objects": objects, "warnings": warns, "status": "rendering"}
-    jsave(os.path.join(out, "report.json"), rep)
-    cb = dict(c, submit_root=bg_root(c))
-    os.makedirs(cb["submit_root"], exist_ok=True)
-    rep.update(render_and_pack(name, video, out, cb))
-    rep.update(status="ok", seconds=round(time.time() - t0, 1), stage1_zip=s1zip)
-    jsave(os.path.join(out, "report.json"), rep)
-    log("  done in %.0fs%s" % (rep["seconds"], ("   WARNINGS: " + " | ".join(warns)) if warns else ""))
-    return rep
+    preview({f: pics[f] for f in sorted(pics)}, cam, meshes, os.path.join(out, "preview.jpg"))
+    return meshes, objects, warns

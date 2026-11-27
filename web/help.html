@@ -15,9 +15,10 @@
     <h2>The workflow</h2>
     <ol>
       <li><b>Copy the videos into the source folder</b> (the link at the top of the Clips page opens it). Each video appears as a card by itself; the <b>✕</b> on a card takes it off the list (the file stays where it is, and <i>Removed from the list</i> below the cards puts it back). Give the videos their delivery names once with <i>Name videos…</i>: the client requires each zip to carry one. Type the film's English title and they get <code>title-1</code>, <code>title-2</code>… in file-name order.</li>
-      <li><b>Start</b> on the Clips page. Nothing runs until you press it, also after restarting the app. Every video without a finished zip (new, failed, cancelled or out of date) then runs <b>Stage 1 · Movement</b> by itself, one straight run with no review step:
+      <li><b>Start</b> on the Clips page. Nothing runs until you press it, also after restarting the app. Every video without a finished zip (new, failed, cancelled or out of date) then runs by itself, one straight run with no review step:
         <ul>
           <li>people and their joints (SAM 3 tracking, RTMPose, SAM 3D Body), the camera with its zoom, the metric scale and a grey floor;</li>
+          <li>the objects: Mask2Former finds the objects in the video and names each with one of its 150 names; the model for that name (a <b>.blend</b> in the project’s <b>assets\objects</b> folder, the table in pipeline\ade_objects.py) is placed where depth puts it. The same pass names the floor, walls and ceiling, which give the camera its tilt and the floor its height;</li>
           <li>a Blender scene with the sample character, the white-model video and the comparison video;</li>
           <li>the v2.1 zip in SUBMIT, checked against the delivery spec before the clip counts as <span class="chip g-done">done</span>.</li>
         </ul>
@@ -25,7 +26,6 @@
       <li><b>Pause, Resume, Cancel</b>: <i>Pause processing</i> stops active jobs and keeps completed caches; <i>Resume processing</i> (or Start) restarts the interrupted run where the caches allow, in its old place in the queue. <i>Cancel pipeline</i> stops your running and waiting jobs without retries; completed files stay. Each active clip also has its own Cancel. <b>&#10005;</b> on a card <i>skips</i> a video: it stays on the list, greyed, and Start leaves it out (the file and any finished zip are kept). <i>Include</i> brings it back.</li>
       <li><b>Deliver</b>: download each zip with its <i>Download</i> button (on the card, the clip page or the Submissions page). It is saved under its delivery name (e.g. <code>the_hidden_blade-3.zip</code>), which the client's checker requires. Do not send the zips straight from the SUBMIT folder: those are named after the clip. <i>Check packages</i> on the Submissions page checks every zip again.</li>
     </ol>
-    <p><b>Stage 2 · Background</b> adds your object models to a finished clip. The models are the <b>.blend</b> files in the project’s <b>assets\objects</b> folder, one for each object Mask2Former can name (sofa.blend, chair.blend, window.blend…); see assets\objects\README.md for the list and the ones still to add. Stage 2 has its own card on the Clips page: <b>Start background</b> queues every clip whose Movement is done and runs them; its own <b>Pause</b> and <b>Cancel background</b> stop only Stage 2, so Movement keeps going (and the other way round). One clip: <b>Add background</b> on its page. Mask2Former finds the objects in the video and names each with one of its 150 names; the model for that name (the table in pipeline\ade_objects.py) is placed where depth puts it, and a second zip is packed (downloaded as <i>name</i>_background.zip). Stage 1’s zip stays as it is, so you have both. The table shows each stage in its own column (status, how long its run took, when it finished); Computer time is both together.</p>
   </section>
 
   <section class="step">
@@ -33,7 +33,7 @@
     <h3>A clip says "no delivery name"</h3>
     <p>The client's delivery rules (v2.1) require every zip to be named after the film's English title and a number, for example <code>the_hidden_blade-3</code>. A video without one is given a made-up name (<code>clip-1</code>, <code>clip-2</code>…) when it is queued, so it is never lost after hours of work; it is marked <i>auto</i>. To use the film's title, press <i>Name videos…</i> on the Clips page and type it: made-up names are replaced (and never used again) and the zip is made again; real names never change.</p>
     <h3>A clip says "out of date"</h3>
-    <p>Its zip was made from an older video, delivery name or Stage 1 settings. <i>Start</i> (or <i>Re-run</i> on the clip) makes it again.</p>
+    <p>Its zip was made from an older video, delivery name or settings. <i>Start</i> (or <i>Re-run</i> on the clip) makes it again.</p>
     <h3>When can I add videos?</h3>
     <p>Any time, even while others are being processed. Copy them into the source folder: within a few seconds they appear on the Clips page, and while the queue runs they are queued by themselves. Otherwise press <i>Start</i>.</p>
     <h3>Where are the results?</h3>

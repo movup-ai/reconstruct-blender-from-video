@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stage 2's prebuilt object library: one .blend per object type in assets\\objects\\ (config "object_assets").
+"""The prebuilt object library: one .blend per object type in assets\\objects\\ (config "object_assets").
 
   assets\\objects\\pillar.blend        type "pillar": every object Mask2Former names "column" becomes this model
                                       (ade_objects.py: Mask2Former's 150 names -> the asset placed for each)
@@ -25,7 +25,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 MAX_FACES = 200000
-NOT_OBJECTS = {"floor", "ground"}                     # Stage 1 already builds the floor
+NOT_OBJECTS = {"floor", "ground"}                     # the run builds the floor itself
 # types that hang on a wall or from the ceiling: placed at the height they are seen.  Every other type stands on the
 # floor (its bottom is often hidden behind people or furniture).  objects.json "on_floor": true / false wins.
 HANGING = ("painting", "picture", "poster", "frame", "mirror", "clock", "window", "shelf", "sign", "screen", "tv",

@@ -48,7 +48,7 @@ BODY_ON_RIG = [("shoulder_L", (0, 0, 0)), ("shoulder_R", (0, 0, 0)), ("elbow_L",
 class Rig:
     def __init__(self, height, style="sample"):
         if style not in COCO_ON_RIG:
-            raise ValueError("unknown character style %r (Stage 1 uses 'sample')" % style)
+            raise ValueError("unknown character style %r (the run uses 'sample')" % style)
         self.style = style
         self.J, self.s = joint_defs(height, style)
         face = COCO_ON_RIG[style]

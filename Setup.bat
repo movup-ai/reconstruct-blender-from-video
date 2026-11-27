@@ -72,9 +72,9 @@ if not exist "third_party\MoGe\moge\model\v2.py" (
   curl -sS -L --retry 5 -o "third_party\moge.zip" https://github.com/microsoft/MoGe/archive/refs/heads/main.zip && tar -xf "third_party\moge.zip" -C third_party && del "third_party\moge.zip" && ren "third_party\MoGe-main" MoGe
 )
 if not exist "models\moge2\model.pt" echo   !! MoGe-2 weights missing: models\moge2\model.pt - every clip uses the fixed lens of config.json
-echo Floor / wall segmentation model (Mask2Former ADE20K, about 0.8 GB the first time)...
-if not exist "models\mask2former_ade\model.safetensors" (
-  "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('facebook/mask2former-swin-large-ade-semantic', local_dir=r'models\mask2former_ade', allow_patterns=['*.json','*.safetensors'])" || echo   !! Mask2Former not downloaded - the camera height and gravity use the people and MoGe-2 only
+echo Object and surface model (Mask2Former panoptic ADE20K, about 0.8 GB the first time)...
+if not exist "models\mask2former_ade_panoptic\model.safetensors" (
+  "%VPY%" -c "from huggingface_hub import snapshot_download as s; s('facebook/mask2former-swin-large-ade-panoptic', local_dir=r'models\mask2former_ade_panoptic', allow_patterns=['*.json','*.safetensors'])" || goto end_fail
 )
 echo Masked joint model (RTMPose; no person detector)...
 "%VPY%" -c "from rtmlib import Body; from rtmlib.tools.file import download_checkpoint as d; d(Body.MODE['performance']['pose'])" || goto end_fail

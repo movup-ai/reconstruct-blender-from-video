@@ -166,7 +166,7 @@ def publish(staged, out):
         values = jload(hints)
         for key in ('people','tracks','scene_justifications'): values.pop(key,None)
         jsave(hints,values)
-    # the joint editor's files of earlier builds (kept in the backup): Stage 1 has no editor
+    # the joint editor's files of earlier builds (kept in the backup): the run has no editor
     if backup and os.path.isfile(os.path.join(out,'check.html')): os.remove(os.path.join(out,'check.html'))
     if backup and os.path.isdir(os.path.join(out,'review')): shutil.rmtree(os.path.join(out,'review'))
     for name in ('sam3_masks.npz','tracking_report.json','pose.json'):

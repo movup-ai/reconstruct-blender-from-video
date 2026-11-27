@@ -17,29 +17,24 @@
 
   <div class="flow">
     <section class="fstep" id="st2">
-      <div class="fh"><span class="num">1</span><b>Movement</b></div>
-      <p class="fdesc">Stage 1 runs by itself for every video: people, joints, camera and floor, the white-model and comparison videos, and a checked v2.1 zip. Nothing runs until you press Start.</p>
-      <div class="actions"><button id="startbtn" data-processing-control>Start</button><button id="cancel-session" class="dangerline" data-processing-control hidden>Cancel movement</button></div>
+      <div class="fh"><span class="num">1</span><b>Processing</b></div>
+      <p class="fdesc">Each video runs by itself: people, joints, camera and floor, Mask2Former finds the objects and the matching object models are placed where depth puts them, then the white-model and comparison videos and a checked v2.1 zip. Nothing runs until you press Start.</p>
+      <p class="fdesc" id="models"></p>
+      <div class="actions"><button id="startbtn" data-processing-control>Start</button><button id="cancel-session" class="dangerline" data-processing-control hidden>Cancel</button></div>
       <div class="q" id="queue"></div>
       <div class="minor" id="minor2"></div>
+    </section>
+    <section class="fstep" id="st3">
+      <div class="fh"><span class="num">2</span><b>Delivered</b></div>
       <p class="fdesc" id="deldesc"></p>
       <p class="fdesc warn" id="noname" style="display:none"></p>
       <div class="actions"><button id="nameall" style="display:none" title="Give every video without a delivery name one, from the film's English title. The client requires a delivery name for each zip: the film's English title and a number, e.g. the_hidden_blade-1.">Name videos…</button><a class="btn" id="subslink" href="/submissions">Submissions</a></div>
-    </section>
-    <section class="fstep" id="st3">
-      <div class="fh"><span class="num">2</span><b>Background</b></div>
-      <p class="fdesc">Stage 2 runs on clips whose Movement is done: Mask2Former finds and names the objects in the video, the matching object models are placed where depth puts them, and a second zip is packed (Stage 1’s zip is kept). It runs only when you press Start background.</p>
-      <p class="fdesc" id="bgmodels"></p>
-      <div class="actions"><button id="bgstart" data-processing-control>Start background</button><button id="bgcancel" class="dangerline" data-processing-control hidden>Cancel background</button></div>
-      <div class="q" id="bgqueue"></div>
-      <div class="minor" id="bgminor"></div>
-      <p class="fdesc" id="bgdesc"></p>
     </section>
   </div>
   <div class="bar" id="bar" role="img"></div>
 
   <div class="tabs" id="tabsrow"><span id="tabs" class="contents"></span>
-    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip's Movement and Background: where each is and how long it took">Table</button></span>
+    <span class="seg viewsw" id="viewsw" role="group" aria-label="Show the clips as"><button data-v="cards" title="Pictures of the clips">Cards</button><button data-v="table" title="Every clip: where it is, how long its run took and when it finished">Table</button></span>
     <input type="text" class="search" id="search" placeholder="Search clips" aria-label="Search clips" autocomplete="off" spellcheck="false"></div>
   <div id="progsum" class="progsum" style="display:none"></div>
   <div id="list"><div class="empty">Loading…</div></div>
@@ -61,60 +56,38 @@ let FILTER = 'all', DATA = null;
 let VIEW = (() => { try { return localStorage.getItem('clipsView') || 'cards'; } catch (e) { return 'cards'; } })();
 segInit($('viewsw'), v => { VIEW = v; try { localStorage.setItem('clipsView', v); } catch (e) {} render(); });
 
-// ---- each stage of a clip on its own: Movement (Stage 1) and Background (Stage 2) - where it is, how long its run
-//      took and when it finished
-const BG_GROUP = { waiting: 'busy', paused: 'busy', processing: 'busy', done: 'done', outdated: 'old', failed: 'fail', cancelled: 'new' };
-const BG_LABEL = { waiting: 'waiting', paused: 'paused', processing: 'running', done: 'done', outdated: 'out of date', failed: 'failed', cancelled: 'cancelled' };
-// Movement's words for its chip ("Movement done", "Movement running"...); a skipped video is skipped as a whole
-const MV_LABEL = { new: 'new', waiting: 'waiting', paused: 'paused', processing: 'running', done: 'done', failed: 'failed', cancelled: 'cancelled', outdated: 'out of date' };
-const bgState = c => (c.status.background || {}).state || 'none';
-function stageState(c, step) {                         // one word per stage: running / waiting / paused / done / ...
-  if (step === 'background') { const b = bgState(c); return b === 'processing' ? 'running' : b; }
-  const l = c.status.label;
-  return l === 'processing' ? 'running' : l === 'new' ? 'none' : l;
-}
-function stepCell(c, step, p) {
-  const s = ((c.took || {}).steps || {})[step], st = stageState(c, step);
-  const at = t => t ? ` <span class="muted">· ${new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : '';
-  const doneTxt = s && s.state === 'done' ? `&#10003; ${fmtDur(s.ran)}${at(s.ended)}` : '&#10003; done';
-  if (st === 'running') {
-    p = p && p.stage === step ? p : null;
-    const ran = s && s.state === 'running' ? s.ran : (p ? p.since : null);
+// ---- a clip's status, how long its run took and when it finished
+function statusCell(c, p) {
+  const st = c.status.label, t = c.took || {}, L = t.last;
+  const at = s => s ? ` <span class="muted">· ${new Date(s * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>` : '';
+  if (st === 'processing') {
+    const ran = L && L.state === 'running' ? L.ran : (p ? p.since : null);
     return `<div class="pst run">running${ran != null ? ' ' + fmtDur(ran) : ''}</div>` + (p && p.progress != null ? progressBar(p.progress, p.step) : '');
   }
   if (st === 'waiting' || st === 'paused') return `<div class="pst wait">${st}</div>`;
-  if (st === 'done') return `<div class="pst ok">${doneTxt}</div>`;
+  if (st === 'done') return `<div class="pst ok">&#10003; ${t.done ? fmtDur(t.done.machine) + at(t.done.end) : 'done'}</div>`;
   if (st === 'skipped') return '<div class="pst muted">skipped</div>';
-  if (st === 'cancelled') return `<div class="pst muted">cancelled${s && s.state === 'stopped' ? ' after ' + fmtDur(s.ran) : ''}</div>`;
-  if (st === 'failed') return `<div class="pst bad">failed${s && s.state === 'failed' ? ' after ' + fmtDur(s.ran) : ''}</div>`;
-  if (st === 'outdated') return `<div class="pst muted">out of date${step === 'background' ? ' (Movement made again)' : ''}</div>`;
-  if (step === 'background' && c.status.done) return '<div class="pst muted">ready</div>';
+  if (st === 'cancelled') return `<div class="pst muted">cancelled${L && L.state === 'stopped' ? ' after ' + fmtDur(L.ran) : ''}</div>`;
+  if (st === 'failed') return `<div class="pst bad">failed${L && L.state === 'failed' ? ' after ' + fmtDur(L.ran) : ''}</div>`;
+  if (st === 'outdated') return '<div class="pst muted">out of date</div>';
   return '<div class="pst muted">–</div>';
 }
-// a card's chips name their stage: "Movement done" and, once it has one, "Background waiting"
-function mvChip(c) {
+const LABEL = { new: 'New', waiting: 'Waiting', paused: 'Paused', processing: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Cancelled', outdated: 'Out of date', skipped: 'Skipped' };
+function statusChip(c) {
   const l = c.status.label;
-  if (l === 'skipped') return `<span class="chip g-${c.status.group}" title="Start leaves this video out">Skipped</span>`;
-  return `<span class="chip g-${c.status.group}" title="Stage 1 · Movement: ${esc(MV_LABEL[l] || l)}">Movement ${esc(MV_LABEL[l] || l)}</span>`;
+  return `<span class="chip g-${c.status.group}"${l === 'skipped' ? ' title="Start leaves this video out"' : ''}>${esc(LABEL[l] || l)}</span>`;
 }
-function bgChip(c) {
-  const b = bgState(c);
-  return b === 'none' ? '' : `<span class="chip g-${BG_GROUP[b]}" title="Stage 2 · Background: ${esc(BG_LABEL[b])}">Background ${esc(BG_LABEL[b])}</span>`;
-}
-// one labelled action per clip, by its state (the chips show the state; the zips are in the SUBMIT folder, the
-// Submissions page and the clip's page):  a job running or waiting (either stage) -> Cancel;  skipped -> Include;
-// both stages done -> nothing (nothing is left for Start to leave out);  otherwise -> Skip (Start leaves it out, it
-// stays listed, greyed)
+// one labelled action per clip, by its state (the chip shows the state; the zips are in the SUBMIT folder, the
+// Submissions page and the clip's page):  a job running or waiting -> Cancel;  skipped -> Include;  done -> nothing
+// (nothing is left for Start to leave out);  otherwise -> Skip (Start leaves it out, it stays listed, greyed)
 function clipActions(c) {
   const short = esc(c.name.replace(/^[^_]+_/, ''));
   const job = c.status.job, busy = !!job && /queued|running/.test(job.state);
   const skipped = c.status.label === 'skipped';
-  const finished = !!c.status.done && bgState(c) === 'done';
-  const stage = busy ? (job.stage === 'background' ? 'Background' : 'Movement') : '';
-  const action = busy ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control title="Stop this clip’s ${stage} job${job.state === 'queued' ? ' (it is waiting)' : ''}. Finished files are kept.">Cancel</button>`
+  const action = busy ? `<button class="qb" data-cancel-job="${c.id}" data-processing-control title="Stop this clip’s job${job.state === 'queued' ? ' (it is waiting)' : ''}. Finished files are kept.">Cancel</button>`
     : skipped ? `<button class="qb add" data-include="${c.id}" data-name="${short}" title="Process this video again when you press Start">Include</button>`
-    : finished ? ''
-    : `<button class="qb" data-skip="${c.id}" data-name="${short}" title="Start${c.status.done ? ' background' : ''} leaves this video out. It stays on the list, greyed; the file and any finished zips are kept. Include brings it back.">Skip</button>`;
+    : c.status.done ? ''
+    : `<button class="qb" data-skip="${c.id}" data-name="${short}" title="Start leaves this video out. It stays on the list, greyed; the file and any finished zip are kept. Include brings it back.">Skip</button>`;
   return {skipped, action};
 }
 function renderTable(list, clips, prog) {
@@ -123,28 +96,23 @@ function renderTable(list, clips, prog) {
     const actions = clipActions(c);
     return `<tr><td class="pname"><a href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt=""><span><b title="${esc(c.name)}">${esc(short)}</b>
         <span class="small muted">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : 'no delivery name'}</span></span></a></td>
-      <td data-k="Movement">${stepCell(c, 'movement', prog[c.id])}</td>
-      <td data-k="Background">${stepCell(c, 'background', prog[c.id])}</td>
-      <td data-k="Computer time" class="r nowrap" title="Movement and Background together: all recorded processing time since reset, including repeated jobs; excludes queue waits">${tot != null ? fmtDur(tot) : '–'}</td>
+      <td data-k="Status">${statusCell(c, prog[c.id])}</td>
+      <td data-k="Computer time" class="r nowrap" title="All recorded processing time since reset, including repeated jobs; excludes queue waits">${tot != null ? fmtDur(tot) : '–'}</td>
       <td data-k="Actions"><div class="table-actions">${actions.action}</div></td></tr>`; }).join('');
   list.innerHTML = `<div class="tablewrap"><table class="list progtable"><thead><tr><th>Video</th>
-    <th title="Stage 1: status, how long its run took and when it finished">Movement</th><th title="Stage 2: status, how long its run took and when it finished">Background</th>
-    <th class="r" title="Movement and Background together (all jobs since reset), excluding queue waits">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <th title="Status, how long its run took and when it finished">Status</th>
+    <th class="r" title="All jobs since reset, excluding queue waits">Computer time</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function progressSummary(cs, q) {
   const box = $('progsum');
   if (VIEW !== 'table' || !cs.length) { box.style.display = 'none'; return; }
-  const runs = cs.map(c => ((c.took || {}).steps || {}).movement).filter(s => s && s.state === 'done').map(s => s.ran);
+  const runs = cs.filter(c => c.status.done && c.took && c.took.done).map(c => c.took.done.machine);
   const avg = runs.length ? runs.reduce((x, y) => x + y, 0) / runs.length : null;
   const finished = cs.filter(c => c.status.done).length;
   const toDo = cs.filter(c => !c.status.done && !c.status.skipped).length;
   const left = toDo * (avg || 0) / Math.max(1, q.parallel || 1);
-  const bgRuns = cs.map(c => ((c.took || {}).steps || {}).background).filter(s => s && s.state === 'done').map(s => s.ran);
-  const bgAvg = bgRuns.length ? bgRuns.reduce((x, y) => x + y, 0) / bgRuns.length : null;
-  const bgDone = cs.filter(c => bgState(c) === 'done').length;
   box.style.display = '';
-  box.innerHTML = `<span>Movement <b>${finished}</b>/${cs.length} done${avg != null ? ` · ${fmtDur(avg)} each on average` : ''}</span>
-    <span>Background <b>${bgDone}</b>/${finished} done${bgAvg != null ? ` · ${fmtDur(bgAvg)} each on average` : ''}</span>
+  box.innerHTML = `<span><b>${finished}</b>/${cs.length} done${avg != null ? ` · ${fmtDur(avg)} each on average` : ''}</span>
     ${toDo && avg ? `<span title="Model inference shares the GPU and may add waiting time">About <b>${fmtDur(left)}</b> of work left (${toDo} to process)</span>` : ''}`;
 }
 
@@ -173,69 +141,45 @@ function render() {
   $('clashes').innerHTML = src.clashes.map(x => `<b>${esc(x.clip)}</b> is also the name of <code>${esc(x.other)}</code>, so this one got a short suffix.`)
     .concat(zp.map(x => `Task zip ${esc(x)}`)).join('<br>');
 
-  // ---- each stage runs on its own: its own Start / Pause / Resume / Cancel, its own jobs and progress
-  const M = q.stages.movement, B = q.stages.background;
+  // ---- step 1: Start queues every video without a valid zip, and resumes paused work
   const jobLines = js => js.map(j => `<div style="margin-top:6px"><a href="/clip/${j.clip}">${esc(j.name.replace(/^[^_]+_/, ''))}</a> ${progressBar(j.progress, j.step)}</div>`).join('');
-  const stageButtons = (S, btn, cancel, todo, words) => {    // words: [Start, unit]
-    const runs = !S.paused || S.running;
-    $(btn).innerHTML = runs ? '&#10074;&#10074; Pause' : S.queued ? '&#9654; Resume' + (todo ? ` · ${todo} more` : '') : `&#9654; ${words[0]}` + (todo ? ` · ${todo} ${words[1]}` : '');
-    $(btn).title = runs ? 'Stop this stage’s active processes and keep completed caches. Resume restarts the interrupted run. The other stage is not touched.' :
-      `Queue ${words[2]} and run this stage`;
-    $(btn).disabled = processingBusy || (!runs && !todo && !S.queued);
-    $(cancel).hidden = !S.running && !S.queued;
-    $(cancel).disabled = processingBusy;
-    return runs;
-  };
-  // step 1: Movement (Start queues every video without a valid zip, and resumes paused work)
   const active = c => c.status.job && /queued|running/.test(c.status.job.state);
   const todo = cs.filter(c => !c.status.done && !c.status.skipped && !active(c)).length;
   const failed = cs.filter(c => c.status.label === 'failed').length;
-  const mRuns = stageButtons(M, 'startbtn', 'cancel-session', todo, ['Start', 'video(s)', 'every video without a finished Movement zip (new, failed, cancelled or out of date)']);
-  const mWait = cs.filter(c => /waiting|paused/.test(c.status.label)).length, mPaused = cs.filter(c => c.status.label === 'paused').length;
-  $('queue').innerHTML = M.running || mWait ? (M.paused ? 'Paused · ' : '') +
-      `<b>${M.running}</b> processing, <b>${mWait}</b> waiting${mPaused ? ` (${mPaused} paused)` : ''}` + jobLines(M.now) :
-    todo ? '' : (cs.length ? 'Every video’s Movement is done.' : '');
+  const runs = !q.paused || q.running;
+  $('startbtn').innerHTML = runs ? '&#10074;&#10074; Pause' : q.queued ? '&#9654; Resume' + (todo ? ` · ${todo} more` : '') : '&#9654; Start' + (todo ? ` · ${todo} video(s)` : '');
+  $('startbtn').title = runs ? 'Stop the active processes and keep completed caches. Resume restarts the interrupted run.' :
+    'Queue every video without a finished zip (new, failed, cancelled or out of date) and run them';
+  $('startbtn').disabled = processingBusy || (!runs && !todo && !q.queued) || (!q.models && !runs);
+  $('cancel-session').hidden = !q.running && !q.queued;
+  $('cancel-session').disabled = processingBusy;
+  $('models').innerHTML = q.models ? `<b>${q.models}</b> object model(s) in <code>${esc(q.models_folder)}</code>` :
+    `<span class="warn">No object models yet.</span> Put one .blend per object type in <code>${esc(q.models_folder)}</code>.`;
+  const wait = cs.filter(c => /waiting|paused/.test(c.status.label)).length, paused = cs.filter(c => c.status.label === 'paused').length;
+  $('queue').innerHTML = q.running || wait ? (q.paused ? 'Paused · ' : '') +
+      `<b>${q.running}</b> processing, <b>${wait}</b> waiting${paused ? ` (${paused} paused)` : ''}` + jobLines(q.now) :
+    todo ? '' : (cs.length ? 'Every video is done.' : '');
   const minor = [];
   if (failed) minor.push(`<a href="#" id="retry">Retry ${failed} failed</a>`);
-  if (M.queued) minor.push(`<a href="#" id="cancel">Remove ${M.queued} waiting job(s)</a>`);
+  if (q.queued) minor.push(`<a href="#" id="cancel">Remove ${q.queued} waiting job(s)</a>`);
   $('minor2').innerHTML = minor.join(' · ');
   if ($('retry')) $('retry').onclick = async e => { e.preventDefault(); try { const r = await post('/api/retry_failed'); toast(`${r.queued} failed clip(s) queued again`); } catch (err) {} load(); };
   if ($('cancel')) $('cancel').onclick = async e => { e.preventDefault(); if (!(await ask('A job that is already running still finishes.', 'Clear the queue', { title: 'Clear all waiting jobs?' }))) return;
-    try { const r = await post('/api/cancel_queued?stage=movement'); toast(`${r.cancelled} waiting job(s) removed`); } catch (err) {} load(); };
+    try { const r = await post('/api/cancel_queued'); toast(`${r.cancelled} waiting job(s) removed`); } catch (err) {} load(); };
+  // ---- step 2: delivered zips and delivery names
   const done = cs.filter(c => c.status.done), unnamed = cs.filter(c => !c.package || c.auto_name).length;
-  $('deldesc').innerHTML = cs.length ? `<b>${done.length}</b> done · <b>${failed}</b> failed` + (cnt.old ? ` · <b>${cnt.old}</b> out of date` : '') +
+  $('deldesc').innerHTML = cs.length ? `<b>${done.length}</b> of ${cs.length} done · <b>${failed}</b> failed` + (cnt.old ? ` · <b>${cnt.old}</b> out of date` : '') +
     ' · zips on the Submissions page' : '';
   $('noname').style.display = unnamed ? '' : 'none';
   $('noname').textContent = unnamed ? `${unnamed} video(s) have no real delivery name yet. Start gives a missing one a made-up name (clip-1, clip-2…) so nothing fails, but the client needs the film's title on each zip: press Name videos… and type the film's English title (it replaces the made-up names).` : '';
   $('nameall').style.display = unnamed ? '' : 'none';
 
-  // step 2: Background (Start background queues every clip whose Movement is done and whose background zip is
-  // missing, failed, cancelled or out of date)
-  const bs = bgState;
-  const bgTodo = cs.filter(c => c.status.done && !c.status.skipped && !active(c) && /none|failed|cancelled|outdated/.test(bs(c))).length;
-  const bRuns = stageButtons(B, 'bgstart', 'bgcancel', B.models ? bgTodo : 0, ['Start background', 'clip(s)', 'Background for every clip whose Movement is done and whose background zip is missing, failed, cancelled or out of date']);
-  if (!B.models && !bRuns && !B.queued) { $('bgstart').disabled = true; $('bgstart').title = 'Add object models first'; }
-  $('bgmodels').innerHTML = B.models ? `<b>${B.models}</b> object model(s) in <code>${esc(B.models_folder)}</code>` :
-    `<span class="warn">No object models yet.</span> Put one .blend per object type in <code>${esc(B.models_folder)}</code>.`;
-  const bWait = cs.filter(c => /waiting|paused/.test(bs(c))).length, bPaused = cs.filter(c => bs(c) === 'paused').length;
-  const bDone = cs.filter(c => bs(c) === 'done').length, bFail = cs.filter(c => bs(c) === 'failed').length, bOld = cs.filter(c => bs(c) === 'outdated').length;
-  $('bgqueue').innerHTML = B.running || bWait ? (B.paused ? 'Paused · ' : '') +
-      `<b>${B.running}</b> processing, <b>${bWait}</b> waiting${bPaused ? ` (${bPaused} paused)` : ''}` + jobLines(B.now) :
-    !done.length ? 'Clips appear here once their Movement is done.' : bgTodo ? '' : 'Every finished clip has its background.';
-  const bminor = [];
-  if (bFail && B.models) bminor.push(`<a href="#" id="bgretry">Retry ${bFail} failed</a>`);
-  $('bgminor').innerHTML = bminor.join(' · ');
-  if ($('bgretry')) $('bgretry').onclick = async e => { e.preventDefault(); try { const r = await post('/api/retry_failed?stage=background'); toast(`${r.queued} failed background(s) queued again`); } catch (err) {} load(); };
-  $('bgdesc').innerHTML = done.length ? `<b>${bDone}</b> of ${done.length} done · <b>${bFail}</b> failed` + (bOld ? ` · <b>${bOld}</b> out of date` : '') +
-    (bgTodo && B.models ? ` · <b>${bgTodo}</b> ready to start` : '') : '';
-
   // ---- one highlighted action: the next thing to do
-  const step = !src.exists || !cs.length ? 0 : unnamed ? 5 : (todo || M.queued) && M.paused ? 2 : 0;
+  const step = !src.exists || !cs.length ? 0 : unnamed ? 5 : (todo || q.queued) && q.paused ? 2 : 0;
   $('nameall').className = step === 5 ? 'primary' : '';
   $('startbtn').className = step === 2 ? 'primary' : '';
-  $('bgstart').className = step !== 2 && !bRuns && bgTodo && B.models ? 'primary' : '';
-  $('st2').classList.toggle('active', step === 2 || step === 5 || (mRuns && !!(M.running || M.queued)));
-  $('st3').classList.toggle('active', bRuns && !!(B.running || B.queued));
+  $('st2').classList.toggle('active', step === 2 || (runs && !!(q.running || q.queued)));
+  $('st3').classList.toggle('active', step === 5);
 
   // ---- clip list
   const prog = {}; q.now.forEach(j => prog[j.clip] = j);
@@ -254,8 +198,8 @@ function render() {
       const {skipped, action} = clipActions(c);
       const step = p && p.step ? ` · ${p.step}` : '';
       g.insertAdjacentHTML('beforeend', `<div class="clipcard${action ? ' hasq' : ''}${skipped ? ' skipped' : ''}"><a class="clip" href="/clip/${c.id}"><img loading="lazy" src="/media/clipthumb/${c.id}.jpg" alt="">
-        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span class="chips" title="${esc('Movement: ' + c.status.label + step)}">${mvChip(c)}${bgChip(c)}</span></div>
-        <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos… in step 2.">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
+        <div class="t"><span class="n" title="${esc([c.name, c.zip && 'Task ZIP: ' + c.zip, c.task?.code, c.task?.name].filter(Boolean).join('\n'))}">${esc(short)}</span><span class="chips" title="${esc(c.status.label + step)}">${statusChip(c)}</span></div>
+        <div class="small muted pk"><span class="pkn">${c.package ? esc(c.package) + (c.auto_name ? ' <span class="warn" title="Made-up name. Press Name videos… and type the film’s English title to replace it.">auto</span>' : '') : '<span class="warn" title="The client requires a delivery name for each zip: the film’s English title and a number, e.g. the_hidden_blade-1. Press Name videos….">no delivery name</span>'}</span>${(t => t ? `<span class="took${t.fin ? ' fin' : ''}" title="${esc(t.tip)}">${esc(t.text)}</span>` : '')(tookText(c.took, c.status))}</div>
         ${p && p.progress != null ? `<div class="pbar" title="${esc(p.step)}"><i style="width:${p.progress}%"></i></div>` : ''}</a>
         ${action}</div>`); });
     list.appendChild(g);
@@ -280,18 +224,14 @@ async function health() {
   } catch (e) {}
 }
 $('search').oninput = render;
-// each stage's own Start / Pause / Resume and Cancel (the other stage is not touched)
-function stageControls(stage, btn, cancel, unit) {
-  $(btn).onclick = async () => {
-    const S = DATA.queue.stages[stage];
-    if (!S.paused || S.running) { await processingControl(`/api/pause?stage=${stage}`, 'Stopping this stage’s active processes and pausing it…'); load(); return; }
-    const r = await processingControl(`/api/start?stage=${stage}`, S.queued ? 'Resuming…' : 'Starting…');
-    if (r) toast(r.queued ? `Started · ${r.queued} ${unit} queued` : 'Started');
-    load(); };
-  $(cancel).onclick = async () => { await processingControl(`/api/cancel_session?stage=${stage}`, 'Cancelling this stage’s active processes and queued work…'); load(); };
-}
-stageControls('movement', 'startbtn', 'cancel-session', 'video(s)');
-stageControls('background', 'bgstart', 'bgcancel', 'clip(s)');
+// Start / Pause / Resume and Cancel
+$('startbtn').onclick = async () => {
+  const q = DATA.queue;
+  if (!q.paused || q.running) { await processingControl('/api/pause', 'Stopping the active processes and pausing…'); load(); return; }
+  const r = await processingControl('/api/start', q.queued ? 'Resuming…' : 'Starting…');
+  if (r) toast(r.queued ? `Started · ${r.queued} video(s) queued` : 'Started');
+  load(); };
+$('cancel-session').onclick = async () => { await processingControl('/api/cancel_session', 'Cancelling the active processes and queued work…'); load(); };
 $('resetall').onclick = async e => { e.preventDefault(); try { if (await startOver()) load(); } catch (err) { load(); } };
 $('nameall').onclick = async () => {
   try { PICK = await api('/api/folder?path=' + encodeURIComponent(DATA.source.path)); } catch (e) { toast(e.message, true); return; }

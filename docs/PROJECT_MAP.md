@@ -1,7 +1,7 @@
 # Project map
 
-What every folder and file is for after the two-stage restructure (Stage 1 Movement implemented, Stage 2 Background
-planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
+What every folder and file is for (one automatic run per clip: people, camera, floor and objects). The model flow is
+in [MODEL_FLOW.md](MODEL_FLOW.md).
 
 ## Folders
 
@@ -9,7 +9,7 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 |---|---|---|
 | `agent\` | The app: local server, job queue (one `movement` stage), clip status, v2.1 package check | yes |
 | `web\` | The app's pages | yes |
-| `pipeline\` | Stage 1 processing and a few command-line tools | yes |
+| `pipeline\` | the run and a few command-line tools | yes |
 | `tests\` | Unit tests (`.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`) | yes |
 | `docs\` | These notes; `docs\v21\` holds the client's delivery spec | yes |
 | `assets\` | The client's sample character (`sample_character.json`), the reconstruction script shipped in every package | yes |
@@ -27,16 +27,18 @@ planned). The model flow is in [MODEL_FLOW.md](MODEL_FLOW.md).
 
 | File | Purpose |
 |---|---|
-| `run_pipeline.py` | Stage 1 entry point: `--stage movement` (the whole run) or `--stage render` (re-render, zip, check a saved scene) |
+| `run_pipeline.py` | the entry point: `--stage run` (the whole run, the default) or `--stage render` (re-render, zip, check a saved scene) |
+| `ade_find.py`, `ade_objects.py` | Mask2Former panoptic once per clip: objects and every pixel's name; the 150 names → object models |
+| `scene_objects.py`, `assets_lib.py`, `object_checks.py`, `asset_export.py` | the objects step: the models of `assets\objects`, depth on each object's best views, a box per object, the checks |
 | `../automark.py` | SAM 3 person tracks + RTMPose joints → `pose.json` |
 | `sam3_tracking.py` | SAM 3 video worker, packed masks, pose measurement inside masks, safe publishing of new marks |
 | `shots.py` | Hard-cut detection |
 | `lens_auto.py` | The clip's lens from the picture (MoGe-2) |
 | `camera_estimate.py` | Camera rotation, zoom, steadying, level roll, pitch and height from people and picture cues |
 | `ground_solve.py` | The `World` camera/ground model (per-frame rotation, travel and zoom) |
-| `scene_depth.py` | Depth Anything V2 Small (camera depth cues) and Stage 1's ground disc (`flat_set`) |
+| `scene_depth.py` | Depth Anything V2 Small (camera depth cues) and the ground disc (`flat_set`) |
 | `get_model.py` | Downloads Depth Anything V2 Small (Setup.bat) |
-| `metric_scene.py`, `metric_observe.py`, `semseg.py` | MoGe-2 + Mask2Former observation (cached, Stage 1's saved depth), gravity, world yaw, camera height, body-proxy scale |
+| `metric_scene.py`, `metric_observe.py` | MoGe depth (cached) + Mask2Former's floor / wall / ceiling pixels: gravity, world yaw, camera height, body-proxy scale |
 | `sam3d_body.py` | SAM 3D Body worker, mesh raster, depth calibration, metric placement |
 | `body_constraints.py`, `fit_people.py`, `motion_prior.py` | Character fit to the joints with SAM 3D Body priors (motion prior opt-in) |
 | `rig.py` | numpy copy of the Blender character rig (`sample` mesh; `classic` box mannequin as the fallback) |

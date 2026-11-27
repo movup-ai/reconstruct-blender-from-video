@@ -23,93 +23,74 @@ context.DATA={queue:{paused:true},clips:[
  {status:{label:'paused',group:'busy'}}]};
 const before=JSON.stringify(context.DATA.clips);vm.runInContext('render()',context);
 assert.equal(JSON.stringify(context.DATA.clips),before);
-const step=html.slice(html.indexOf('const BG_GROUP ='),html.indexOf('function clipActions('));
+const step=html.slice(html.indexOf('function statusCell('),html.indexOf('function clipActions('));
 vm.runInContext('function esc(s){return String(s);}function fmtDur(s){return s+" s";}function progressBar(){return "<bar>";}'+step,context);
-// Movement: its own status (the label comes from its own latest job)
 context.waiting={status:{label:'waiting'}};
-assert(vm.runInContext("stepCell(waiting,'movement')",context).includes('>waiting<'));
+assert(vm.runInContext("statusCell(waiting)",context).includes('>waiting<'));
 context.waiting.status.label='paused';
-assert(vm.runInContext("stepCell(waiting,'movement')",context).includes('>paused<'));
-context.cancelledButDone={status:{label:'done',done:true},took:{steps:{movement:{state:'done',ran:60}}}};
-assert(vm.runInContext("stepCell(cancelledButDone,'movement')",context).includes('&#10003; 60 s'),'a valid zip wins over a later cancel');
-context.failed={status:{label:'failed'},took:{steps:{movement:{state:'failed',ran:5}}}};
-assert(vm.runInContext("stepCell(failed,'movement')",context).includes('failed after 5 s'));
+assert(vm.runInContext("statusCell(waiting)",context).includes('>paused<'));
+context.cancelledButDone={status:{label:'done',done:true},took:{done:{machine:60,end:0},last:{state:'stopped',ran:5}}};
+assert(vm.runInContext("statusCell(cancelledButDone)",context).includes('&#10003; 60 s'),'a valid zip wins over a later cancel');
+context.failed={status:{label:'failed'},took:{last:{state:'failed',ran:5}}};
+assert(vm.runInContext("statusCell(failed)",context).includes('failed after 5 s'));
+context.running={status:{label:'processing'},took:{last:{state:'running',ran:9}}};
+context.prog={progress:40,step:'finding objects and surfaces',since:9};
+assert(vm.runInContext("statusCell(running,prog)",context).includes('running 9 s</div><bar>'));
 context.fresh={status:{label:'new'}};
-assert(vm.runInContext("stepCell(fresh,'movement')",context).includes('–'));
-// Background: a column of its own; a Background run never shows in the Movement column
-context.bgrun={status:{label:'done',done:true,background:{state:'processing'}},took:{steps:{movement:{state:'done',ran:60},background:{state:'running',ran:9}}}};
-context.prog={stage:'background',progress:40,step:'finding objects',since:9};
-assert(vm.runInContext("stepCell(bgrun,'background',prog)",context).includes('running 9 s</div><bar>'));
-assert(vm.runInContext("stepCell(bgrun,'movement',prog)",context).includes('&#10003; 60 s'),'Movement stays done while Background runs');
-context.bgdone={status:{label:'done',done:true,background:{state:'done'}},took:{steps:{background:{state:'done',ran:120}}}};
-assert(vm.runInContext("stepCell(bgdone,'background')",context).includes('&#10003; 120 s'));
-context.ready={status:{label:'done',done:true,background:{state:'none'}}};
-assert(vm.runInContext("stepCell(ready,'background')",context).includes('ready'));
-context.notyet={status:{label:'new',background:{state:'none'}}};
-assert(vm.runInContext("stepCell(notyet,'background')",context).includes('–'));
-assert.equal(vm.runInContext("bgChip(notyet)",context),'','no Background chip before there is one');
-assert(vm.runInContext("bgChip(bgdone)",context).includes('Background done'));
-assert(vm.runInContext("bgChip(bgrun)",context).includes('Background running'));
+assert(vm.runInContext("statusCell(fresh)",context).includes('–'));
 context.mv={status:{label:'done',group:'done'}};
-assert(vm.runInContext("mvChip(mv)",context).includes('Movement done'),'each chip names its stage');
+assert(vm.runInContext("statusChip(mv)",context).includes('>Done<'),'one chip: the clip\'s status');
 context.mv.status={label:'skipped',group:'skip'};
-assert(vm.runInContext("mvChip(mv)",context).includes('>Skipped<'));
+assert(vm.runInContext("statusChip(mv)",context).includes('>Skipped<'));
 '''
         result=subprocess.run(['node','-e',script],cwd=ROOT,capture_output=True,text=True,encoding='utf-8')
         self.assertEqual(result.returncode,0,result.stderr)
 
     @unittest.skipUnless(shutil.which('node'),'Node is needed for JavaScript control checks')
-    def test_running_clip_has_cancel_and_all_stages_have_active_pause_controls(self):
+    def test_running_clip_has_cancel_and_the_clip_page_has_pause_and_cancel(self):
         script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),root=process.argv[1],elements={};
 const calls=[];const context=vm.createContext({localStorage:{removeItem(){}},
  document:{getElementById(id){return elements[id] ||= {}; }},calls});
 vm.runInContext(fs.readFileSync(root+'/web/common.js','utf8'),context);
 const index=fs.readFileSync(root+'/web/index.html','utf8');
-const line=key=>index.slice(index.indexOf(key),index.indexOf('\n',index.indexOf(key)))+'\n';
-const actions=line('const bgState =')+
-  index.slice(index.indexOf('function clipActions('),index.indexOf('function renderTable('));
+const actions=index.slice(index.indexOf('function clipActions('),index.indexOf('function renderTable('));
 vm.runInContext(actions,context);
 const one=()=>{const a=vm.runInContext('clipActions(clip).action',context);assert.equal((a.match(/<button/g)||[]).length,1,'exactly one button');return a;};
-// a job running or waiting, in either stage: Cancel (never a disabled skip next to it)
-for(const stage of ['movement','background'])for(const state of ['running','queued']){
- context.clip={id:'abc',name:'film_clip',status:{label:'done',job:{stage,state}}};
- const a=one();assert(a.includes('data-cancel-job="abc"')&&a.includes('>Cancel<'),stage+' '+state);
+// a job running or waiting: Cancel (never a disabled skip next to it)
+for(const state of ['running','queued']){
+ context.clip={id:'abc',name:'film_clip',status:{label:'done',job:{stage:'run',state}}};
+ const a=one();assert(a.includes('data-cancel-job="abc"')&&a.includes('>Cancel<'),state);
  assert(!a.includes('disabled'));
 }
-// idle (new or done): Skip, labelled, and no download links (the zips are in SUBMIT and on the clip page)
-for(const status of [{label:'new'},{label:'done',done:true,job:{stage:'movement',state:'done'},background:{state:'none'}}]){
+// not done: Skip, labelled, and no download links (the zips are in SUBMIT and on the clip page)
+for(const status of [{label:'new'},{label:'failed',job:{stage:'run',state:'failed'}},{label:'outdated'}]){
  context.clip={id:'abc',name:'film_clip',package:'film-1',status};
  const a=one();assert(a.includes('data-skip="abc"')&&a.includes('>Skip<'));
  assert(!a.includes('/download/'),'no download buttons on the list');
 }
-// both stages done: nothing left to skip, no button at all
-context.clip={id:'abc',name:'film_clip',package:'film-1',status:{label:'done',done:true,job:{stage:'background',state:'done'},background:{state:'done'}}};
+// done: nothing left to skip, no button at all
+context.clip={id:'abc',name:'film_clip',package:'film-1',status:{label:'done',done:true,job:{stage:'run',state:'done'}}};
 assert.equal(vm.runInContext('clipActions(clip).action',context),'','a finished video has no button');
 // skipped: Include
 context.clip={id:'abc',name:'film_clip',status:{label:'skipped',skipped:true}};
 assert(one().includes('data-include="abc"'),'a skipped video offers Include');
 const detail=fs.readFileSync(root+'/web/clip.html','utf8');
-const begin=detail.indexOf("  for (const stage of ['movement', 'background']) {           // each stage's row has its own Pause / Cancel");
+const begin=detail.indexOf("  {                                                           // the run's Pause / Cancel");
 const end=detail.indexOf("  // ---- end of the processing controls",begin);
 assert(begin>=0&&end>begin);
 vm.runInContext("const CID='abc';function refresh(){};processingControl=async(url)=>calls.push(url);function wire(){"+detail.slice(begin,end)+'}',context);
-const other={movement:'background',background:'movement'};
 (async()=>{
- for(const stage of ['movement','background']){
-  context.INFO={job:{stage,state:'running'},paused:false};vm.runInContext('wire()',context);
-  assert.equal(elements[stage+'-pause'].hidden,false);assert.equal(elements[stage+'-cancel'].hidden,false);
-  assert.equal(elements[other[stage]+'-pause'].hidden,true,'the other stage\'s row has no Pause');
-  assert.equal(elements[other[stage]+'-cancel'].hidden,true,'nor Cancel');
-  await elements[stage+'-pause'].onclick();assert.equal(calls.pop(),'/api/pause?stage='+stage,'pauses only this job\'s stage');
-  await elements[stage+'-cancel'].onclick();assert.equal(calls.pop(),'/api/clip/abc/cancel');
- }
- context.INFO={job:{stage:'movement',state:'queued'},paused:true};vm.runInContext('wire()',context);
- assert.equal(elements['movement-pause'].textContent,'Resume');await elements['movement-pause'].onclick();assert.equal(calls.pop(),'/api/resume?stage=movement');
- context.INFO={job:{stage:'movement',state:'running'},paused:true};vm.runInContext('wire()',context);
- await elements['movement-pause'].onclick();assert.equal(calls.pop(),'/api/pause?stage=movement');
- context.INFO={job:{stage:'movement',state:'stopped'},paused:true};vm.runInContext('wire()',context);
- assert.equal(elements['movement-pause'].hidden,true);assert.equal(elements['movement-cancel'].hidden,true);
+ context.INFO={job:{stage:'run',state:'running'},paused:false};vm.runInContext('wire()',context);
+ assert.equal(elements['run-pause'].hidden,false);assert.equal(elements['run-cancel'].hidden,false);
+ await elements['run-pause'].onclick();assert.equal(calls.pop(),'/api/pause');
+ await elements['run-cancel'].onclick();assert.equal(calls.pop(),'/api/clip/abc/cancel');
+ context.INFO={job:{stage:'run',state:'queued'},paused:true};vm.runInContext('wire()',context);
+ assert.equal(elements['run-pause'].textContent,'Resume');await elements['run-pause'].onclick();assert.equal(calls.pop(),'/api/resume');
+ context.INFO={job:{stage:'run',state:'running'},paused:true};vm.runInContext('wire()',context);
+ await elements['run-pause'].onclick();assert.equal(calls.pop(),'/api/pause');
+ context.INFO={job:{stage:'run',state:'stopped'},paused:true};vm.runInContext('wire()',context);
+ assert.equal(elements['run-pause'].hidden,true);assert.equal(elements['run-cancel'].hidden,true);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
         result=subprocess.run(['node','-e',script,str(ROOT)],capture_output=True,text=True,encoding='utf-8')

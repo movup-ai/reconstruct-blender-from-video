@@ -1,6 +1,6 @@
 # SAM 3D Body reconstruction
 
-SAM 3D Body is the required human reconstruction model of Stage 1. Its checkpoint and MHR paths are in Settings.
+SAM 3D Body is the required human reconstruction model of the run. Its checkpoint and MHR paths are in Settings.
 Changing the body checkpoint does not renumber people or require new tracking. The following local assets are
 required:
 

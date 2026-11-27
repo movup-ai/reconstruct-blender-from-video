@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """Persistent job queue (SQLite), worker pool with timeouts and retries, and the autopilot.
 
-stages:  movement   - Stage 1, one automatic run: people, camera, floor, Blender render, videos and the v2.1 zip
-         background - Stage 2, started by hand on a clip whose Stage 1 is done: Stage 1's scene + the prebuilt
-                      objects -> a second zip (SUBMIT\\_background\\<clip>.zip); Stage 1's zip is kept
+One stage, "run": video -> people, camera, floor, objects, Blender render, videos and the checked v2.1 zip.
 A job that was running when the app stopped is queued again on the next start."""
 import logging
 import os
@@ -18,8 +16,10 @@ from . import config
 from .clips import folders, status, fingerprint, record_finish, PAUSED
 
 log = logging.getLogger("agent.jobs")
-STAGES = ("movement", "background")
-PRIORITY = {"movement": 0, "background": 1}
+STAGES = ("run",)
+PRIORITY = {"run": 0}
+OLD_STAGES = {"movement": "run"}     # the two-stage app's Movement jobs are this run's history (timing); its
+                                     # Background jobs only count in the computer time
 
 
 class JobStore:
@@ -36,7 +36,9 @@ class JobStore:
                 error TEXT, log TEXT)""")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_clip ON jobs(clip, id)")
             self.db.execute("CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state, priority, id)")
-            # stages of the older Prepare / review / Finish app can never run again: waiting ones are cancelled
+            for old, new in OLD_STAGES.items():
+                self.db.execute("UPDATE jobs SET stage=? WHERE stage=?", (new, old))
+            # stages of older apps (Prepare / review / Finish, Background) can never run again: waiting ones are cancelled
             marks = ",".join("?" * len(STAGES))
             self.db.execute("UPDATE jobs SET state='cancelled', ended=? WHERE state IN ('queued','running') AND stage NOT IN (%s)"
                             % marks, (time.time(),) + STAGES)
@@ -59,11 +61,10 @@ class JobStore:
                                   (clip, stage, "queued", PRIORITY[stage], time.time()))
             return cur.lastrowid
 
-    def take(self, limit=None, exclude=(), stages=None):
+    def take(self, limit=None, exclude=()):
         """the next job to run.  limit: no job when this many already run.  exclude: clips that must not start (an
-        interrupted process of theirs may still be exiting).  stages: only jobs of these stages (the ones running,
-        not paused); None = any.  One job per clip at a time; waiting order is priority, then when the job was first
-        queued (a job put back by Pause keeps its place)."""
+        interrupted process of theirs may still be exiting).  One job per clip at a time; waiting order is priority,
+        then when the job was first queued (a job put back by Pause keeps its place)."""
         with self.lock:
             if limit is not None:
                 count = self.db.execute("SELECT COUNT(*) FROM jobs WHERE state='running'").fetchone()[0]
@@ -74,11 +75,6 @@ class JobStore:
             exclude = sorted(set(exclude))
             if exclude:
                 q += " AND clip NOT IN (%s)" % ",".join("?" * len(exclude)); args += exclude
-            if stages is not None:
-                stages = sorted(set(stages))
-                if not stages:
-                    return None
-                q += " AND stage IN (%s)" % ",".join("?" * len(stages)); args += stages
             q += " ORDER BY priority, COALESCE(created, 0), id LIMIT 1"
             row = self.db.execute(q, args).fetchone()
             if not row:
@@ -96,14 +92,12 @@ class JobStore:
         with self.lock:
             self.db.execute("UPDATE jobs SET state='queued', started=NULL WHERE id=?", (jid,))
 
-    def cancel_queued(self, clip=None, stage=None):
-        """cancel waiting jobs: one clip's, or (None) all; of one stage, or (None) any"""
+    def cancel_queued(self, clip=None):
+        """cancel waiting jobs: one clip's, or (None) all"""
         with self.lock:
             q, args = "UPDATE jobs SET state='cancelled', ended=? WHERE state='queued'", [time.time()]
             if clip:
                 q += " AND clip=?"; args.append(clip)
-            if stage:
-                q += " AND stage=?"; args.append(stage)
             return self.db.execute(q, args).rowcount
 
     def clear_clip(self, clip):
@@ -125,7 +119,7 @@ class JobStore:
     def restore_paused(self, pending):
         """Pause: each interrupted job waits again, in its old place in the queue (its priority and first queue
         time), marked paused until it runs or the queue is resumed.  The interrupted attempt does not count as a try.
-        A clip that already waits for that stage is not queued twice."""
+        A clip that already waits is not queued twice."""
         with self.lock:
             for job in pending:
                 if job['state'] == 'queued':
@@ -140,27 +134,10 @@ class JobStore:
                                 (job['clip'], job['stage'], job.get('priority', PRIORITY.get(job['stage'], 0)),
                                  max(0, (job.get('attempts') or 1) - 1), job.get('created') or time.time(), PAUSED))
 
-    def clear_paused(self, stage=None):
-        """Resume: jobs put back by Pause are ordinary waiting jobs again (of one stage, or all)"""
+    def clear_paused(self):
+        """Resume: jobs put back by Pause are ordinary waiting jobs again"""
         with self.lock:
-            q, args = "UPDATE jobs SET error=NULL WHERE state='queued' AND error=?", [PAUSED]
-            if stage:
-                q += " AND stage=?"; args.append(stage)
-            return self.db.execute(q, args).rowcount
-
-    def active_clips(self, stage):
-        """clips with a waiting or running job of this stage"""
-        with self.lock:
-            return {r[0] for r in self.db.execute("SELECT clip FROM jobs WHERE stage=? AND state IN ('queued','running')", (stage,))}
-
-    def counts_by_stage(self):
-        """{stage: {state: number of jobs}}"""
-        with self.lock:
-            rows = self.db.execute("SELECT stage, state, COUNT(*) FROM jobs GROUP BY stage, state").fetchall()
-        out = {}
-        for stage, state, n in rows:
-            out.setdefault(stage, {})[state] = n
-        return out
+            return self.db.execute("UPDATE jobs SET error=NULL WHERE state='queued' AND error=?", (PAUSED,)).rowcount
 
     def mark_stopped(self, pending):
         with self.lock:
@@ -173,45 +150,33 @@ class JobStore:
             return self.db.execute("DELETE FROM jobs WHERE state!='running'").rowcount
 
     def latest(self):
-        """{clip: latest job (not cancelled)}"""
+        """{clip: latest run job (not cancelled)}"""
         with self.lock:
             rows = self.db.execute("""SELECT j.* FROM jobs j JOIN (SELECT clip, MAX(id) m FROM jobs WHERE state!='cancelled'
-                                      GROUP BY clip) x ON j.id = x.m""").fetchall()
+                                      AND stage='run' GROUP BY clip) x ON j.id = x.m""").fetchall()
         return {r["clip"]: dict(r) for r in rows}
-
-    def latest_stages(self):
-        """{clip: {stage: its latest job of that stage (not cancelled)}}: each stage has its own status"""
-        with self.lock:
-            rows = self.db.execute("""SELECT j.* FROM jobs j JOIN (SELECT clip, stage, MAX(id) m FROM jobs WHERE state!='cancelled'
-                                      GROUP BY clip, stage) x ON j.id = x.m""").fetchall()
-        out = {}
-        for r in rows:
-            out.setdefault(r["clip"], {})[r["stage"]] = dict(r)
-        return out
 
     def timing(self, now=None):
         """{clip: {"done", "open", "last", "steps", "machine"}}: how long a video took from its first job to its
-        package.  A run starts when the first job after the last package starts and ends when the next Movement job
+        package.  A run starts when the first job after the last package starts and ends when the next run job
         is done.  wall = start -> zip (queue waits included); machine = the time jobs actually ran.
         "open": a run that has started but has no package yet (so far).
         "last": the clip's latest job that ran: {stage, state, ran} (seconds it ran, so far when still running).
-        "steps": per stage ("movement", later "background") its latest job that ran: {state, ran, ended}.
         "machine": all recorded job durations since reset, including interrupted and repeated jobs."""
         now = now or time.time()
         with self.lock:
             rows = self.db.execute("SELECT clip, stage, state, started, ended FROM jobs WHERE started IS NOT NULL ORDER BY id").fetchall()
         out = {}
         for r in rows:
-            t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "steps": {}, "machine": 0.0, "_s": None, "_m": 0.0})
-            t["last"] = {"stage": r["stage"], "state": r["state"], "ran": round(max(0.0, (r["ended"] or now) - r["started"]))}
-            if r["state"] != "cancelled" and r["stage"] in STAGES:
-                t["steps"][r["stage"]] = {"state": r["state"], "ran": t["last"]["ran"], "ended": r["ended"]}
+            t = out.setdefault(r["clip"], {"done": None, "open": None, "last": None, "machine": 0.0, "_s": None, "_m": 0.0})
+            if r["stage"] in STAGES:
+                t["last"] = {"stage": r["stage"], "state": r["state"], "ran": round(max(0.0, (r["ended"] or now) - r["started"]))}
             if t["_s"] is None:
                 t["_s"] = r["started"]
             duration = max(0.0, (r["ended"] or now) - r["started"]) if r["state"] != "queued" else 0.0
             t["_m"] += duration
             t['machine'] += duration
-            if r["stage"] == "movement" and r["state"] == "done" and r["ended"]:
+            if r["stage"] == "run" and r["state"] == "done" and r["ended"]:
                 t["done"] = {"start": t["_s"], "end": r["ended"], "wall": round(r["ended"] - t["_s"]), "machine": round(t["_m"])}
                 t["_s"], t["_m"] = None, 0.0
         for t in out.values():
@@ -223,7 +188,8 @@ class JobStore:
 
     def latest_for(self, clip):
         with self.lock:
-            r = self.db.execute("SELECT * FROM jobs WHERE clip=? AND state!='cancelled' ORDER BY id DESC LIMIT 1", (clip,)).fetchone()
+            r = self.db.execute("SELECT * FROM jobs WHERE clip=? AND state!='cancelled' AND stage='run' ORDER BY id DESC LIMIT 1",
+                                (clip,)).fetchone()
         return dict(r) if r else None
 
     def counts(self):
@@ -260,29 +226,14 @@ class Runner:
         self.busy = 0
         self.procs = {}
         self.stop = threading.Event()
-        # each stage runs on its own: Start (Movement) / Start background lets that stage's jobs run, its Pause or
-        # Cancel stops only them.  Nothing runs before a Start (not even jobs from last time).
-        self.active_stages = set()
+        self.active = False       # nothing runs before Start (not even jobs from last time); Pause stops it again
         self.resetting = False    # Pause / Cancel / Reset is stopping jobs
         self.inflight = {}        # job id -> job, while a worker holds it (also after Pause / Cancel, until it exits)
         self.cancelled = set()
 
     @property
-    def active(self):
-        """any stage may run"""
-        return bool(self.active_stages)
-
-    @active.setter
-    def active(self, on):                     # all stages at once
-        self.active_stages = set(STAGES) if on else set()
-
-    @property
     def paused(self):
         return not self.active
-
-    def is_paused(self, stage=None):
-        """stage: is that stage paused; None: are all stages paused"""
-        return stage not in self.active_stages if stage else not self.active_stages
 
     def start(self):
         n = self.store.recover()
@@ -296,18 +247,18 @@ class Runner:
         with self.cond:
             self.cond.notify_all()
 
-    def resume(self, stage=None):
-        """waiting jobs of this stage (None: every stage) may run (jobs put back by Pause are no longer shown as paused)"""
+    def resume(self):
+        """waiting jobs may run (jobs put back by Pause are no longer shown as paused)"""
         with self.cond:
             if not self.resetting:
-                self.active_stages |= set(STAGES) if stage is None else {stage}
-                self.store.clear_paused(stage)
+                self.active = True
+                self.store.clear_paused()
                 self.cond.notify_all()
 
-    def pause(self, stage=None):
-        """no new job of this stage (None: any stage) starts; running ones finish, queued ones wait"""
+    def pause(self):
+        """no new job starts; running ones finish, queued ones wait"""
         with self.cond:
-            self.active_stages -= set(STAGES) if stage is None else {stage}
+            self.active = False
 
     def shutdown(self):
         self.stop.set()
@@ -329,8 +280,8 @@ class Runner:
             while self.resetting:
                 self.cond.wait()
             self.resetting = True
-            was_active = set(self.active_stages)
-            self.active_stages = set()
+            was_active = self.active
+            self.active = False
             pending = self.store.cancel_for_reset(clips, all_clips, return_jobs=True, running_only=mode == 'pause')
             ids = {job['id'] for job in pending}
             ids.update(jid for jid, job in self.inflight.items() if all_clips or job['clip'] in clips)
@@ -364,7 +315,7 @@ class Runner:
                 # Pause and Reset all leave the queue paused, exactly like selecting a folder; one clip's Cancel or
                 # Reset keeps it running.
                 if was_active and not all_clips:
-                    self.active_stages |= was_active
+                    self.active = True
                 self.cond.notify_all()
 
     def _discard_incomplete_caches(self, pending):
@@ -390,24 +341,15 @@ class Runner:
                         except OSError: log.warning('Could not remove incomplete cache %s', path)
                     except OSError: pass
 
-    def interrupt(self, clip=None, pause=False, stage=None):
+    def interrupt(self, clip=None, pause=False):
         """Stop active process trees without deleting completed work or timing records.
-        clip: only that clip's job.  stage: only that stage's jobs, and that stage stays paused until its Start
-        (the other stage keeps running).  Neither: everything, and the whole queue stays paused."""
+        clip: only that clip's job; None: everything, and the queue stays paused."""
         mode = 'pause' if pause else 'cancel'
-        if stage is not None:
-            with self.cond:
-                self.active_stages.discard(stage)
-            clips = self.store.active_clips(stage)
-            with self.cond:
-                clips |= {job['clip'] for job in self.inflight.values() if job['stage'] == stage}
-            target, every = sorted(clips), False
-        else:
-            target, every = ([] if clip is None else [clip]), clip is None
+        target, every = ([] if clip is None else [clip]), clip is None
         with self.reset_jobs(target, all_clips=every, mode=mode) as stopped:
             result = {'ok': True, 'interrupted': stopped, 'cancelled': 0 if pause else stopped, 'resumable': pause,
                       'note': 'Paused. Resume restarts the interrupted run using completed caches.' if pause else 'Processing cancelled; completed files are kept.'}
-        result['paused'] = self.is_paused(stage)
+        result['paused'] = self.paused
         return result
 
     # ---------------------------------------------------------------- workers
@@ -421,7 +363,7 @@ class Runner:
                 limit = max(1, int(self.app.c.get('parallel', 1) or 1))
                 job = None
                 if len(self.inflight) < limit:        # an interrupted job still exiting holds its place too
-                    job = self.store.take(limit=limit, exclude=self._busy_clips(), stages=self.active_stages)
+                    job = self.store.take(limit=limit, exclude=self._busy_clips())
                 if job is None:
                     self.cond.wait(3)
                     continue
@@ -444,7 +386,7 @@ class Runner:
     def _cmd(self, job, cl):
         cmd = [sys.executable, os.path.join(config.PIPELINE, "run_pipeline.py"), cl.video, "--device", "cuda",
                "--stage", job["stage"], "--name", cl.name]   # the app's name (made unique when two clips would share one)
-        if job["stage"] == "movement":
+        if job["stage"] == "run":
             cmd.append("--force")                      # the app decides when a clip runs: make the package again
         return cmd
 
@@ -466,7 +408,7 @@ class Runner:
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", BA_SOURCE=c["source_root"],
                    BA_GPU_LOCK=os.path.join(config.DATA, 'model_inference.lock'))
         cmd = self._cmd(job, cl)
-        fp = fingerprint(c, cl) if job["stage"] == "movement" else None     # what this run is made from
+        fp = fingerprint(c, cl)                                          # what this run is made from
         log.info("job %d %s %s (attempt %d)", job["id"], job["stage"], cl.name, job["attempts"])
         if job["attempts"] > 1 and os.path.exists(logp):                # a retry: keep the failed attempt's log beside it
             os.replace(logp, logp[:-4] + ".previous.log")
@@ -496,10 +438,8 @@ class Runner:
         ok = rc == 0 and err is None                   # the exit code is the result (run_pipeline: 0 = a checked zip)
         if not ok and err is None:
             err = last_error(txt) or "exit code %s" % rc
-        if ok and job["stage"] == "movement" and not os.path.exists(f["zip"]):
+        if ok and not os.path.exists(f["zip"]):
             ok, err = False, "the run ended without a package (%s is missing)" % os.path.basename(f["zip"])
-        if ok and job["stage"] == "background" and not os.path.exists(f["bg_zip"]):
-            ok, err = False, "the run ended without a background package (%s is missing)" % f["bg_zip"]
         with self.cond:
             if job['id'] in self.cancelled: return
             if self.stop.is_set():
@@ -510,7 +450,7 @@ class Runner:
                 self.store.requeue(job["id"])
                 return
             self.store.finish(job["id"], ok, err, logp)
-            if ok and fp:
+            if ok:
                 record_finish(c, cl, fp)
             log.info("job %d %s %s: %s in %.0fs", job["id"], job["stage"], cl.name, "ok" if ok else "FAILED: " + err, time.time() - t0)
             if ok:
@@ -518,15 +458,15 @@ class Runner:
 
     # ---------------------------------------------------------------- what happens next
     def after(self, ws, cl, stage):
-        """a job is done: the next waiting job may start (Stage 2 will chain from here)"""
+        """a job is done: the next waiting job may start"""
         self.wake()
 
     def autopilot_pass(self):
-        """after Start: queue Movement for every clip that has no valid zip, unless it is skipped, waiting, running,
+        """after Start: queue a run for every clip that has no valid zip, unless it is skipped, waiting, running,
         failed for good or cancelled (those wait for Start / Re-run)"""
         queued = 0
         with self.cond:
-            if "movement" not in self.active_stages or self.resetting:
+            if not self.active or self.resetting:
                 return 0
             latest = self.store.latest()
             ws = self.app.ws
@@ -537,7 +477,7 @@ class Runner:
                 st = status(ws.c, cl, j)
                 if st["skipped"] or st["done"]:
                     continue
-                if self.store.enqueue(cl.id, "movement"):
+                if self.store.enqueue(cl.id, "run"):
                     queued += 1
             if queued:
                 self.cond.notify_all()

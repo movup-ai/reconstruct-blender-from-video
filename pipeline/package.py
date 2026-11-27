@@ -510,7 +510,7 @@ def meta_readme(pkg, meta, desc, drops, W, H, CW, CH):
         "- Dependencies: no extra dependencies, plugins, external textures or linked files. All meshes and materials are included.",
         "",
         "## Project contents", "",
-        "- `Set_Background` collection: the floor only - a flat grey (#B8B8B8) ground disc under the people. There is no background set and there are no props. In multi-shot clips, hide_render keys limit each shot's floor to its shot's frame range.",
+        "- `Set_Background` collection: a flat grey (#B8B8B8) ground disc under the people, and the set's objects (prebuilt white models placed where the video shows them, named after what they are, e.g. chair_1), coloured by the colour card. There are no moving props. In multi-shot clips, hide_render keys limit each shot's floor and objects to its shot's frame range.",
         "- Characters: the client's sample character mesh (rigid blocks: torso, sphere head, upper and lower arms and legs), uniformly scaled once per person to the fitted height. The eye band on the head and the band on the chest are white. "
         "Role colors (colour card): main red #D63E3D, second blue #2D6BD8, third green #2E9D5A, fourth yellow #D9A014; additional people cyan, magenta, teal, olive.",
         "- Character controls: `P<n>_root` (position and heading keys) → `P<n>_pelvis` (height keys) → joint empties (XYZ Euler rotation keys every frame). "

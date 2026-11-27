@@ -1,6 +1,6 @@
 # SAM 3 person tracking
 
-Stage 1 uses the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs. RTMPose
+The run uses the approved local `models/sam3/sam3.pt` checkpoint for persistent person masks and IDs. RTMPose
 measures COCO-17 joints inside each mask. SAM 3D Body then supplies metric body pose and placement.
 
 ## Use it
@@ -31,7 +31,7 @@ the previous marks stay active.
 
 ## Track cleaning (pipeline/track_clean.py)
 
-Stage 1 has no human review, so the raw SAM 3 tracks are cleaned before they become characters. Every decision is
+The run has no human review, so the raw SAM 3 tracks are cleaned before they become characters. Every decision is
 written to `tracking_report.json` (`cleaning`) and the job log (`tracks: ...`).
 
 - **Joined:** one actor whom SAM 3 lost and found again under a new id. Two pieces are joined only when they never
@@ -70,4 +70,4 @@ masking, absent frames, cache invalidation, partial-person retention and safe re
 For a fresh machine: clone `https://github.com/facebookresearch/sam3` into `third_party/sam3` at tested commit
 `31cb7e624e4fe95301b1be1d4e809111593d2e45`, then
 `uv pip install --python downloads/da3-venv/Scripts/python.exe -r requirements-sam3.txt`. Obtain the checkpoint
-from the approved Meta repository. Stage 1 also needs the [SAM 3D Body assets](SAM3D_BODY.md).
+from the approved Meta repository. The run also needs the [SAM 3D Body assets](SAM3D_BODY.md).

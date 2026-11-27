@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Depth Anything V2 Small (the camera's depth cues, camera_estimate.py) and Stage 1's floor (flat_set).
+"""Depth Anything V2 Small (the camera's depth cues, camera_estimate.py) and the floor (flat_set).
 
-Stage 1 builds no set from depth: the floor is a plain ground disc under the people.  The background (Stage 2,
-planned) will be built from the saved depth (metric_observation*.npz) and prebuilt assets."""
+The floor is a plain ground disc under the people; the objects are prebuilt models placed by scene_objects.py."""
 import os
 import numpy as np
 import cv2
@@ -41,7 +40,7 @@ def depth_model(device):
     return _MODELS[device]
 
 def flat_set(world, N, far):
-    """Stage 1's floor: one flat ground disc (radius 0.6 x far) at z = 0 around the shot's camera; no backdrop"""
+    """the floor: one flat ground disc (radius 0.6 x far) at z = 0 around the shot's camera; no backdrop"""
     R = far * 0.6; seg = 72
     v = [[0, 0, 0]] + [[R * np.cos(2 * np.pi * i / seg), R * np.sin(2 * np.pi * i / seg), 0] for i in range(seg)]
     return [{"name": "ground", "v": v, "f": [[0, 1 + i, 1 + (i + 1) % seg] for i in range(seg)], "colour": "ground", "layer": 1}]

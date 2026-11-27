@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Stage 2's object finder: Mask2Former panoptic (ADE20K, 150 names) finds, outlines and names every object.
+"""The scene finder: Mask2Former panoptic (ADE20K, 150 names) finds, outlines and names every object, and names
+every pixel (floor, wall, ceiling, sky, person, ...) for the depth step's gravity and floor (metric_scene.py).
 
   models\\mask2former_ade_panoptic   facebook/mask2former-swin-large-ade-panoptic (config.json,
                                      preprocessor_config.json, model.safetensors)
@@ -13,6 +14,8 @@ least "bg_link_iou", default 0.3); it keeps its id.
   find(frames_at, shots, types, c) -> (bundle, info)
      bundle {frames, types, ids, probabilities, packed, shape}: one row per object per frame, its outline packed;
             types index the given asset list; ids are unique over the clip
+            {label_frames, labels, names}: every looked-at frame's name map (labels[k] at shape, an index into
+            names; the same forward pass, read as one name per pixel)
      info   {seconds, frames, objects, missing {ade name: asset with no .blend}}"""
 import os
 import time
@@ -24,7 +27,7 @@ import ade_objects
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(os.path.dirname(HERE), "models", "mask2former_ade_panoptic")
-VERSION = 1
+VERSION = 2
 
 
 def available():
@@ -40,6 +43,14 @@ def sample_frames(shots, fps, c):
         if b - 1 not in out:
             out.append(b - 1)
     return sorted(set(out))
+
+
+def labels_at(bundle, f, width, height):
+    """frame f's name map (index into bundle["names"]) at width x height, or None when f was not looked at"""
+    k = np.flatnonzero(np.asarray(bundle["label_frames"]) == int(f))
+    if not len(k):
+        return None
+    return cv2.resize(np.asarray(bundle["labels"][k[0]]), (width, height), interpolation=cv2.INTER_NEAREST)
 
 
 def mask_of(bundle, index, width, height):
@@ -93,6 +104,7 @@ def find(frames_at, shots, types, c):
     min_area = float(c.get("bg_min_area", 0.002)); link_iou = float(c.get("bg_link_iou", 0.3))
     side = int(c.get("sam3_mask_side", 640))
     rows = []                                       # (frame, type index, id, score, mask at mask size)
+    label_frames, labels = [], []                   # every frame's name per pixel
     missing, next_id, shape = {}, 1, None
     try:
         for a, b in shots:
@@ -110,6 +122,8 @@ def find(frames_at, shots, types, c):
                 res = proc.post_process_panoptic_segmentation(out, threshold=thr, target_sizes=[shape],
                                                                label_ids_to_fuse=set())[0]
                 seg = res["segmentation"].cpu().numpy()
+                sem = proc.post_process_semantic_segmentation(out, target_sizes=[shape])[0]
+                label_frames.append(int(f)); labels.append(sem.to(torch.int16).cpu().numpy())
                 found = []
                 for info in res["segments_info"]:
                     name = names[int(info["label_id"])]
@@ -135,7 +149,9 @@ def find(frames_at, shots, types, c):
               "ids": np.asarray([r[2] for r in rows], np.int64),
               "probabilities": np.asarray([r[3] for r in rows], np.float32),
               "packed": np.asarray([np.packbits(r[4].ravel()) for r in rows], np.uint8).reshape(-1, size),
-              "shape": np.asarray(shape), "version": VERSION}
+              "shape": np.asarray(shape), "version": VERSION,
+              "label_frames": np.asarray(label_frames, np.int32),
+              "labels": np.asarray(labels, np.int16).reshape(-1, *shape), "names": np.asarray(names)}
     info = {"seconds": round(time.time() - t0, 1), "frames": len(frames_at), "objects": len({r[2] for r in rows}),
             "missing": missing}
     return bundle, info

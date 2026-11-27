@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """SAM 3 persistent person masks, then RTMPose joints inside each person's mask.
 
-Writes pose.json, sam3_masks.npz and tracking_report.json (no editor files: Stage 1 is fully automatic).
+Writes pose.json, sam3_masks.npz and tracking_report.json (no editor files: the run is fully automatic).
 SAM 3 exits before loading RTMPose, keeping GPU allocations separate.
 
 Usage: python automark.py VIDEO_OR_FOLDER [...] [--out DIR] [--force]

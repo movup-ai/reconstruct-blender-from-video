@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Stage 2 (Background): the object library, the depth scale, placing a box, duplicates and the clip status.
-No model, no Blender: synthetic cameras and points."""
+"""The objects step of the run: the object library, the depth scale, placing a box, duplicates, and Mask2Former's
+name maps for the depth step's surfaces.  No model, no Blender: synthetic cameras and points."""
 import json
 import math
 import os
 import sys
 import tempfile
-import time
 import unittest
 
 import numpy as np
@@ -15,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 sys.path.insert(0, ROOT)
 import assets_lib  # noqa: E402
-import background as BG  # noqa: E402
+import scene_objects as BG  # noqa: E402
 from camera_model import Cam  # noqa: E402
 
 UNIT_BOX = {"v": [[x, y, z] for x in (-.5, .5) for y in (-.5, .5) for z in (0, 1)], "f": [[0, 1, 3, 2]]}
@@ -34,7 +33,7 @@ class Library(unittest.TestCase):
             with open(os.path.join(d, "objects.json"), "w", encoding="utf-8") as fh:
                 json.dump({"pillar": {"role": "bg", "on_floor": True}, "painting": {"on_floor": True}}, fh)
             cat = assets_lib.catalog({"object_assets": d})
-            self.assertEqual(sorted(cat), ["coffee_table", "painting", "pillar"])        # the floor is Stage 1's
+            self.assertEqual(sorted(cat), ["coffee_table", "painting", "pillar"])        # the floor is the run's own disc
             self.assertEqual(cat["pillar"]["role"], "bg")
             self.assertIsNone(cat["coffee_table"]["role"])
             self.assertTrue(cat["painting"]["on_floor"])                                 # objects.json wins
@@ -124,15 +123,15 @@ class Geometry(unittest.TestCase):
 
 
 class Mask2FormerFinder(unittest.TestCase):
-    """Stage 2 finds objects with Mask2Former's 150 names (ade_find.py, ade_objects.py)"""
+    """the run finds objects and surfaces with Mask2Former's 150 names (ade_find.py, ade_objects.py)"""
 
     def test_every_one_of_the_150_names_has_a_place_in_the_table(self):
         import ade_objects
-        with open(os.path.join(ROOT, "models", "mask2former_ade", "config.json"), encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, "models", "mask2former_ade_panoptic", "config.json"), encoding="utf-8") as fh:
             names = {v.strip() for v in json.load(fh)["id2label"].values()}         # the same 150 ADE20K names
         self.assertEqual(len(names), 150)
         self.assertEqual(set(ade_objects.ASSET), names)
-        self.assertIsNone(ade_objects.asset_of("person"))                           # people: Stage 1
+        self.assertIsNone(ade_objects.asset_of("person"))                           # people: their own step
         self.assertIsNone(ade_objects.asset_of("sky"))                              # scenery: not placed
         self.assertEqual(ade_objects.asset_of("windowpane"), "window")
         self.assertEqual(ade_objects.asset_of("television receiver"), "tv")
@@ -164,77 +163,35 @@ class Mask2FormerFinder(unittest.TestCase):
         self.assertEqual(out3[0][1], ids[(0, (40, 40))], "an object hidden for a while keeps its id")
 
 
-class StagesRunOnTheirOwn(unittest.TestCase):
-    """Movement and Background: each has its own Start / Pause, its own jobs and its own status"""
+class Surfaces(unittest.TestCase):
+    """the depth step names its pixels from the finder's name maps (no second segmentation model)"""
 
-    def setUp(self):
-        from agent.jobs import JobStore, Runner
-        import types
-        self.d = tempfile.mkdtemp()
-        self.store = JobStore(os.path.join(self.d, "jobs.db"))
-        self.runner = Runner(types.SimpleNamespace(store=self.store))
+    def test_labels_at_scales_a_frames_name_map(self):
+        import ade_find
+        lab = np.zeros((2, 4, 6), np.int16); lab[0, :, 3:] = 5; lab[1] = 7
+        bundle = {"label_frames": np.asarray([10, 20]), "labels": lab}
+        got = ade_find.labels_at(bundle, 10, 12, 8)
+        self.assertEqual(got.shape, (8, 12)); self.assertEqual(got[0, 0], 0); self.assertEqual(got[0, -1], 5)
+        self.assertTrue((ade_find.labels_at(bundle, 20, 3, 2) == 7).all())
+        self.assertIsNone(ade_find.labels_at(bundle, 15, 12, 8))           # not looked at
 
-    def tearDown(self):
-        self.store.db.close()
+    def test_floor_names_are_ade_names(self):
+        with open(os.path.join(ROOT, "models", "mask2former_ade_panoptic", "config.json"), encoding="utf-8") as fh:
+            names = {v.strip() for v in json.load(fh)["id2label"].values()}
+        import metric_scene
+        self.assertTrue(BG.FLOOR_NAMES <= names, sorted(BG.FLOOR_NAMES - names))
+        self.assertTrue((metric_scene.FLOOR - {"ground"}) <= names)
+        self.assertTrue(metric_scene.WALL <= names and "ceiling" in names)
 
-    def test_take_runs_only_the_started_stages(self):
-        self.store.enqueue("a", "movement"); self.store.enqueue("b", "background")
-        self.assertIsNone(self.store.take(stages=set()))
-        self.assertEqual(self.store.take(stages={"background"})["clip"], "b")
-        self.assertIsNone(self.store.take(stages={"background"}))
-        self.assertEqual(self.store.take(stages={"movement"})["clip"], "a")
-        self.assertEqual(self.store.counts_by_stage(), {"movement": {"running": 1}, "background": {"running": 1}})
-
-    def test_pause_and_resume_one_stage(self):
-        r = self.runner
-        self.assertTrue(r.is_paused() and r.is_paused("movement") and r.is_paused("background"))
-        r.resume("background")
-        self.assertFalse(r.is_paused("background")); self.assertTrue(r.is_paused("movement")); self.assertFalse(r.is_paused())
-        r.resume("movement"); r.pause("background")
-        self.assertEqual(r.active_stages, {"movement"})
-        r.pause()
-        self.assertTrue(r.is_paused())
-        r.active = True                                      # all stages at once
-        self.assertEqual(r.active_stages, {"movement", "background"})
-
-    def test_cancel_queued_of_one_stage(self):
-        self.store.enqueue("a", "movement"); self.store.enqueue("b", "background")
-        self.assertEqual(self.store.cancel_queued(stage="movement"), 1)
-        self.assertEqual(self.store.active_clips("background"), {"b"})
-        self.assertEqual(self.store.active_clips("movement"), set())
-
-    def test_each_stage_has_its_own_status(self):
-        from agent import clips as clipsmod
-        import types
-        jid = self.store.enqueue("a", "movement"); self.store.take(); self.store.finish(jid, True)
-        jid = self.store.enqueue("a", "background"); self.store.take()
-        stages = self.store.latest_stages()["a"]
-        self.assertEqual({k: v["state"] for k, v in stages.items()}, {"movement": "done", "background": "running"})
-        with tempfile.TemporaryDirectory() as d:
-            c = {"work_root": d, "submit_root": d, "source_root": d, "marks_root": d}
-            cl = types.SimpleNamespace(id="a", name="film_a", video=os.path.join(d, "film", "a.mp4"))
-            st = clipsmod.status(c, cl, self.store.latest()["a"], stages)
-            self.assertEqual(st["label"], "new")                       # Movement: its own job (done, but no zip here)
-            self.assertEqual(st["background"]["state"], "processing")  # Background runs: shown in its own status
-            self.assertEqual(st["job"]["stage"], "background")         # the clip's latest job (Cancel acts on it)
-
-
-class Status(unittest.TestCase):
-    def test_background_status_follows_its_zip_and_job(self):
-        from agent.clips import background_status
-        with tempfile.TemporaryDirectory() as d:
-            f = {"zip": os.path.join(d, "a.zip"), "bg_zip": os.path.join(d, "bg.zip")}
-            self.assertEqual(background_status(f, None, False)["state"], "none")
-            self.assertEqual(background_status(f, {"stage": "background", "state": "running"}, True)["state"], "processing")
-            self.assertEqual(background_status(f, {"stage": "movement", "state": "running"}, True)["state"], "none")
-            failed = background_status(f, {"stage": "background", "state": "failed", "error": "no models"}, True)
-            self.assertEqual((failed["state"], failed["error"]), ("failed", "no models"))
-            open(f["zip"], "w").close(); open(f["bg_zip"], "w").close()
-            self.assertEqual(background_status(f, None, True)["state"], "done")
-            later = time.time() + 5
-            os.utime(f["zip"], (later, later))                                     # Stage 1 made again after it
-            self.assertEqual(background_status(f, None, True)["state"], "outdated")
-            self.assertEqual(background_status(f, None, False)["state"], "outdated")
+    def test_the_depth_views_are_among_the_looked_at_frames(self):
+        import ade_find, metric_scene
+        shots, c = [(0, 40), (40, 97)], {"metric_max_views": 3}
+        sample = set(ade_find.sample_frames(shots, 25.0, c))
+        for a, b in shots:
+            sample |= {a + int(f) for f in metric_scene.view_frames(b - a, c)}
+        for a, b in shots:
+            self.assertTrue({a + int(f) for f in metric_scene.view_frames(b - a, c)} <= sample)
+        self.assertEqual(list(metric_scene.view_frames(40, c)), [0, 19, 39])
 
 
 if __name__ == "__main__":

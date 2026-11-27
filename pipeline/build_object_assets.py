@@ -1,4 +1,4 @@
-"""Build the editable, low-poly Stage 2 object library with Blender.
+"""Build the editable, low-poly object library with Blender.
 
 blender -b --factory-startup -P pipeline/build_object_assets.py -- [--overwrite]
 Existing assets and user metadata overrides are preserved unless --overwrite is set.
@@ -267,7 +267,7 @@ HANGING={'shelf','sink','tv','monitor','microwave','vase','pot','cup','table_lam
 KINDS += extra_shapes.EXTRA_KINDS
 HANGING |= extra_shapes.FLOATING
 assert len(KINDS)==len(set(KINDS)), 'Duplicate object asset names'
-# The library holds only the models Stage 2 can place: the assets Mask2Former's 150 names use (ade_objects.py).
+# The library holds only the models the run can place: the assets Mask2Former's 150 names use (ade_objects.py).
 # The other recipes stay here, unused; a name with no recipe (airplane, chandelier...) is a .blend you add yourself.
 import ade_objects
 KINDS = [k for k in KINDS if k in set(ade_objects.wanted())]

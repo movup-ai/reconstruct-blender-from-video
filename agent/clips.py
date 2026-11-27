@@ -239,17 +239,18 @@ def migrate_removed(clips, c=None):
         pass
 
 
-# the settings Stage 1 (Movement) output depends on; a setting the pipeline no longer has reads as None (stable)
-STAGE1_SETTINGS = ("lens_mm", "lens_auto", "person_height", "pose_mode", "pose_engine", "foot_contact",
+# the settings a run's output depends on; a setting the pipeline no longer has reads as None (stable)
+RUN_SETTINGS = ("lens_mm", "lens_auto", "person_height", "pose_mode", "pose_engine", "foot_contact",
                    "metric_scene", "metric_max_views", "metric_resolution", "max_people", "track_occlusion_seconds",
                    "tracker_backend", "sam3_checkpoint", "sam3_mask_side", "sam3_max_objects", "sam3_probability",
                    "human_backend", "sam3d_checkpoint", "sam3d_mhr", "sam3d_stride", "sam3d_surface_side",
-                   "pose3d_weight", "pose3d_sigma", "colours", "out_fps")
+                   "pose3d_weight", "pose3d_sigma", "colours", "out_fps",
+                   "bg_detect_fps", "bg_find_width", "bg_ade_threshold", "bg_min_area", "bg_link_iou", "bg_checks")
 
 
 def fingerprint(c, cl):
-    """what a Movement run is made from: the video itself (size and time), its package (delivery) name and the
-    Stage 1 settings.  Same fingerprint as the last successful run = its zip is up to date."""
+    """what a run is made from: the video itself (size and time), its package (delivery) name and the run's
+    settings.  Same fingerprint as the last successful run = its zip is up to date."""
     h = hashlib.sha1()
     try:
         st = os.stat(cl.video)
@@ -257,15 +258,14 @@ def fingerprint(c, cl):
     except OSError:
         h.update(b"missing|")
     h.update(("%s|" % pkg.package_name(cl.name, c)).encode("utf-8"))
-    settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in STAGE1_SETTINGS}
-    if str(c.get("moge_version", "v2")).lower() != "v2":      # MoGe-2 runs keep their fingerprint
-        settings.update(moge_version=str(c["moge_version"]).lower(), moge_refine_steps=c.get("moge_refine_steps", 3))
-    h.update(json.dumps({"pipeline_version": "stage1-movement-1", **settings}, sort_keys=True, default=str).encode("utf-8"))
+    settings = {k: c.get(k, config.DEFAULT_CFG.get(k)) for k in RUN_SETTINGS}
+    settings.update(moge_version=str(c.get("moge_version", "v2")).lower(), moge_refine_steps=c.get("moge_refine_steps", 3))
+    h.update(json.dumps({"pipeline_version": "one-run-1", **settings}, sort_keys=True, default=str).encode("utf-8"))
     return h.hexdigest()
 
 
 def finished_fp(c, cl):
-    """the fingerprint of the last successful Movement run (None: never made from the app)"""
+    """the fingerprint of the last successful run (None: never made from the app)"""
     return (read_json(os.path.join(folders(c, cl)["work"], "finished.json"), {}) or {}).get("fp")
 
 
@@ -285,11 +285,10 @@ def folders(c, cl):
     md = marks_dir(cl.video, c)
     work = os.path.join(c["work_root"], cl.name)
     sub = os.path.join(c["submit_root"], cl.name)
-    bg_sub = os.path.join(c["submit_root"], "_background", cl.name)      # Stage 2's package (Stage 1 + objects)
     return {"marks": md, "work": work, "submit": sub, "zip": sub + ".zip",
             "pose": os.path.join(md, "pose.json"), "preview": os.path.join(work, "preview.jpg"),
             "scene": os.path.join(work, "scene_data.json"),
-            "bg_work": os.path.join(work, "background"), "bg_submit": bg_sub, "bg_zip": bg_sub + ".zip"}
+            "objects_preview": os.path.join(work, "objects", "preview.jpg")}
 
 
 def prepared_paths(c, cl):
@@ -299,12 +298,10 @@ def prepared_paths(c, cl):
     f = folders(c, cl)
     out = [(f["marks"], "detected people and joints"),
            (os.path.join(output_dir(c), cl.name), "older per-clip notes"),
-           (f["work"], "people, camera, floor, preview, renders and job logs"),
+           (f["work"], "people, camera, floor, objects, preview, renders and job logs"),
            (os.path.join(c['work_root'],'_thumbs',cl.id+'.jpg'), 'cached thumbnail'),
            (f["submit"], "the finished package"),
-           (f["zip"], "the finished zip"),
-           (f["bg_submit"], "the background package"),
-           (f["bg_zip"], "the background zip")]
+           (f["zip"], "the finished zip")]
     return [(p, what) for p, what in out if os.path.exists(p)]
 
 
@@ -354,10 +351,10 @@ LABELS = {  # label -> group used by the Clips page
     "outdated": "old", "failed": "fail", "cancelled": "new", "skipped": "skip"}
 
 
-def status(c, cl, job=None, stages=None):
+def status(c, cl, job=None):
     """flags from the files + the clip's latest job -> one label.
     A queued or running job is shown first; otherwise a valid zip (made from today's video, delivery name and
-    Stage 1 settings) is "done", whatever happened to a later job that is no longer running."""
+    settings) is "done", whatever happened to a later job that is no longer running."""
     f = folders(c, cl)
     has_zip = os.path.exists(f["zip"])
     s = {"marks": os.path.exists(f["pose"]), "fit": os.path.exists(f["preview"]) and os.path.exists(f["scene"]),
@@ -368,17 +365,12 @@ def status(c, cl, job=None, stages=None):
     s["outdated"] = has_zip and not s["done"]
     s["skipped"] = cl.id in skipped_set(c)
     s["job"] = job and {k: job[k] for k in ("id", "stage", "state", "attempts", "error") if k in job}
-    s["stage"] = (job or {}).get("stage") if (job or {}).get("state") in ("queued", "running") else None
-    # each stage has its own status: the label is Movement's (from its own latest job), "background" is Stage 2's.
-    # Without the per-stage jobs, the latest job counts for the stage it belongs to.
-    if stages is None:
-        stages = {job["stage"]: job} if job and job.get("stage") else {}
-    mjob, bjob = stages.get("movement"), stages.get("background")
-    state = (mjob or {}).get("state")
+    state = (job or {}).get("state")
+    s["stage"] = job["stage"] if state in ("queued", "running") else None
     if state == "running":
         label = "processing"
     elif state == "queued":
-        label = "paused" if (mjob or {}).get("error") == PAUSED else "waiting"
+        label = "paused" if (job or {}).get("error") == PAUSED else "waiting"
     elif s["skipped"]:                                     # chosen by the person: shown even over an older finished zip
         label = "skipped"
     elif s["done"]:
@@ -393,28 +385,4 @@ def status(c, cl, job=None, stages=None):
         label = "new"
     s["label"] = label
     s["group"] = LABELS[label]
-    s["movement"] = mjob and {k: mjob[k] for k in ("id", "state", "attempts", "error") if k in mjob}
-    s["background"] = background_status(f, bjob, s["done"])
     return s
-
-
-def background_status(f, job, stage1_done):
-    """Stage 2 of a clip: {state, zip}.  state: none / waiting / paused / processing / done / outdated (Stage 1 was
-    made again after it) / failed / cancelled.  job: the clip's latest Background job.  Its zip never changes Stage 1's
-    status."""
-    has = os.path.exists(f["bg_zip"])
-    j = job if job and job.get("stage") == "background" else None
-    st = (j or {}).get("state")
-    if st == "running":
-        state = "processing"
-    elif st == "queued":
-        state = "paused" if j.get("error") == PAUSED else "waiting"
-    elif has:
-        state = "done" if stage1_done and os.path.getmtime(f["bg_zip"]) >= os.path.getmtime(f["zip"]) else "outdated"
-    elif st == "failed":
-        state = "failed"
-    elif st == "stopped":
-        state = "cancelled"
-    else:
-        state = "none"
-    return {"state": state, "zip": has, "error": (j or {}).get("error") if state == "failed" else None}

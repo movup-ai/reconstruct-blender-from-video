@@ -19,16 +19,12 @@
 <main class="page">
   <div id="banner" class="banner"></div>
   <section class="step" id="s-steps">
-    <div class="rowsb"><h2>Stages</h2><span class="small muted" id="msg"></span></div>
+    <div class="rowsb"><h2>Status</h2><span class="small muted" id="msg"></span></div>
     <table class="list stages" id="steps"><tbody>
-      <tr><td><b>Stage 1 · Movement</b><div class="small muted">people, camera, floor, render and the v2.1 zip</div></td>
-        <td id="st-movement"></td>
+      <tr><td><b>Run</b><div class="small muted">people, camera, floor, objects, render and the v2.1 zip</div></td>
+        <td id="st-run"></td>
         <td class="acts"><button id="rerun">&#8635; Re-run</button><a class="btn primary" id="download" hidden>&#8681; Download zip</a>
-          <button id="movement-pause" hidden>Pause</button><button id="movement-cancel" class="dangerline" hidden>Cancel</button></td></tr>
-      <tr><td><b>Stage 2 · Background</b><div class="small muted">your object models added: a second zip</div></td>
-        <td id="st-background"></td>
-        <td class="acts"><button id="bgrun">Add background</button><a class="btn primary" id="bgdownload" hidden>&#8681; Download zip</a>
-          <button id="background-pause" hidden>Pause</button><button id="background-cancel" class="dangerline" hidden>Cancel</button></td></tr>
+          <button id="run-pause" hidden>Pause</button><button id="run-cancel" class="dangerline" hidden>Cancel</button></td></tr>
       <tr id="machine" hidden><td class="small muted">Computer time since reset</td><td class="small" colspan="2"></td></tr>
     </tbody></table>
   </section>
@@ -38,17 +34,12 @@
   </div>
   <div id="outbox" hidden style="margin-top:14px"><video id="cmp" class="vplayer" controls preload="metadata"></video><p class="cap" id="outcap">The comparison video: the source and the white model.</p></div>
 
-  <section class="step" id="s-bg" hidden>
-    <h2>Stage 2 · Background</h2>
-    <p class="hint">Adds your object models to this clip’s finished scene: Mask2Former finds and names the objects in the video, depth places each one where it stands, and a second zip is packed. Stage 1’s zip stays as it is.</p>
-    <div class="small" id="bgassets"></div>
-    <div id="bgstate" style="margin:8px 0"></div>
-    <div id="bgwarn"></div>
-    <table class="list" id="bgobjects" hidden><thead><tr><th>Object</th><th>Size (m)</th><th>Seen in frames</th></tr></thead><tbody></tbody></table>
-    <div class="grid2" style="margin-top:10px">
-      <div id="bgprevbox" hidden><img class="prev" id="bgprev" alt="Where each object was placed"><p class="cap">Where each object was placed, drawn over the video.</p></div>
-      <div id="bgcmpbox" hidden><video id="bgcmp" class="vplayer" controls preload="metadata"></video><p class="cap">The background package’s comparison video.</p></div>
-    </div>
+  <section class="step" id="s-objects" hidden>
+    <h2>Objects</h2>
+    <p class="hint">Mask2Former finds and names the objects in the video; the matching object model is placed where depth puts each one.</p>
+    <div class="small" id="objmodels"></div>
+    <table class="list" id="objects" hidden><thead><tr><th>Object</th><th>Size (m)</th><th>Seen in frames</th></tr></thead><tbody></tbody></table>
+    <div id="objprevbox" hidden style="margin-top:10px"><img class="prev" id="objprev" alt="Where each object was placed"><p class="cap">Where each object was placed, drawn over the video.</p></div>
   </section>
 
   <section class="step" id="s-people" hidden>
@@ -68,7 +59,7 @@
 
   <section class="step" id="s-reset">
     <h2>Start over</h2>
-    <p class="small muted" style="margin:0 0 8px">Deletes everything made for this clip (people, camera, floor, renders and the finished package), so the next run starts again from the video. The video and its delivery name stay.</p>
+    <p class="small muted" style="margin:0 0 8px">Deletes everything made for this clip (people, camera, floor, objects, renders and the finished package), so the next run starts again from the video. The video and its delivery name stay.</p>
     <button class="danger" id="resetclip">Start over…</button>
   </section>
 </main>
@@ -110,74 +101,44 @@ function fillCamera() {
     .map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
 }
 function fillSteps() {
-  const steps = (INFO.timing || {}).steps || {}, j = INFO.job, s = INFO.status;
-  for (const k of ['movement', 'background']) {
-    const t = steps[k], mine = j && j.stage === k, bg = (INFO.background || {}).state;
-    let state = '<span class="muted">–</span>';
-    if (k === 'background' && bg === 'done') state = t && t.state === 'done' ? `<span class="pst ok">&#10003; done in ${fmtDur(t.ran)}</span>` : '<span class="pst ok">&#10003; done</span>';
-    else if (k === 'background' && bg === 'outdated') state = '<span class="pst muted">out of date: Stage 1 was made again</span>';
-    if (mine && j.state === 'running') state = `<span class="pst run">running${t && t.state === 'running' ? ' ' + fmtDur(t.ran) : ''}</span>` + (j.pct != null ? progressBar(j.pct, j.step) : '');
-    else if (mine && j.state === 'queued') state = `<span class="pst wait">${INFO.paused ? 'paused' : 'waiting'}</span>`;
-    else if (k === 'background' && /done|outdated/.test(bg)) {}               // its zip: shown as set above
-    else if (k === 'movement' && s.done) state = t && t.state === 'done' ? `<span class="pst ok">&#10003; done in ${fmtDur(t.ran)}</span>` : '<span class="pst ok">&#10003; done</span>';
-    else if (mine && j.state === 'stopped') state = `<span class="pst muted">cancelled${t && t.state === 'stopped' ? ' after ' + fmtDur(t.ran) : ''}</span>`;
-    else if (t && t.state === 'failed') state = `<span class="pst bad">failed after ${fmtDur(t.ran)}</span>`;
-    else if (k === 'movement' && s.outdated) state = '<span class="pst muted">out of date: Re-run to make it again</span>';
-    else if (k === 'movement' && !j && !s.zip) state = '<span class="muted">not run yet</span>';
-    $('st-' + k).innerHTML = state;
-  }
-  const m = INFO.timing && INFO.timing.machine;
+  const t = INFO.timing || {}, L = t.last, j = INFO.job, s = INFO.status;
+  let state = '<span class="muted">–</span>';
+  if (j && j.state === 'running') state = `<span class="pst run">running${L && L.state === 'running' ? ' ' + fmtDur(L.ran) : ''}</span>` + (j.pct != null ? progressBar(j.pct, j.step) : '');
+  else if (j && j.state === 'queued') state = `<span class="pst wait">${INFO.paused ? 'paused' : 'waiting'}</span>`;
+  else if (s.done) state = t.done ? `<span class="pst ok">&#10003; done in ${fmtDur(t.done.machine)}</span>` : '<span class="pst ok">&#10003; done</span>';
+  else if (j && j.state === 'stopped') state = `<span class="pst muted">cancelled${L && L.state === 'stopped' ? ' after ' + fmtDur(L.ran) : ''}</span>`;
+  else if (j && j.state === 'failed') state = `<span class="pst bad">failed${L && L.state === 'failed' ? ' after ' + fmtDur(L.ran) : ''}</span>`;
+  else if (s.outdated) state = '<span class="pst muted">out of date: Re-run to make it again</span>';
+  else if (!j && !s.zip) state = '<span class="muted">not run yet</span>';
+  $('st-run').innerHTML = state;
+  const m = t.machine;
   $('machine').hidden = !Number.isFinite(m);
   if (Number.isFinite(m)) $('machine').cells[1].textContent = fmtDur(m);
 }
-function fillBackground(busy) {
-  const B = INFO.background, s = INFO.status;
-  $('s-bg').hidden = !B || !(s.done || B.zip);
-  if (!B) { $('bgrun').disabled = true; $('bgrun').title = 'Stage 1 (Movement) must be done first'; return; }
-  const types = B.assets || [];
-  if ($('bgassets').dataset.n !== String(types.length)) $('bgassets').innerHTML = types.length ?          // (kept open while it polls)
-    `<b>${types.length}</b> object model${types.length > 1 ? 's' : ''} <span class="muted">in ${esc(B.assets_folder)}</span> ` +
-    `<details class="names"><summary>show names</summary><div class="muted">${types.map(esc).join(', ')}</div></details>` :
-    `<span class="warn">No object models yet.</span> Put one <b>.blend</b> per object type in <b>${esc(B.assets_folder)}</b>, named after what it is (wall.blend, chair.blend, pillar.blend…).`;
-  $('bgassets').dataset.n = types.length;
-  const st = {none: '', waiting: '<span class="pst wait">waiting</span>', processing: '<span class="pst run">running</span>' + (INFO.job && INFO.job.pct != null && INFO.job.stage === 'background' ? progressBar(INFO.job.pct, INFO.job.step) : ''),
-    done: `<span class="pst ok">&#10003; done</span> The zip is at <b>${esc(B.zip_path || '')}</b>`,
-    outdated: '<span class="pst muted">out of date: Stage 1 was made again after it. Add background again to match.</span>',
-    failed: `<span class="pst bad">failed</span> <span class="small">${esc(B.error || '')}</span>`, cancelled: '<span class="pst muted">cancelled</span>'}[B.state] || '';
-  $('bgstate').innerHTML = st;
-  $('bgrun').disabled = busy || !s.done || !types.length;
-  $('bgrun').textContent = B.zip ? 'Add background again' : 'Add background';
-  $('bgrun').title = !s.done ? 'Stage 1 (Movement) must be done first' : !types.length ? 'Add object models (.blend files) first' : busy ? 'Wait until the current job is done' : 'Find the object types in this clip and make the background zip';
-  $('bgdownload').hidden = !B.download || B.state === 'processing';
-  if (B.download) { $('bgdownload').href = B.download; $('bgdownload').title = `Downloads as ${INFO.package}_background.zip`; }
-  $('bgwarn').innerHTML = (B.warnings || []).map(w => `<div class="warn small">⚠ ${esc(w)}</div>`).join('');
-  const obs = B.objects || [];
-  $('bgobjects').hidden = !obs.length;
-  $('bgobjects').tBodies[0].innerHTML = obs.map(o => `<tr><td><b>${esc(o.name)}</b>${o.on_floor ? '' : ' <span class="muted small">(hangs)</span>'}</td>` +
+function fillObjects() {
+  const O = INFO.objects;
+  $('s-objects').hidden = !O || !(INFO.status.fit || O.placed.length);
+  if (!O) return;
+  $('objmodels').innerHTML = O.models ? `<b>${O.models}</b> object model(s) <span class="muted">in ${esc(O.models_folder)}</span>` :
+    `<span class="warn">No object models yet.</span> Put one <b>.blend</b> per object type in <b>${esc(O.models_folder)}</b>.`;
+  const obs = O.placed || [];
+  $('objects').hidden = !obs.length;
+  $('objects').tBodies[0].innerHTML = obs.map(o => `<tr><td><b>${esc(o.name)}</b>${o.on_floor ? '' : ' <span class="muted small">(hangs)</span>'}</td>` +
     `<td>${o.size_m.map(x => (+x).toFixed(2)).join(' × ')}</td><td>${esc(o.seen_frames[0])}–${esc(o.seen_frames[1])}</td></tr>`).join('');
-  const v = B.comparison_version || 0;
-  $('bgprevbox').hidden = !B.preview;
-  if (B.preview) { const u = `/media/bg_preview/${CID}.jpg?v=${v}`; if ($('bgprev').getAttribute('src') !== u) $('bgprev').src = u; }
-  $('bgcmpbox').hidden = !B.comparison;
-  if (B.comparison) { const u = `/media/bg_comparison/${CID}.mp4?v=${v}`; if ($('bgcmp').getAttribute('src') !== u) $('bgcmp').src = u; }
+  $('objprevbox').hidden = !O.preview;
+  if (O.preview) { const u = `/media/objects_preview/${CID}.jpg?v=${INFO.outputs.comparison_version || 0}`; if ($('objprev').getAttribute('src') !== u) $('objprev').src = u; }
 }
-$('bgrun').onclick = async () => {
-  let r; try { r = await post(`/api/clip/${CID}/background`); } catch (e) { return; }
-  toast(r.queued ? 'Background queued: the objects and the second zip appear here when it is done.' : 'This clip is already being processed'); refresh();
-};
 function banner() {
   const b = $('banner'), j = INFO.job, s = INFO.status;
   if (j && /queued|running/.test(j.state)) { b.className = 'banner run';
-    b.innerHTML = j.state === 'queued' ? (INFO.paused ? `Queued (${esc(STAGE[j.stage] || j.stage)}). Your queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>.` :
-      `Waiting for a free slot (${esc(STAGE[j.stage] || j.stage)})…`) : (j.stage === 'background' ?
-      'Adding the background: finding your object types, placing them, rendering and packing the second zip.' :
-      'Working on this clip: people, camera, floor, render and the v2.1 zip.') +
+    b.innerHTML = j.state === 'queued' ? (INFO.paused ? 'Queued. Your queue is paused: press <a href="/">Start</a> on the Clips page, or <a href="#" id="unqueue">remove this job</a>.' :
+      'Waiting for a free slot…') : 'Working on this clip: people, camera, floor, objects, render and the v2.1 zip.' +
       (j.pct != null ? progressBar(j.pct, j.step) : ''); }
   else if (s.done) { b.className = 'banner done'; b.innerHTML = `Done. The zip is at <b>${esc(INFO.outputs.zip_path)}</b>` + (INFO.outputs.comparison ? '; the comparison video is below.' : '.'); }
   else if (j && j.state === 'stopped') { b.className = 'banner note';
     b.textContent = 'Processing cancelled. Completed files and caches are kept. Re-run starts a new job.'; }
   else if (j && j.state === 'failed') { b.className = 'banner fail';
-    b.innerHTML = `<b>The last run (${esc(STAGE[j.stage] || j.stage)}) failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
+    b.innerHTML = `<b>The last run failed.</b> ${esc(j.advice || '')}<div class="small" style="opacity:.8;margin-top:4px">${esc(j.error || '')}</div>`; }
   else if (!INFO.package) { b.className = 'banner note';
     b.innerHTML = '<span>No delivery name yet. Start gives it a made-up one (clip-1, clip-2…) so the run does not fail. The client needs the film’s title on each zip: on the Clips page press <b>Name videos…</b> and type the film’s English title, for example <b>the hidden blade</b>.</span>'; }
   else if (s.outdated) { b.className = 'banner info'; b.textContent = 'The zip is out of date: the video, its delivery name or the settings changed since it was made. Re-run makes it again.'; }
@@ -188,19 +149,19 @@ function banner() {
 }
 async function load(first) {
   INFO = await api('/api/clip/' + CID);
-  for (const stage of ['movement', 'background']) {           // each stage's row has its own Pause / Cancel
-    const pause = $(stage + '-pause'), cancel = $(stage + '-cancel');
-    const active = INFO.job?.stage === stage && ['queued', 'running'].includes(INFO.job?.state);
+  {                                                           // the run's Pause / Cancel
+    const pause = $('run-pause'), cancel = $('run-cancel');
+    const active = ['queued', 'running'].includes(INFO.job?.state);
     const resume = active && INFO.paused && INFO.job.state === 'queued';
     pause.hidden = cancel.hidden = !active;
     pause.textContent = resume ? 'Resume' : 'Pause';
     pause.disabled = cancel.disabled = processingBusy;
-    pause.title = resume ? 'Restart the interrupted run using completed caches' : 'Pause this stage (the other stage keeps running); completed caches are kept';
-    pause.onclick = async () => {                                // this stage only: the other stage keeps running
-      await processingControl((resume ? '/api/resume' : '/api/pause') + `?stage=${stage}`, 'Updating active processing…');
+    pause.title = resume ? 'Restart the interrupted run using completed caches' : 'Pause the queue; completed caches are kept';
+    pause.onclick = async () => {
+      await processingControl(resume ? '/api/resume' : '/api/pause', 'Updating active processing…');
       refresh();
     };
-    cancel.title = 'Cancel this clip’s ' + (stage === 'background' ? 'Background' : 'Movement') + ' job; completed files and caches are kept';
+    cancel.title = 'Cancel this clip’s job; completed files and caches are kept';
     cancel.onclick = async () => {
       await processingControl(`/api/clip/${CID}/cancel`, 'Cancelling this clip’s active process…'); refresh();
     };
@@ -223,23 +184,22 @@ async function load(first) {
     if ($('cmp').getAttribute('src') !== videoUrl) $('cmp').src = videoUrl;
     $('outcap').textContent = 'The comparison video: the source and the white model.' + (INFO.status.outdated ? ' It is out of date: Re-run makes it again.' : '');
   }
-  fillBackground(busy);
+  fillObjects();
   $('s-people').hidden = !INFO.people; if (INFO.people) fillPeople();
   $('s-camera').hidden = !INFO.camera; if (INFO.camera) fillCamera();
   fillSteps();
   $('jobbox').hidden = !INFO.job;
   if (INFO.job) {
     $('jobbox').open = $('jobbox').open || INFO.job.state === 'failed';
-    $('jobstate').textContent = `· ${STAGE[INFO.job.stage] || INFO.job.stage} · ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
+    $('jobstate').textContent = `· ${INFO.job.state}` + (INFO.job.attempts > 1 ? ` (attempt ${INFO.job.attempts})` : '');
     const lg = $('log'); const end = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20; lg.textContent = INFO.job.log; if (end) lg.scrollTop = lg.scrollHeight; }
   banner();
   const first_run = !INFO.job && !INFO.status.zip && !fit;
-  $('rerun').hidden = busy && INFO.job.stage === 'movement';
+  $('rerun').hidden = busy;
   $('rerun').disabled = busy;
   $('rerun').innerHTML = first_run ? '&#9654; Run' : '&#8635; Re-run';
   $('rerun').classList.toggle('primary', first_run);
-  $('rerun').title = busy ? 'Wait until the current job is done' : (first_run ? 'Run' : 'Run again') + ': people, camera, floor, render and the v2.1 zip';
-  $('bgrun').hidden = busy && INFO.job.stage === 'background';
+  $('rerun').title = busy ? 'Wait until the current job is done' : (first_run ? 'Run' : 'Run again') + ': people, camera, floor, objects, render and the v2.1 zip';
   const dl = INFO.outputs.download;
   $('download').hidden = !dl || !INFO.status.done;
   if (dl) { $('download').href = dl; $('download').title = `Downloads as ${INFO.package}.zip`; }
@@ -252,11 +212,11 @@ async function load(first) {
   return busy;
 }
 async function runClip() {
-  let r; try { r = await post(`/api/clip/${CID}/run?stage=movement`); } catch (e) { return; }
+  let r; try { r = await post(`/api/clip/${CID}/run`); } catch (e) { return; }
   toast(r.queued ? 'Queued: the picture and videos update when it is done.' : 'This clip is already being processed'); refresh();
 }
 $('rerun').onclick = async () => {
-  if (INFO && INFO.status.done && !(await ask('Its zip is up to date. The run makes the people, camera, floor, videos and zip again.', 'Re-run', { title: 'Run this clip again?' }))) return;
+  if (INFO && INFO.status.done && !(await ask('Its zip is up to date. The run makes the people, camera, floor, objects, videos and zip again.', 'Re-run', { title: 'Run this clip again?' }))) return;
   runClip();
 };
 $('resetclip').onclick = async e => { e.preventDefault(); try { if (await startOver(CID, INFO.clip.name)) location.reload(); } catch (err) {} };

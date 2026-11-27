@@ -1,6 +1,6 @@
-# Object models for Stage 2 (Background)
+# Object models
 
-Stage 2 finds the objects in a clip with **Mask2Former** (ADE20K, 150 names; `models\mask2former_ade_panoptic`).
+Each run finds the objects in a clip with **Mask2Former panoptic** (ADE20K, 150 names; `models\mask2former_ade_panoptic`).
 Each object it names becomes a copy of the model for that name, stretched to the size measured in the video and
 placed where the depth puts it. The table of name → model is `pipeline\ade_objects.py`:
 
@@ -8,7 +8,7 @@ placed where the depth puts it. The table of name → model is `pipeline\ade_obj
 - **another name for the same thing**: `windowpane` → `window.blend`, `painting` / `poster` → `picture.blend`,
   `refrigerator` → `fridge.blend`, `television receiver` → `tv.blend`, `column` → `pillar.blend`,
   `swivel chair` → `office_chair.blend`, `ashcan` → `bin.blend`, ...
-- **not placed**: people (Stage 1) and the ground, sky, water and landscape (`floor`, `sky`, `road`, `sea`, ...).
+- **not placed**: people (they are the characters) and the ground, sky, water and landscape (`floor`, `sky`, `road`, `sea`, ...).
 
 This folder holds exactly the models that table uses: 116. 95 were generated (browse them in [the catalog](catalog.html),
 [contact sheets](catalog.jpg), sizes and polygon counts in [manifest.json](manifest.json)); the 21 below were added by
@@ -88,7 +88,7 @@ Refresh the catalog after adding or changing models:
 .venv/Scripts/python.exe pipeline/build_object_catalog.py
 ```
 
-Check the saved models (geometry, sizes, origins, the Stage 2 export):
+Check the saved models (geometry, sizes, origins, the export the run reads):
 
 ```powershell
 & 'C:/Program Files/Blender Foundation/Blender 5.3/blender.exe' -b --factory-startup --python-exit-code 1 -P pipeline/check_object_assets.py

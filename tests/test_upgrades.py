@@ -41,8 +41,8 @@ class ProfilingTests(unittest.TestCase):
             fail()
         with tempfile.TemporaryDirectory() as work:
             with self.assertRaises(ValueError):
-                clip("input.mp4", {"work_root": work}, types.SimpleNamespace(name="clip", stage="movement"))
-            with open(os.path.join(work, "clip", "profile_movement.json")) as stream:
+                clip("input.mp4", {"work_root": work}, types.SimpleNamespace(name="clip", stage="run"))
+            with open(os.path.join(work, "clip", "profile_run.json")) as stream:
                 result = json.load(stream)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["stages"]["broken"]["calls"], 1)

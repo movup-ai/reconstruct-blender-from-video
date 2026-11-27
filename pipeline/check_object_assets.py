@@ -1,4 +1,4 @@
-"""Reopen and validate generated assets and the Stage 2 export contract in Blender.
+"""Reopen and validate generated assets and the export contract the run reads, in Blender.
 
 blender -b --factory-startup -P pipeline/check_object_assets.py
 Reports are written under output/. Optional -- --warm-cache populates ignored export caches.
@@ -21,7 +21,7 @@ import assets_lib
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--warm-cache',action='store_true',help='Save validated exports in the Stage 2 cache')
+    parser.add_argument('--warm-cache',action='store_true',help='Save validated exports in the object cache')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     folder=ROOT/'assets/objects'
     manifest=json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
@@ -50,7 +50,7 @@ def main():
         assert all(edge.is_manifold for edge in bm.edges),(kind,'Open/nonmanifold solid')
         assert all(face.calc_area()>1e-10 for face in bm.faces),(kind,'Degenerate face')
         bm.free()
-        # Use the actual exporter that Stage 2 invokes, then its normaliser/placer.
+        # Use the actual exporter that the run invokes, then its normaliser/placer.
         with tempfile.TemporaryDirectory() as tmp:
             export=Path(tmp)/'asset.json'
             sys.argv=['blender','--',str(export)]

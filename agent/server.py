@@ -3,8 +3,8 @@
 there are no users and no login.  Listens on config "host" (127.0.0.1:
 this PC only; 0.0.0.0: the other PCs of the network too).
 
-The flow is automatic: Start queues Stage 1 (Movement) for every clip without a valid zip, and each run goes from
-the raw video to a checked v2.1 zip with no review step."""
+The flow is automatic: Start queues a run for every clip without a valid zip, and each run goes from the raw
+video to a checked v2.1 zip (people, camera, floor and objects) with no review step."""
 import csv
 import glob
 import io
@@ -24,7 +24,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 from . import APP_NAME, __version__, config
 from .clips import Library, folders, status, read_json, set_skipped
-from .jobs import JobStore, Runner, STAGES
+from .jobs import JobStore, Runner
 from . import media
 import package as pkg  # pipeline (on sys.path through config)
 
@@ -113,7 +113,7 @@ class Workspace:
             log.warning("%s had no delivery name: gave it %s (made up - Name videos... replaces it with the film's title)",
                         cl.name, new[cl.name])
 
-    def enqueue(self, cl, stage="movement", force=False):
+    def enqueue(self, cl, stage="run", force=False):
         with self.runner.cond:
             if self.runner.resetting:
                 raise HttpError(409, 'Reset is still stopping jobs and clearing files. Wait for it to finish.')
@@ -127,16 +127,15 @@ class Workspace:
             raise HttpError(404, "unknown clip %s" % cid)
 
     def status_all(self):
-        latest, stages = self.store.latest(), self.store.latest_stages()
-        return [(cl, status(self.c, cl, latest.get(cl.id), stages.get(cl.id, {}))) for cl in self.lib.clips]
+        latest = self.store.latest()
+        return [(cl, status(self.c, cl, latest.get(cl.id))) for cl in self.lib.clips]
 
     def status_of(self, cl):
-        return status(self.c, cl, self.store.latest_for(cl.id), self.store.latest_stages().get(cl.id, {}))
+        return status(self.c, cl, self.store.latest_for(cl.id))
 
     def queue_summary(self):
-        """the queue: running jobs (with progress), waiting and failed counts, paused or not - in all and per stage
-        ("stages": {movement, background}: each runs, pauses and cancels on its own)"""
-        counts, by_stage = self.store.counts(), self.store.counts_by_stage()
+        """the queue: running jobs (with progress), waiting and failed counts, paused or not, the object models"""
+        counts = self.store.counts()
         run = []
         for j in self.store.running():
             cl = self.lib.by_id.get(j["clip"])
@@ -145,13 +144,10 @@ class Workspace:
             pr = job_progress(self.c, cl, j)
             run.append({"clip": j["clip"], "name": cl.name, "stage": j["stage"],
                         "since": round(time.time() - (j["started"] or time.time())), "progress": pr.get("pct"), "step": pr.get("step")})
-        stages = {s: {"running": sum(1 for r in run if r["stage"] == s), "queued": by_stage.get(s, {}).get("queued", 0),
-                      "paused": self.runner.is_paused(s), "now": [r for r in run if r["stage"] == s]} for s in STAGES}
         import assets_lib                                                   # pipeline
-        stages["background"]["models"] = len(assets_lib.catalog(self.c))
-        stages["background"]["models_folder"] = assets_lib.folder(self.c)
         return {"running": len(run), "queued": counts.get("queued", 0), "failed": counts.get("failed", 0),
-                "parallel": self.app.c["parallel"], "now": run, "paused": self.runner.is_paused(), "stages": stages}
+                "parallel": self.app.c["parallel"], "now": run, "paused": self.runner.paused,
+                "models": len(assets_lib.catalog(self.c)), "models_folder": assets_lib.folder(self.c)}
 
     def reset(self, cls, dry=False, all_clips=False):
         """Stop writers before clearing outputs/history; Reset all restores the fresh folder list."""
@@ -206,7 +202,7 @@ class Workspace:
                "prev": self.lib.clips[idx - 1].id if idx > 0 else None,
                "next": self.lib.clips[idx + 1].id if 0 <= idx < len(self.lib.clips) - 1 else None,
                "package": package, "auto_name": bool(package) and cl.name in pkg.auto_named(),
-               "paused": self.runner.is_paused((job or {}).get("stage") or "movement"),
+               "paused": self.runner.paused,
                "timing": self.store.timing().get(cl.id)}
         pose = read_json(f["pose"])
         if pose:
@@ -237,16 +233,10 @@ class Workspace:
                           'comparison_version': max((os.stat(p).st_mtime_ns for p in comparisons), default=None),
                           "zip": has_zip, "zip_path": f["zip"],
                           "download": "/download/%s" % cl.name if has_zip and package else None}
-        bst = st["background"]
-        bcmp = glob.glob(os.path.join(f["bg_submit"], "comparison", "*.mp4"))
-        brep = read_json(os.path.join(f["bg_work"], "report.json"), {}) or {}
+        rep = read_json(os.path.join(f["work"], "report.json"), {}) or {}
         import assets_lib                                                   # pipeline
-        out["background"] = dict(bst, zip_path=f["bg_zip"] if bst["zip"] else None,
-                                 download="/download/%s?bg=1" % cl.name if bst["zip"] and package else None,
-                                 comparison=bool(bcmp), comparison_version=max((os.stat(p).st_mtime_ns for p in bcmp), default=None),
-                                 preview=os.path.exists(os.path.join(f["bg_work"], "preview.jpg")),
-                                 objects=brep.get("objects", []), warnings=brep.get("warnings", []),
-                                 assets=sorted(assets_lib.catalog(c)), assets_folder=assets_lib.folder(c))
+        out["objects"] = {"placed": rep.get("objects", []), "preview": os.path.exists(f["objects_preview"]),
+                          "models": len(assets_lib.catalog(c)), "models_folder": assets_lib.folder(c)}
         if job:
             lp = job.get("log") or os.path.join(f["work"], "job_%s.log" % job["stage"])
             txt = ""
@@ -259,7 +249,7 @@ class Workspace:
                 out["job"].update(job_progress(c, cl, job))
         return out
 
-    # ------------------------------------------------------------ the flow: folder -> Start -> Movement -> zip
+    # ------------------------------------------------------------ the flow: folder -> Start -> run -> zip
     def use_folder(self, path, title):
         """make <path> the source folder (saved in config.json), and give its videos without a delivery name one when
         a title is given.  Nothing of a new folder starts: the queue pauses and waiting jobs of the previous folder
@@ -277,53 +267,22 @@ class Workspace:
         return {"ok": True, "clips": len(self.lib.clips), "named": len(new), "dropped": dropped, "clashes": self.lib.clashes}
 
     def start(self):
-        """Start (also Resume): queue Movement for every video without a valid zip - new, failed, cancelled or out
+        """Start (also Resume): queue a run for every video without a valid zip - new, failed, cancelled or out
         of date - except skipped ones or those already waiting / running, then let the queue run (jobs put back by
         Pause keep their place)."""
         queued = sum(1 for cl, st in self.status_all()
                      if not st["done"] and not st["skipped"] and not (st["job"] and st["job"]["state"] in ("queued", "running"))
-                     and self.enqueue(cl, "movement"))
-        self.runner.resume("movement")                         # Movement only: Background has its own Start
+                     and self.enqueue(cl))
+        self.runner.resume()
         log.info("start: %d video(s) queued", queued)
         return {"ok": True, "queued": queued}
 
-    def start_background(self):
-        """Start background (also Resume): queue Background for every clip whose Stage 1 zip is up to date and whose
-        background zip is missing, failed, cancelled or out of date - except skipped clips and clips already waiting
-        / running - then let the Background stage run (Movement keeps its own state)."""
-        import assets_lib                                      # pipeline
-        if not assets_lib.catalog(self.c):
-            raise HttpError(409, "no object models yet: put one .blend per object type in %s (e.g. wall.blend, chair.blend)"
-                            % assets_lib.folder(self.c))
-        queued = sum(1 for cl, st in self.status_all()
-                     if st["done"] and not st["skipped"] and not (st["job"] and st["job"]["state"] in ("queued", "running"))
-                     and st["background"]["state"] in ("none", "failed", "cancelled", "outdated")
-                     and self.enqueue(cl, "background"))
-        self.runner.resume("background")
-        log.info("start background: %d clip(s) queued", queued)
-        return {"ok": True, "queued": queued}
-
     def run(self, cl):
-        """run one clip now (Re-run on its page): Movement again, even when its zip is up to date"""
-        jid = self.enqueue(cl, "movement", force=True)
+        """run one clip now (Re-run on its page), even when its zip is up to date"""
+        jid = self.enqueue(cl, force=True)
         set_skipped(cl.id, False, self.c)                      # an explicit run includes a skipped clip again
-        self.runner.resume("movement")                         # asked for explicitly: Movement runs
+        self.runner.resume()                                   # asked for explicitly: the queue runs
         return jid
-
-    def run_background(self, cl):
-        """Stage 2 for one clip (its button): needs Stage 1's up-to-date zip and at least one object model"""
-        import assets_lib                                      # pipeline
-        st = self.status_of(cl)
-        if not st["done"]:
-            raise HttpError(409, "run Movement (Stage 1) for this clip first: Background adds objects to its finished scene")
-        if st["job"] and st["job"]["state"] in ("queued", "running"):
-            raise HttpError(409, "%s is already waiting or being processed" % cl.name)
-        if not assets_lib.catalog(self.c):
-            raise HttpError(409, "no object models yet: put one .blend per object type in %s (e.g. wall.blend, chair.blend)"
-                            % assets_lib.folder(self.c))
-        jid = self.enqueue(cl, "background")
-        self.runner.resume("background")                       # asked for explicitly: Background runs
-        return {"ok": True, "queued": bool(jid)}
 
     def report_rows(self):
         rows = []
@@ -338,15 +297,11 @@ class Workspace:
 
 
 # ---------------------------------------------------------------- progress, advice, submissions
-# where each step of a Movement run starts, % of the job (read from the pipeline's log lines)
-STEPS = [("  marks:", 40, "measuring the lens"), ("  camera ...", 45, "solving the camera"),
-         ("  people ...", 55, "fitting 3D people"), ("  set ...", 62, "placing the floor"), ("  floor", 62, "placing the floor"),
-         ("  quality:", 66, "checking the result")]
-# the same for a Background (Stage 2) run
-BG_STEPS = [("  assets:", 3, "reading the object models"), ("  reading ", 6, "reading frames"),
-            ("  Mask2Former: finding", 10, "finding and naming objects"), ("  found:", 40, "choosing each object's best views"),
-            ("  depth on", 45, "measuring depth"), ("  placed:", 62, "placing the objects"),
-            ("  blender build", 68, "rendering")]
+# where each step of a run starts, % of the job (read from the pipeline's log lines)
+STEPS = [("  marks:", 40, "measuring the lens"), ("  Mask2Former:", 42, "finding objects and surfaces"),
+         ("  camera ...", 45, "solving the camera"), ("  people ...", 55, "fitting 3D people"),
+         ("  floor", 60, "placing the floor"), ("  objects found:", 61, "measuring the objects' depth"),
+         ("  placed:", 65, "placing the objects"), ("  quality:", 66, "checking the result")]
 
 
 def job_progress(c, cl, job):
@@ -362,21 +317,20 @@ def job_progress(c, cl, job):
     if 'waiting for model inference slot' in txt and 'model inference slot acquired' not in txt.rsplit('waiting for model inference slot', 1)[-1]:
         return {'pct': 1, 'step': 'waiting for the model inference slot; rendering can continue'}
     pct, step = 1, "starting"
-    bg = job["stage"] == "background"
     m = re.findall(r"detected (\d+) frames \(frame \d+/(\d+)", txt)      # frames done so far (the frame number jumps:
-    if m and not bg:                                                     # the detector runs over the clip in passes)
+    if m:                                                                # the detector runs over the clip in passes)
         a, b = int(m[-1][0]), int(m[-1][1])
         pct, step = 2 + 38 * min(a, b) / max(b, 1), "finding people (%d of %d frames)" % (min(a, b), b)
-    for key, p, s in (BG_STEPS if bg else STEPS):
+    for key, p, s in STEPS:
         if key in txt and p >= pct:
             pct, step = p, s
     shots = re.findall(r"\[shot (\d+): frames", txt)
-    if shots and "  quality:" not in txt:
+    if shots and "  objects found:" not in txt:
         step += " (shot %s)" % shots[-1]
     m = re.search(r"blender build \+ render \((\d+) frames\)", txt)
     if m:
         n = int(m.group(1))
-        done = len(glob.glob(os.path.join(f["bg_work"] if bg else f["work"], "render", "wm_*.jpg")))
+        done = len(glob.glob(os.path.join(f["work"], "render", "wm_*.jpg")))
         pct, step = 68 + 24 * min(done, n) / max(n, 1), "rendering frame %d of %d" % (min(done, n), n)
     if "videos + zip" in txt:
         pct, step = 93, "encoding the videos and packing the zip"
@@ -687,13 +641,11 @@ def make_handler(app):
                                  {"Content-Disposition": 'attachment; filename="blender_agent_report.csv"'})
             if parts[0] == "download" and len(parts) == 2:             # a package zip from the SUBMIT folder
                 name = os.path.basename(parts[1])
-                bg = (q.get("bg") or ["0"])[0] == "1"                   # Stage 1 + Stage 2 (SUBMIT\_background)
-                zp = os.path.join(c["submit_root"], "_background" if bg else "", name + ".zip")
+                zp = os.path.join(c["submit_root"], name + ".zip")
                 if not name or not os.path.isfile(zp):
-                    raise HttpError(404, "no %szip for %s" % ("background " if bg else "", name))
-                # v2.1: the delivered zip carries the package name (SUBMIT\<clip>.zip is named after the clip); the
-                # background one is saved as <package>_background.zip so both can sit in one downloads folder
-                return self.file(zp, "application/zip", (pkg.package_name(name, c) or name) + ("_background" if bg else "") + ".zip")
+                    raise HttpError(404, "no zip for %s" % name)
+                # v2.1: the delivered zip carries the package name (SUBMIT\<clip>.zip is named after the clip)
+                return self.file(zp, "application/zip", (pkg.package_name(name, c) or name) + ".zip")
             if parts[0] == "package" and len(parts) == 3 and parts[2] in ("comparison", "white_model", "target"):
                 name = os.path.basename(parts[1])
                 m = sorted(glob.glob(os.path.join(c["submit_root"], name, parts[2], "*.mp4")))
@@ -711,11 +663,8 @@ def make_handler(app):
                 if kind in ("comparison", "white_model"):
                     m = sorted(glob.glob(os.path.join(f["submit"], kind, "*.mp4")))
                     return self.file(m[0] if m else None, "video/mp4")
-                if kind in ("bg_comparison", "bg_white_model"):               # the background package's videos
-                    m = sorted(glob.glob(os.path.join(f["bg_submit"], kind[3:], "*.mp4")))
-                    return self.file(m[0] if m else None, "video/mp4")
-                if kind == "bg_preview":
-                    return self.file(os.path.join(f["bg_work"], "preview.jpg"), "image/jpeg")
+                if kind == "objects_preview":
+                    return self.file(f["objects_preview"], "image/jpeg")
             raise HttpError(404, "not found")
 
         # ---- upload: raw file body, streamed to disk (no size held in memory)
@@ -769,9 +718,9 @@ def make_handler(app):
                     os.remove(tmp)
             ws.lib.rescan()
             cl = next((x for x in ws.lib.clips if os.path.normcase(x.video) == os.path.normcase(os.path.abspath(dest))), None)
-            if cl and not app.runner.is_paused("movement"):                   # the queue runs: the new video joins it
+            if cl and not app.runner.paused:                                   # the queue runs: the new video joins it
                 try:
-                    ws.enqueue(cl, "movement"); app.runner.wake()
+                    ws.enqueue(cl); app.runner.wake()
                 except HttpError:
                     pass                                             # a Reset is running: Start queues it later
             log.info("uploaded %s (%.1f MB) to %s", os.path.basename(dest), n / 1e6, dest_dir)
@@ -808,24 +757,20 @@ def make_handler(app):
                     app.settings_changed(config.save(d))
                 app.runner.wake()
                 return self.send(200, {"ok": True, "settings": settings_out(app, ws)})
-            # each stage has its own Start / Pause / Resume / Cancel (?stage=movement|background); no stage: all of them
-            stage = (q.get("stage") or [None])[0]
-            if stage is not None and stage not in STAGES:
-                raise HttpError(400, "unknown stage %r" % stage)
             if parts in (["api", "start"], ["api", "prepare_all"]):
-                return self.send(200, ws.start_background() if stage == "background" else ws.start())
+                return self.send(200, ws.start())
             if parts == ["api", "pause"]:
                 try:
-                    return self.send(200, app.runner.interrupt(pause=True, stage=stage))
+                    return self.send(200, app.runner.interrupt(pause=True))
                 except TimeoutError as error:
                     raise HttpError(409, str(error))
             if parts == ['api', 'cancel_session']:
                 try:
-                    return self.send(200, app.runner.interrupt(stage=stage))
+                    return self.send(200, app.runner.interrupt())
                 except TimeoutError as error:
                     raise HttpError(409, str(error))
             if parts == ["api", "resume"]:
-                app.runner.resume(stage)
+                app.runner.resume()
                 return self.send(200, {"ok": True})
             if parts == ["api", "pick_folder"]:                          # a folder window on this PC's screen
                 if not self.local():
@@ -835,24 +780,23 @@ def make_handler(app):
                 d = self.body_json()
                 return self.send(200, ws.use_folder(str(d.get("path", "")), str(d.get("title", ""))))
             if parts == ["api", "retry_failed"]:
-                n, stage = 0, stage or "movement"
+                n = 0
                 for cl, st in ws.status_all():
-                    failed = st["background"]["state"] == "failed" if stage == "background" else st["label"] == "failed"
-                    if failed and ws.enqueue(cl, stage):
+                    if st["label"] == "failed" and ws.enqueue(cl):
                         n += 1
-                app.runner.resume(stage)
+                app.runner.resume()
                 return self.send(200, {"ok": True, "queued": n})
             if parts == ["api", "reset_all"]:                            # Start over with every clip on the list
                 return self.send(200, ws.reset([], dry=(q.get("dry") or ["0"])[0] == "1", all_clips=True))
             if parts == ["api", "cancel_queued"]:
-                return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued(stage=stage)})
+                return self.send(200, {"ok": True, "cancelled": app.store.cancel_queued()})
             if parts == ["api", "rescan"]:
                 before = set(ws.lib.by_id)
                 n = ws.lib.rescan()
                 new = [cl for cl in ws.lib.clips if cl.id not in before]
-                if new and not app.runner.is_paused("movement"):                   # the queue runs: new videos join it
+                if new and not app.runner.paused:                                  # the queue runs: new videos join it
                     for cl in new:
-                        ws.enqueue(cl, "movement")
+                        ws.enqueue(cl)
                     app.runner.wake()
                 return self.send(200, {"ok": True, "clips": n, "new": len(new)})
             if parts == ["api", "quit"]:                                 # stops the app
@@ -863,13 +807,8 @@ def make_handler(app):
                 return
             if parts[:2] == ["api", "clip"] and len(parts) == 4:
                 cl = ws.clip(parts[2]); action = parts[3]
-                if action == "run":                                      # Re-run: Movement again for this clip
-                    stage = (q.get("stage") or ["movement"])[0]
-                    if stage != "movement":
-                        raise HttpError(400, "unknown job stage")
+                if action == "run":                                      # Re-run this clip
                     return self.send(200, {"ok": True, "queued": bool(ws.run(cl))})
-                if action == "background":                               # Stage 2 by hand: a second zip, Stage 1's kept
-                    return self.send(200, ws.run_background(cl))
                 if action == "cancel":
                     try:
                         return self.send(200, app.runner.interrupt(clip=cl.id))
@@ -885,7 +824,7 @@ def make_handler(app):
                 if action == "include":                                  # Include on a skipped card: back in line
                     set_skipped(cl.id, False, ws.c)
                     st = ws.status_of(cl)
-                    queued = bool(not st["done"] and not app.runner.is_paused("movement") and ws.enqueue(cl, "movement"))
+                    queued = bool(not st["done"] and not app.runner.paused and ws.enqueue(cl))
                     if queued:
                         app.runner.wake()
                     return self.send(200, {"ok": True, "queued": queued})

@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Stage 1 "Movement": raw video -> checked v2.1 zip, one automatic run, no manual steps.
+Raw video -> checked v2.1 zip: one automatic run, no manual steps.
 
-  python run_pipeline.py VIDEO_OR_FOLDER [...] [--stage movement|render] [--name CLIP] [--force] [--device cuda]
+  python run_pipeline.py VIDEO_OR_FOLDER [...] [--stage run|render] [--name CLIP] [--force] [--device cuda]
 
-  stage movement : marks (SAM 3 tracking + RTMPose) -> shots -> lens (MoGe-2) -> per shot: camera (flow + depth cues,
-                   zoom), metric scene (MoGe-2 + Mask2Former), SAM 3D Body, floor + camera height, 3D people ->
-                   floor disc -> scene_data.json / camera.json / clip_info.json / quality -> Blender render (colour
-                   card) -> v2.1 zip -> v2.1 package check.  Any failure (package check included) fails the clip.
-  stage render   : internal re-render of a saved scene_data.json: Blender render -> zip -> package check.
-  stage background: Stage 2 (background.py): Stage 1's scene + the prebuilt objects of assets\\objects found by SAM 3
-                   -> Work\\<clip>\\background\\ -> a second zip in SUBMIT\\_background\\ (Stage 1's zip is kept).
+  stage run    : object models (assets\\objects) -> marks (SAM 3 tracking + RTMPose) -> shots -> lens (MoGe) ->
+                 Mask2Former panoptic on a few frames per second (objects, and every pixel's name: floor, wall,
+                 ceiling...) -> per shot: camera (flow + depth cues, zoom), metric scene (MoGe depth + those names),
+                 SAM 3D Body, floor + camera height, 3D people -> floor disc -> the objects placed (scene_objects.py)
+                 -> scene_data.json / camera.json / clip_info.json / quality -> Blender render (colour card) ->
+                 v2.1 zip -> v2.1 package check.  Any failure (package check included) fails the clip.
+  stage render : internal re-render of a saved scene_data.json: Blender render -> zip -> package check.
 Exit code: 0 every clip done (or skipped: zip there, no --force), 1 a clip failed.
 """
 import os, sys, re, glob, hashlib, json, time, shutil, subprocess, argparse, traceback
@@ -31,7 +31,7 @@ fit_all = stage("people_fit")(fit_all)
 estimate_shot = stage("camera")(estimate_shot)
 
 VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
-STAGES = ("movement", "render", "background")
+STAGES = ("run", "render")
 PALETTE = {"ground": [242, 242, 242], "set": [178, 178, 180], "far": [197, 197, 199], "backdrop": [205, 205, 207],
            "ridge": [160, 160, 163], "rock": [138, 138, 138], "tree": [172, 172, 170], "dark": [112, 112, 112], "light": [218, 218, 218],   # tree (vegetation) lighter than rock
            "cabin": [98, 98, 98], "roof": [133, 133, 133], "fence": [146, 146, 146], "mount": [197, 197, 199],
@@ -198,7 +198,7 @@ def run_clip(video, c, args):
     work = os.path.join(c["work_root"], name); c["_work"] = work
     os.makedirs(work, exist_ok=True)
     zp = os.path.join(c["submit_root"], name + ".zip")
-    if args.stage == "movement" and os.path.exists(zp) and not args.force:
+    if args.stage == "run" and os.path.exists(zp) and not args.force:
         log("skip (zip exists):", name); return {"clip": name, "status": "skipped"}
     if c.get("_sandbox"):                                          # sandbox: start from a copy of the real marks
         real = dict(c); real.pop("marks_root", None)
@@ -213,9 +213,8 @@ def run_clip(video, c, args):
     log("=== %s  (%s)" % (name, video))
     if args.stage == "render":                             # re-render the saved scene (no new fitting)
         return render_only(name, video, work, c, args, t0)
-    if args.stage == "background":                         # Stage 2: Stage 1's scene + prebuilt objects -> a second zip
-        import background
-        return background.run(name, video, work, marks_dir(video, c), c, render_and_pack)
+    import scene_objects, ade_find, metric_scene
+    assets = scene_objects.load_assets(c)                  # every object model read first: a broken one fails at once
     gpu_lease.acquire()
     for path in glob.glob(os.path.join(work, "metric_evidence*.npz")) + [os.path.join(work, fn) for fn in STALE]:
         if os.path.isfile(path):                           # an earlier build's files: never shipped or reused
@@ -232,7 +231,7 @@ def run_clip(video, c, args):
     palette = dict(PALETTE)
     cam_all, chars_all, meshes_all, prep_all, warns, shot_rep, tiles = [None] * N, {}, [], [], [], [], []
     zoom_all = [1.0] * N                                   # focal scale per frame (the lens zooms): f = zoom * lens
-    # the clip's lens from the picture (lens_auto.py, MoGe-2); set by hand only in config.json (lens_auto false + lens_mm)
+    # the clip's lens from the picture (lens_auto.py, MoGe); set by hand only in config.json (lens_auto false + lens_mm)
     lens_info = None
     if c.get("lens_auto", True):
         try:
@@ -251,6 +250,14 @@ def run_clip(video, c, args):
             log("  lens: %.1f mm from config.json (measuring failed: %s)" % (c["lens_mm"], str(e)[:200]))
     else:
         log("  lens: %.1f mm set by hand in config.json (lens_auto off)" % c["lens_mm"])
+    # Mask2Former panoptic, once for the clip: the objects on a few frames per second, and every pixel's name on
+    # those frames and the depth step's views (floor, wall and ceiling give gravity and the floor)
+    sample = set(ade_find.sample_frames(shots, fps, c))
+    for s0, s1 in shots:
+        sample |= {s0 + int(f) for f in metric_scene.view_frames(s1 - s0, c)}
+    pics = {f: frames[f][y0:y0 + Hp] for f in sorted(sample)}
+    bundle, missing = scene_objects.find(pics, shots, assets[2], video, work, c)
+    names = [str(x) for x in bundle["names"]]
     for si, (s0, s1) in enumerate(shots):
         tag = "_s%d" % (si + 1) if len(shots) > 1 else ""
         c["_shot_tag"] = tag
@@ -285,9 +292,14 @@ def run_clip(video, c, args):
         observation = None
         if c.get("metric_scene", True):
             try:
-                import metric_scene
-                log("  metric scene: MoGe-2 geometry and semantic surfaces ...")
-                observation = metric_scene.observe(sf, spose, cam, y0, camj, c)
+                log("  metric scene: MoGe depth, Mask2Former surfaces ...")
+
+                def labels_at(f, w, h, s0=s0):
+                    lab = ade_find.labels_at(bundle, s0 + f, w, h)
+                    if lab is None:
+                        raise RuntimeError("no Mask2Former surfaces for frame %d" % (s0 + f))
+                    return lab, names
+                observation = metric_scene.observe(sf, spose, cam, y0, camj, c, labels_at)
             except Exception as e:
                 observation = None
                 camj["warnings"].append("metric evidence unavailable: %s" % str(e)[-240:])
@@ -309,7 +321,7 @@ def run_clip(video, c, args):
                 measured_height = metric_scene.camera_height(observation,camj,u)
                 if measured_height is not None:
                     hc = measured_height; ginfo['camera_height'] = hc
-                    ginfo['height_source'] = 'body-scaled semantic ground'
+                    ginfo['height_source'] = 'body-scaled Mask2Former ground'
         world = World(cam, camj["R"], u, hc, zoom=camj.get("zoom"), yaw=camj.get("world_yaw", 0.))
         if camj.get("travel_cam0"):
             world.T = np.asarray(camj["travel_cam0"]) @ world.M
@@ -337,10 +349,10 @@ def run_clip(video, c, args):
                 ginfo['depth_scale'] = body_summary
             else:
                 ginfo["depth_scale"] = metric_scene.body_scale(observation, world, chars)
-        log("  set ...  (Stage 1: the floor only)")
+        log("  floor ...")
         from scene_depth import flat_set               # one flat ground disc under the people; no set, no props
         meshes = flat_set(world, Ns, float(c.get("far_distance", 1500.0)))
-        sinfo = {"source": "flat ground disc (Stage 1: floor only)"}
+        sinfo = {"source": "flat ground disc"}
         tp = os.path.join(work, "preview%s.jpg" % tag)
         preview(sf, y0, world, chars, people, meshes, tp, n=4 if len(shots) > 1 else 6)
         tiles.append(tp)
@@ -382,12 +394,17 @@ def run_clip(video, c, args):
             "chars": chars_all, "meshes": meshes_all, "props": [], "shots": shot_rep}
     data['human_backend'] = 'sam3d_body'
     data['required_track_ids'] = sorted(c.get('_required_tracks', set()), key=str)
+    # the objects: your models where the video shows the things they stand for (scene_objects.py)
+    omeshes, objects, owarns = scene_objects.place(data, pics, bundle, missing,
+                                                   scene_objects.people_masks(os.path.dirname(pose_p)), assets, work, c)
+    data["meshes"] = meshes_all + omeshes
+    warns += owarns
     import source_exposure                                 # opt-in (config source_exposure), off by default
     source_exposure.attach(data,video,work,c,pose,{'y0':y0,'Hpic':Hp,'fps':fps},frames)
     dp = os.path.join(work, "scene_data.json"); jsave(dp, data)
     if not chars_all:
         warns.append("no people found")
-    rep = {"clip": name, "video": video, "stage": "movement", "frames": N, "people": prep_all, "shots": shot_rep,
+    rep = {"clip": name, "video": video, "stage": "run", "frames": N, "people": prep_all, "objects": objects, "shots": shot_rep,
            "ground": shot_rep[0]["ground"], "camera_rotation_deg": max(s["max_rotation_deg"] for s in shot_rep), "warnings": warns}
     if c.get("_junk"):
         rep["left_out"] = c["_junk"]
@@ -400,7 +417,7 @@ def run_clip(video, c, args):
         log("  quality numbers failed: %s" % str(e)[:200])
     info = {"W": W, "Hfull": Hfull, "y0": y0, "Hpic": Hp, "frames": N, "fps": fps}
     jsave(os.path.join(work, "clip_info.json"), dict(info, video=video, desc_path=os.path.join(os.path.dirname(pose_p), "desc.txt")))
-    frames = sf = None                                     # ~1 GB per clip: free it before Blender and the encoder
+    frames = sf = pics = None                              # ~1 GB per clip: free it before Blender and the encoder
     gpu_lease.release()                                    # the rest uses no model: Blender, the encoder, the checks
     alignment = quality.cached_alignment(data, pose, y0, work)     # numbers + warnings, never a stop
     rep["human_alignment"] = alignment
@@ -522,11 +539,11 @@ def render_and_pack(name, video, work, c):
     """scene_data.json -> Blender render (colour card) -> v2.1 zip -> v2.1 package check -> {submission, zip, package_check}"""
     dp = os.path.join(work, "scene_data.json")
     if not os.path.exists(dp):
-        raise RuntimeError("no scene yet - run the movement stage for this clip first")
+        raise RuntimeError("no scene yet - run this clip first")
     data = jload(dp)
     old = sorted(k for k, ch in data.get("chars", {}).items() if ch.get("style", "sample") not in ("sample", "classic"))
     if old:
-        raise RuntimeError("this scene was built with a removed character rig (%s) - run the movement stage again" % ", ".join(old))
+        raise RuntimeError("this scene was built with a removed character rig (%s) - run the clip again" % ", ".join(old))
     data["submit_dir"] = os.path.join(c["submit_root"], name); data["work_dir"] = work
     data["render_scale"] = float(c.get("out_width", 3840)) / data["res"][0]     # the current output width, also for older fits
     try:                                                                        # v2.1: render at the size the 1080P canvas shows
@@ -557,7 +574,7 @@ def render_only(name, video, work, c, args, t0):
     """--stage render: re-render the saved scene, pack and check it (people and camera as fitted)"""
     dp = os.path.join(work, "scene_data.json")
     if not os.path.exists(dp):
-        raise RuntimeError("no scene yet - run the movement stage for this clip first")
+        raise RuntimeError("no scene yet - run this clip first")
     rep = {"clip": name, "video": video, "stage": "render", "status": "ok", "warnings": []}
     pp = os.path.join(marks_dir(video, c), 'pose.json')
     if os.path.exists(pp):
@@ -583,9 +600,8 @@ def collect(inputs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("inputs", nargs="*")
-    ap.add_argument("--stage", default="movement", choices=list(STAGES),
-                    help="movement: the whole Stage 1 run (default); render: re-render a saved scene, zip and check it; "
-                         "background: Stage 2, objects from assets\\objects added to Stage 1's scene -> a second zip")
+    ap.add_argument("--stage", default="run", choices=list(STAGES),
+                    help="run: the whole run, video -> checked zip (default); render: re-render a saved scene, zip and check it")
     ap.add_argument("--force", action="store_true", help="run again even when the clip's zip exists")
     ap.add_argument("--device", default="cuda", choices=["cuda"], help="the models run on the NVIDIA card only")
     ap.add_argument("--name", default=None, help="submission name for a single clip (default: <film>_<file name>)")

@@ -1,6 +1,7 @@
 """Per-clip wall timings, including subprocess stages and failures."""
 import contextvars
 import functools
+import inspect
 import json
 import os
 import tempfile
@@ -55,11 +56,11 @@ def stage(name):
 def profile_clip(function):
     @functools.wraps(function)
     def measured(video, config, args):
-        name = getattr(args, "name", None) or function.__globals__["clip_name"](video, config)
+        name = getattr(args, "name", None) or inspect.unwrap(function).__globals__["clip_name"](video, config)
         work = os.path.join(config["work_root"], name)
         profile = {"clip": name, "stage": args.stage, "stages": {}, "status": "failed"}
-        profile["models"] = {"pose": "rtmpose", "camera": "flow", "depth": "moge2 + mask2former",
-                             "tracker": "sam3", "human": "sam3d_body"}
+        profile["models"] = {"pose": "rtmpose", "camera": "flow", "depth": "moge", "tracker": "sam3", "human": "sam3d_body",
+                             "scene": "mask2former panoptic (objects + surfaces)"}
         token = _active.set(profile)
         started = time.perf_counter()
         try:

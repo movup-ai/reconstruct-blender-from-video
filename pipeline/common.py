@@ -14,7 +14,7 @@ DEFAULT_CFG = {
     "work_root": os.path.join(AGENT, "Work_auto"),
     "lens_mm": 34.9,                         # 35 mm-equivalent focal length used for every clip (clip 1 solved to 34.9)
     "person_height": 1.72,
-    "character_style": "sample",             # the client's sample character mesh (the only Stage 1 rig)
+    "character_style": "sample",             # the client's sample character mesh (the only rig)
     "source_exposure": False,                 # optional relative brightness matching
     "render_engine": "workbench",             # Workbench (default); eevee only when set in config.json
     "out_width": 3840,                       # white model / comparison width, like the client sample (3840 x source aspect)
@@ -57,7 +57,7 @@ FIXED_BACKENDS = {"tracker_backend": "sam3", "human_backend": "sam3d_body", "pos
 
 
 def normalize_backends(c):
-    """Migrate saved legacy selections to the supported Stage 1 flow (retired settings are dropped)."""
+    """Migrate saved legacy selections to the supported flow (retired settings are dropped)."""
     c = dict(c)
     for key in RETIRED_SETTINGS:
         c.pop(key, None)
@@ -94,7 +94,7 @@ def cfg():
     if sb:
         c["work_root"] = os.path.join(sb, "Work_auto"); c["submit_root"] = os.path.join(sb, "SUBMIT")
         c["marks_root"] = os.path.join(sb, "output"); c["_sandbox"] = sb
-    if os.environ.get("BA_OBJECT_ASSETS"):             # test runs: another folder of Stage 2 object models
+    if os.environ.get("BA_OBJECT_ASSETS"):             # test runs: another folder of object models
         c["object_assets"] = os.environ["BA_OBJECT_ASSETS"]
     if os.environ.get("BA_SOURCE"):                    # a job the app runs: the app's source folder (same layout of
         c["source_root"] = os.environ["BA_SOURCE"]     # output\<film>\<clip> on both sides)

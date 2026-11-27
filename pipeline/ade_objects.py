@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Stage 2's object list: Mask2Former's 150 ADE20K names -> the asset (assets\\objects\\<asset>.blend) placed for it.
+"""The run's object list: Mask2Former's 150 ADE20K names -> the asset (assets\\objects\\<asset>.blend) placed for it.
 
 Mask2Former (models\\mask2former_ade_panoptic) finds and names the objects; this table says which model stands in for
-each name.  None: not an object to place - people (Stage 1), and the ground, sky, water and landscape (Stage 1 builds
-the floor; the rest is background colour).  A name whose .blend is missing is reported and left out.
+each name.  None: not an object to place - people (the characters), and the ground, sky, water and landscape (the run
+builds the floor; the rest is background colour).  A name whose .blend is missing is reported and left out.
 
   ASSET[ade name]    -> asset name or None
   asset_of(ade name) -> asset name or None
-  wanted()           -> every asset name the table uses (the .blend files Stage 2 can place)"""
+  wanted()           -> every asset name the table uses (the .blend files the run can place)"""
 
 ASSET = {
     # not placed: people and scenery

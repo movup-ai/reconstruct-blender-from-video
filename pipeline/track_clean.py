@@ -1,4 +1,4 @@
-"""Clean SAM 3 person tracks before they become characters (Stage 1 runs with no human review, so nothing else
+"""Clean SAM 3 person tracks before they become characters (the run has no human review, so nothing else
 catches a ghost or a split actor):
 
   join_pieces  one actor that SAM 3 lost behind something and found again under a new id: the pieces are joined

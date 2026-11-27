@@ -1,7 +1,8 @@
-"""Metric scene evidence for Stage 1: MoGe depth (MoGe-2 or MoGe-3, moge_model.py) + Mask2Former floor/wall/ceiling labels (metric_observe.py).
+"""Metric scene evidence: MoGe depth (MoGe-2 or MoGe-3, moge_model.py; metric_observe.py) + what each pixel is
+(floor, wall, ceiling, person, sky...) from Mask2Former panoptic's name maps (ade_find.py, run once per clip).
 
-observe() caches metric_observation<shot>.npz in the clip's work folder - Stage 1's saved depth, kept for the
-planned Stage 2 (background).  align() / camera_height() give gravity and the camera height; body_scale() is the
+observe() caches the depth in metric_observation<shot>.npz in the clip's work folder.  view_frames() are the frames
+it looks at (the scene finder looks at them too).  align() / camera_height() give gravity and the camera height; body_scale() is the
 fallback scale when SAM 3D Body is not calibrated.  All arrays use OpenCV cameras and the pipeline's z-up world, in metres.
 """
 import hashlib
@@ -71,11 +72,17 @@ def person_mask(pose, frame, shape, y0, source_size):
     return mask.astype(bool)
 
 
+def view_frames(n, c):
+    """the shot frames (0 .. n-1) the depth step looks at"""
+    count = min(n, max(1, int(c.get("metric_max_views", 3))))
+    return np.unique(np.linspace(0, n-1, count, dtype=int))
+
+
 @stage("metric_observation")
-def observe(frames, pose, cam, y0, camj, c):
-    """Run isolated GPU observations, cached by the actual images and intrinsics."""
-    count = min(len(frames), max(1, int(c.get("metric_max_views", 3))))
-    fs = np.unique(np.linspace(0, len(frames)-1, count, dtype=int))
+def observe(frames, pose, cam, y0, camj, c, labels_at):
+    """MoGe depth of the view frames (an isolated GPU worker, cached by the actual images and intrinsics).
+    labels_at(shot frame, width, height) -> (name map, names): Mask2Former panoptic's name of every pixel"""
+    fs = view_frames(len(frames), c)
     width = min(cam.W, int(c.get("metric_resolution", 384)))
     height = max(16, round(cam.H * width / cam.W))
     images = np.asarray([cv2.cvtColor(cv2.resize(frames[f][y0:y0+cam.H], (width, height)), cv2.COLOR_BGR2RGB) for f in fs])
@@ -89,7 +96,7 @@ def observe(frames, pose, cam, y0, camj, c):
     if os.path.isfile(path):
         with np.load(path, allow_pickle=False) as cached:
             if str(cached["key"]) == digest:
-                source = {k: cached[k].copy() for k in cached.files}
+                source = {k: cached[k].copy() for k in cached.files if k not in ("labels", "names")}
     if source is None:
         with tempfile.TemporaryDirectory(dir=c["_work"], prefix="metric_") as tmp:
             inp, out = os.path.join(tmp, "input.npz"), os.path.join(tmp, "result.npz")
@@ -100,7 +107,7 @@ def observe(frames, pose, cam, y0, camj, c):
             if proc.returncode:
                 raise RuntimeError("metric observation failed: " + (proc.stderr or proc.stdout)[-600:])
             with np.load(out, allow_pickle=False) as result:
-                source = {k: result[k].copy() for k in result.files if k != "images"}
+                source = {k: result[k].copy() for k in result.files if k not in ("images", "labels", "names")}
             np.savez_compressed(path, key=digest, **source)
     source["frames"] = fs
     mask_bundle = None
@@ -109,7 +116,8 @@ def observe(frames, pose, cam, y0, camj, c):
         path = os.path.join(c['_marks_dir'],'sam3_masks.npz')
         if os.path.isfile(path): mask_bundle = read_masks(path)
     Ks, people, groups = [], [], []
-    for f, label in zip(fs, source["labels"]):
+    for f in fs:
+        label, names = labels_at(int(f), width, height)
         K = cam.K().copy(); K[0, 0] *= zoom[f]; K[1, 1] *= zoom[f]
         K[0] *= width / cam.W; K[1] *= height / cam.H
         Ks.append(K)
@@ -118,7 +126,7 @@ def observe(frames, pose, cam, y0, camj, c):
             ids = {int(p['sam3_id']) for p in pose.get('people',[]) if 'sam3_id' in p}
             mask = union_at(mask_bundle,int(f)+c.get('_shot_start',0),width,height,ids)
         group = np.full(label.shape, 3, np.int8)
-        for i, name in enumerate(source["names"]):
+        for i, name in enumerate(names):
             if name in FLOOR: group[label == i] = 0
             if name in WALL: group[label == i] = 1
             if name == "ceiling": group[label == i] = 2
@@ -189,7 +197,7 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
             length = np.linalg.norm(vector)
             if length>.1 and vector @ prior/length>.85: upright.append(vector/length)
     up = solve_up(np.concatenate(normals), np.concatenate(categories), prior, upright)
-    # MoGe scale is calibrated from the recovered camera height and semantic floor.
+    # MoGe scale is calibrated from the recovered camera height and the Mask2Former floor.
     ground = np.concatenate(floors); ground_scale = None
     if len(ground) >= 30:
         offsets = -(ground @ up)
@@ -199,7 +207,7 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
             if np.median(np.abs(offsets-med)) / med < .2:
                 ground_scale = height / med
     observation["scale"] = float(ground_scale or 1.)
-    observation["scale_source"] = "semantic floor / fitted camera height" if ground_scale else "MoGe metric prior"
+    observation["scale_source"] = "Mask2Former floor / fitted camera height" if ground_scale else "MoGe metric prior"
     # Build the same initial horizontal axes as World without constructing camera state.
     forward = np.array([0., 0., 1.]) - up * up[2]
     if np.linalg.norm(forward) < 1e-6: forward = np.array([0., 1., 0.])
@@ -216,7 +224,7 @@ def align(observation, camj, prior, height, c, people=None, cam=None, y0=0):
             if strength > .65:
                 yaw = float(np.angle(vote) / 4)
     camj["world_yaw"] = yaw
-    return up, {"source": "%s + semantic floor/ceiling/wall normals" % observation.get("source", "MoGe"), "world_yaw_deg": math.degrees(yaw),
+    return up, {"source": "%s + Mask2Former floor/ceiling/wall normals" % observation.get("source", "MoGe"), "world_yaw_deg": math.degrees(yaw),
                 "manhattan_confidence": strength, "ground_samples": len(ground), "scale_source": observation["scale_source"]}
 
 

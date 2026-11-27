@@ -1,5 +1,5 @@
-"""Stage 1 Movement end to end with the heavy models mocked: marks -> camera -> people -> floor -> scene_data.json ->
-Blender (colour card) -> zip -> v2.1 package check.  No GPU, Blender or ffmpeg is used."""
+"""The one run end to end with the heavy models mocked: marks -> Mask2Former -> camera -> people -> floor ->
+objects -> scene_data.json -> Blender (colour card) -> zip -> v2.1 package check.  No GPU, Blender or ffmpeg is used."""
 import os
 import subprocess
 import sys
@@ -16,6 +16,7 @@ import run_pipeline as RP  # noqa: E402
 import colour_card as CC  # noqa: E402
 import quality  # noqa: E402
 import scene_depth  # noqa: E402
+import scene_objects  # noqa: E402
 from common import DEFAULT_CFG, jload, jsave  # noqa: E402
 from rig import JOINTS  # noqa: E402
 
@@ -49,7 +50,22 @@ def fake_camera(frames, pose, people, cam, y0, Hp, c):
     return camj, np.array([0.0, -1.0, 0.0]), 1.6, {"source": "test", "camera_height": 1.6}
 
 
-class Stage1RunTests(unittest.TestCase):
+def fake_find(pics, shots, types, video, work, c):
+    """Mask2Former: every looked-at frame's name map (top half wall, bottom half floor)"""
+    fs = sorted(pics)
+    lab = np.zeros((len(fs), 6, 8), np.int16); lab[:, 3:] = 1
+    return {"names": np.asarray(["wall", "floor"]), "label_frames": np.asarray(fs), "labels": lab}, {}
+
+
+CHAIR = {"name": "chair_1", "v": [[0, 6, 0], [0.5, 6, 0], [0, 6, 0.9]], "f": [[0, 1, 2]], "colour": "set", "layer": 2,
+         "kind": "chair", "label": "chair", "obj": "chair_1", "asset": "chair.blend"}
+
+
+def fake_place(data, pics, bundle, missing, people_mask, assets, work, c):
+    return [dict(CHAIR)], [{"name": "chair_1", "type": "chair", "size_m": [0.5, 0.5, 0.9]}], []
+
+
+class RunTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); d = self.tmp.name
         self.video = os.path.join(d, "src", "clip.mp4"); os.makedirs(os.path.dirname(self.video))
@@ -59,7 +75,7 @@ class Stage1RunTests(unittest.TestCase):
         self.c = dict(DEFAULT_CFG, source_root=os.path.join(d, "src"), work_root=os.path.join(d, "work"),
                       submit_root=os.path.join(d, "submit"), marks_root=self.marks, lens_auto=False, metric_scene=False,
                       device="cuda")
-        self.args = types.SimpleNamespace(stage="movement", force=True, device="cuda", name="clip_a")
+        self.args = types.SimpleNamespace(stage="run", force=True, device="cuda", name="clip_a")
         self.work = os.path.join(self.c["work_root"], "clip_a")
         self.calls = {}
 
@@ -92,18 +108,21 @@ class Stage1RunTests(unittest.TestCase):
              patch.object(RP, "blender_exe", return_value="blender.exe"), \
              patch.object(RP.subprocess, "run", side_effect=self.blender), \
              patch.object(RP.pkg, "package", side_effect=self.package), \
+             patch.object(scene_objects, "load_assets", return_value=({}, {}, ["chair"])), \
+             patch.object(scene_objects, "find", side_effect=fake_find) as find, \
+             patch.object(scene_objects, "place", side_effect=fake_place) as place, \
              patch("agent.validate.check_package_v21", return_value=(list(problems), {})) as check, \
              patch("agent.validate.check_zip", return_value=[]) as zcheck:
             try:
                 return RP.run_clip(self.video, dict(self.c), self.args)
             finally:
-                self.calls.update(marks=marks, floor=floor, check=check, zcheck=zcheck)
+                self.calls.update(marks=marks, floor=floor, check=check, zcheck=zcheck, find=find, place=place)
 
     def test_one_straight_run_to_a_checked_zip(self):
         rep = self.run_clip()
         self.assertEqual(rep["status"], "ok"); self.assertEqual(rep["package_check"], "ok")
         data = jload(os.path.join(self.work, "scene_data.json"))
-        self.assertEqual([m["name"] for m in data["meshes"]], ["ground"], "Stage 1: the floor only, no set, no backdrop")
+        self.assertEqual([m["name"] for m in data["meshes"]], ["ground", "chair_1"], "the floor and the placed objects")
         self.assertEqual(data["props"], [])
         self.assertEqual(data["meshes"][0]["colour"], "bg"); self.assertEqual(data["palette"]["bg"], [184, 184, 184])
         self.assertEqual(data["chars"]["P1"]["colour"], "red"); self.assertEqual(data["palette"]["red"], CC.CARD["red"])
@@ -121,8 +140,27 @@ class Stage1RunTests(unittest.TestCase):
         for fn in ("camera.json", "clip_info.json", "report.json", "preview.jpg", "human_alignment.json", "render_done.txt"):
             self.assertTrue(os.path.isfile(os.path.join(self.work, fn)), fn)
         report = jload(os.path.join(self.work, "report.json"))
+        self.assertEqual([o["name"] for o in report["objects"]], ["chair_1"])
+        self.calls["find"].assert_called_once(); self.calls["place"].assert_called_once()
+        self.assertEqual(self.calls["blender"]["meshes"][1]["name"], "chair_1", "Blender renders the objects too")
         self.assertEqual(report["status"], "ok"); self.assertIn("human_alignment", report); self.assertIn("quality", report)
         self.calls["floor"].assert_called_once()          # SAM 3D Body not calibrated: the half-body floor shift runs
+
+    def test_the_depth_step_names_its_pixels_from_mask2former(self):
+        seen = {}
+
+        def observe(frames, pose, cam, y0, camj, c, labels_at):
+            seen["views"] = [labels_at(f, 16, 12) for f in (0, 5, 11)]
+            raise RuntimeError("no depth model in the test")            # the run goes on without metric evidence
+        self.c["metric_scene"] = True
+        with patch("metric_scene.observe", side_effect=observe):
+            rep = self.run_clip()
+        self.assertEqual(rep["status"], "ok")
+        for lab, names in seen["views"]:
+            self.assertEqual(lab.shape, (12, 16)); self.assertEqual(list(names), ["wall", "floor"])
+            self.assertEqual(lab[0, 0], 0); self.assertEqual(lab[-1, 0], 1)
+        pics = self.calls["find"].call_args[0][0]
+        self.assertTrue({0, 5, 11} <= set(pics), "the depth step's views are among Mask2Former's frames")
 
     def test_calibrated_body_scale_skips_the_floor_shift(self):
         self.run_clip(calibrated=True)
@@ -180,13 +218,13 @@ class CommandLineTests(unittest.TestCase):
         return subprocess.run([sys.executable, os.path.join(ROOT, "pipeline", "run_pipeline.py")] + list(args),
                               capture_output=True, text=True, timeout=120)
 
-    def test_only_movement_render_and_background_stages(self):
-        for stage in ("fit", "blend", "all", "depth"):
+    def test_only_run_and_render_stages(self):
+        for stage in ("fit", "blend", "all", "depth", "movement", "background"):
             r = self.run_cli("x.mp4", "--stage", stage)
             self.assertEqual(r.returncode, 2, stage); self.assertIn("invalid choice", r.stderr)
         r = self.run_cli("x.mp4", "--require-confirm")
         self.assertEqual(r.returncode, 2); self.assertIn("unrecognized arguments", r.stderr)
-        self.assertEqual(RP.STAGES, ("movement", "render", "background"))
+        self.assertEqual(RP.STAGES, ("run", "render"))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Exercise the real table renderer with old and cumulative timing responses."""
+"""Exercise the real table renderer with cumulative timing responses."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,18 +9,18 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class ComputerTimeUiTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'),'Node is needed for JavaScript rendering checks')
-    def test_table_uses_cumulative_time_and_supports_an_older_running_server(self):
+    def test_table_uses_cumulative_time(self):
         script=r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),root=process.argv[1];
 const context=vm.createContext({localStorage:{removeItem(){}}});
 vm.runInContext(fs.readFileSync(root+'/web/common.js','utf8'),context);
 const index=fs.readFileSync(root+'/web/index.html','utf8');
 const table=index.slice(index.indexOf('function renderTable('),index.indexOf('function progressSummary('));
-vm.runInContext(`function clipActions(){return {queue:'',remove:''};} function stepCell(){return '';}`+table,context);
-const old={done:{machine:180},steps:{movement:{ran:480},background:{ran:180}}};
-const cumulative={...old,machine:780};
+vm.runInContext(`function clipActions(){return {action:''};} function statusCell(){return '';}`+table,context);
+const runs={done:{machine:180}};
+const cumulative={...runs,machine:780};
 assert.equal(vm.runInContext('computerSeconds(null)',context),null);
-context.timing=old;assert.equal(vm.runInContext('computerSeconds(timing)',context),660);
+context.timing=runs;assert.equal(vm.runInContext('computerSeconds(timing)',context),180);
 context.timing=cumulative;assert.equal(vm.runInContext('computerSeconds(timing)',context),780);
 vm.runInContext(`const list={};renderTable(list,[{id:'a',name:'clip',status:{},took:timing}],{});
  if(!list.innerHTML.includes('>13 min</td>'))throw Error('Table displayed the last action instead of total');`,context);

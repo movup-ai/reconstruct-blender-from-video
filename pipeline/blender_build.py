@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-White-model Blender builder of the automatic pipeline (Stage 1).
+White-model Blender builder of the automatic pipeline.
 Run by the pipeline:  blender -b -P blender_build.py -- <scene_data.json> [render]
 Builds the floor (and any set meshes in scene_data.json), the colour-coded sample-mesh characters (white eye / chest
 bands painted on head and chest), the solved camera (with its zoom keyed on the lens), saves model_3d/<package>.blend

@@ -19,7 +19,7 @@ APP_DEFAULTS = {
     "port": 8765,
     "host": "127.0.0.1",              # 0.0.0.0: the other PCs of the network can open the app too (there is no login)
     "parallel": 1,                  # clips processed at once; model inference shares one GPU lease
-    "timeout_movement_min": 220,      # Stage 1 Movement: people, camera, floor, Blender render and the v2.1 zip
+    "timeout_movement_min": 220,      # one run: people, camera, floor, objects, Blender render and the v2.1 zip
     "max_attempts": 2,                # a failed job is tried once more automatically
     "open_browser": True,
 }

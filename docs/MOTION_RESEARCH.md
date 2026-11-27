@@ -2,7 +2,7 @@
 
 These values are a **soft recommendation**. The detected joints (yellow dots) stay the main truth: the prior only
 moves a joint in proportion to how unsure its dots are (`strength × (1 − dot confidence)`, strength 0.6).
-Off by default; switched on for every clip with `"motion_prior": true` in `config.json` (Stage 1 has no per-clip
+Off by default; switched on for every clip with `"motion_prior": true` in `config.json` (the run has no per-clip
 hints, so the per-person `"motion_strength"` / `"motion_style"` options are not reachable from the app).
 
 | Topic | Value used | Source |

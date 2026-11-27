@@ -60,10 +60,10 @@ class ResetLifecycleTests(unittest.TestCase):
         child="from pathlib import Path;import sys,time;p=Path(sys.argv[1]);\nwhile True:p.write_text(str(time.time()));time.sleep(.02)"
         parent="from pathlib import Path;import subprocess,sys,time;subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]);p=Path(sys.argv[3]);\nwhile True:p.mkdir(parents=True,exist_ok=True);(p/'active').write_text('writing');time.sleep(.02)"
         self.runner._cmd=lambda *_:[sys.executable,'-c',parent,child,str(heartbeat),f['work']]
-        jid=self.ws.enqueue(cl,'movement');self.start_worker()
+        jid=self.ws.enqueue(cl,'run');self.start_worker()
         self.wait_for(lambda:heartbeat.exists() and jid in self.runner.procs)
         process=self.runner.procs[jid]
-        self.app.store.enqueue(cl.id,'background',force=True)
+        self.app.store.enqueue(self.ws.lib.clips[1].id,'run')
         result=self.ws.reset([],all_clips=True)
         self.assertTrue(result['ok']);self.assertGreaterEqual(result['stopped'],2)
         self.assertIsNotNone(process.poll())
@@ -73,7 +73,7 @@ class ResetLifecycleTests(unittest.TestCase):
         self.assertFalse(Path(f['work']).exists(),'A late writer must not recreate the folder')
         self.assertEqual(self.app.store.counts(),{})
         self.assertNotIn(cl.id,self.app.store.timing())
-        self.assertTrue(self.runner.is_paused())
+        self.assertTrue(self.runner.paused)
         self.runner.after.assert_not_called()
 
     def test_reset_covers_skipped_clips(self):
@@ -81,7 +81,7 @@ class ResetLifecycleTests(unittest.TestCase):
         for cl in selected:self.fill(cl)
         clips.set_skipped(selected[0].id,True,self.ws.c)
         clips.set_skipped(selected[1].id,True,self.ws.c)
-        jid=self.app.store.enqueue(selected[1].id,'movement')
+        jid=self.app.store.enqueue(selected[1].id,'run')
         self.app.store.take();self.app.store.finish(jid,True)
         Path(self.ws.c['work_root'],'CLAUDE_HANDOFF.json').write_text('{}')
         result=self.ws.reset([],all_clips=True)
@@ -98,7 +98,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_timing_only_reset_and_dry_run_do_not_need_work_files(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');self.app.store.take();self.app.store.finish(jid,True)
+        jid=self.ws.enqueue(cl,'run');self.app.store.take();self.app.store.finish(jid,True)
         preview=self.ws.reset([],dry=True,all_clips=True)
         self.assertEqual(len(preview['clips']),2)
         self.assertIn(cl.id,self.app.store.timing())
@@ -111,15 +111,15 @@ class ResetLifecycleTests(unittest.TestCase):
             entered.set();release.wait(3)
             return [sys.executable,'-c',"raise AssertionError('Must not launch')"]
         self.runner._cmd=command
-        self.ws.enqueue(cl,'movement');self.start_worker();self.assertTrue(entered.wait(3))
+        self.ws.enqueue(cl,'run');self.start_worker();self.assertTrue(entered.wait(3))
         results=[]
         reset_thread=threading.Thread(target=lambda:results.append(self.ws.reset([],all_clips=True)))
         reset_thread.start()
         try:
             self.wait_for(lambda:self.runner.resetting)
-            with self.assertRaises(HttpError):self.ws.enqueue(cl,'movement')
+            with self.assertRaises(HttpError):self.ws.enqueue(cl,'run')
             self.runner.resume()
-            self.assertTrue(self.runner.is_paused())
+            self.assertTrue(self.runner.paused)
             with patch.object(jobs.subprocess,'Popen',side_effect=AssertionError('Cancelled worker launched')):
                 release.set();reset_thread.join(3)
             self.assertFalse(reset_thread.is_alive());self.assertTrue(results[0]['ok'])
@@ -136,7 +136,7 @@ class ResetLifecycleTests(unittest.TestCase):
                 with self.runner.reset_jobs([cl.id],all_clips=True,timeout=.01):
                     self.fail('Must not delete files while a worker can write')
             self.assertTrue(Path(f['work']).exists())
-            self.assertTrue(self.runner.is_paused())
+            self.assertTrue(self.runner.paused)
         finally:self.runner.inflight.clear()
 
     def test_pause_stops_active_work_then_resume_reuses_completed_cache(self):
@@ -147,7 +147,7 @@ class ResetLifecycleTests(unittest.TestCase):
         broken=Path(f['work'])/'incomplete.npz';broken.write_bytes(b'partial interrupted numpy output')
         code="from pathlib import Path;import sys,time;p=Path(sys.argv[1]);\nif p.exists():Path(sys.argv[2]).write_text('reused checkpoint');sys.exit(0)\np.write_text('completed expensive stage');\nwhile True:time.sleep(.02)"
         self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(checkpoint),str(done)]
-        jid=self.ws.enqueue(cl,'movement');self.start_worker()
+        jid=self.ws.enqueue(cl,'run');self.start_worker()
         self.wait_for(lambda:checkpoint.exists() and jid in self.runner.procs)
         self.app.store.db.execute('UPDATE jobs SET started=? WHERE id=?',(time.time()-20,jid))
         process=self.runner.procs[jid]
@@ -169,7 +169,7 @@ class ResetLifecycleTests(unittest.TestCase):
         cl=self.ws.lib.clips[0];f=self.fill(cl);ready=self.root/'cancel-ready'
         code="from pathlib import Path;import sys,time;Path(sys.argv[1]).write_text('ready');\nwhile True:time.sleep(.02)"
         self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(ready)]
-        jid=self.ws.enqueue(cl,'movement');self.start_worker()
+        jid=self.ws.enqueue(cl,'run');self.start_worker()
         self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
         process=self.runner.procs[jid]
         result=self.runner.interrupt()
@@ -185,18 +185,6 @@ class ResetLifecycleTests(unittest.TestCase):
         self.assertEqual(self.app.store.recover(),0,'Cancelled work must stay cancelled after restart')
         self.runner.after.assert_not_called()
 
-    def test_pause_restarts_interrupted_stage_before_later_finish_on_same_clip(self):
-        cl=self.ws.lib.clips[0]
-        fit=self.ws.enqueue(cl,'movement');self.app.store.take()
-        finish=self.app.store.enqueue(cl.id,'background',force=True)
-        self.runner.interrupt(pause=True)
-        resumed=self.app.store.take()
-        self.assertEqual(resumed['stage'],'movement')
-        self.assertNotEqual(resumed['id'],fit)
-        self.assertIsNone(self.app.store.take())
-        self.app.store.finish(resumed['id'],True)
-        self.assertEqual(self.app.store.take()['id'],finish)
-
     def test_pause_only_interrupts_active_job_and_keeps_ready_clip_and_waiting_row(self):
         active,ready_clip=self.ws.lib.clips
         paths=self.fill(ready_clip)
@@ -208,9 +196,9 @@ class ResetLifecycleTests(unittest.TestCase):
         ready=self.root/'pause-only-running'
         self.runner._cmd=lambda *_:[sys.executable,'-c',
             "from pathlib import Path;import sys,time;Path(sys.argv[1]).touch();time.sleep(60)",str(ready)]
-        running_id=self.ws.enqueue(active,'movement');self.start_worker()
+        running_id=self.ws.enqueue(active,'run');self.start_worker()
         self.wait_for(lambda:ready.exists() and running_id in self.runner.procs)
-        waiting_id=self.ws.enqueue(active,'background',force=True)
+        waiting_id=self.app.store.enqueue(ready_clip.id,'run')
         def waiting_row():
             return dict(self.app.store.db.execute('SELECT * FROM jobs WHERE id=?',(waiting_id,)).fetchone())
         before_waiting=waiting_row()
@@ -223,7 +211,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_pause_with_only_waiting_work_does_not_rewrite_it(self):
         cl=self.ws.lib.clips[0]
-        self.ws.enqueue(cl,'movement')
+        self.ws.enqueue(cl,'run')
         before=self.app.store.latest_for(cl.id)
         self.runner.resume()
         result=self.runner.interrupt(pause=True)
@@ -232,7 +220,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_cancel_one_clip_does_not_cancel_other_waiting_work(self):
         first,second=self.ws.lib.clips
-        self.ws.enqueue(first,'movement');self.ws.enqueue(second,'movement')
+        self.ws.enqueue(first,'run');self.ws.enqueue(second,'run')
         self.runner.resume()
         result=self.runner.interrupt(clip=first.id)
         self.assertFalse(result['paused'],'Other clips may continue')
@@ -253,7 +241,7 @@ class ResetLifecycleTests(unittest.TestCase):
         cl=self.ws.lib.clips[0];f=self.fill(cl);ready=self.root/'api-ready'
         code="from pathlib import Path;import sys,time;Path(sys.argv[1]).write_text('ready');\nwhile True:time.sleep(.02)"
         self.runner._cmd=lambda *_:[sys.executable,'-c',code,str(ready)]
-        jid=self.ws.enqueue(cl,'movement');self.start_worker()
+        jid=self.ws.enqueue(cl,'run');self.start_worker()
         try:
             self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
             process=self.runner.procs[jid]
@@ -272,7 +260,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_pause_timeout_still_queues_the_interrupted_job_and_keeps_its_clip_waiting(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take()
+        jid=self.ws.enqueue(cl,'run');job=self.app.store.take()
         self.runner.inflight[jid]=job                        # a worker that does not let go in time
         try:
             with self.assertRaises(TimeoutError):
@@ -298,7 +286,7 @@ class ResetLifecycleTests(unittest.TestCase):
 
     def test_cancel_timeout_still_marks_the_job_stopped(self):
         cl=self.ws.lib.clips[0]
-        jid=self.ws.enqueue(cl,'movement');job=self.app.store.take()
+        jid=self.ws.enqueue(cl,'run');job=self.app.store.take()
         self.runner.inflight[jid]=job
         try:
             with self.assertRaises(TimeoutError):
@@ -310,7 +298,7 @@ class ResetLifecycleTests(unittest.TestCase):
     def test_paused_label_clears_on_resume(self):
         cl=self.ws.lib.clips[0];ready=self.root/'label-ready'
         self.runner._cmd=lambda *_:[sys.executable,'-c',"from pathlib import Path;import sys,time;Path(sys.argv[1]).touch();time.sleep(60)",str(ready)]
-        jid=self.ws.enqueue(cl,'movement');self.start_worker()
+        jid=self.ws.enqueue(cl,'run');self.start_worker()
         self.wait_for(lambda:ready.exists() and jid in self.runner.procs)
         self.runner.interrupt(pause=True)
         self.assertEqual(clips.status(self.ws.c,cl,self.app.store.latest_for(cl.id))['label'],'paused')
