@@ -1,4 +1,4 @@
-"""Metric scene evidence: MoGe depth (MoGe-2 or MoGe-3, moge_model.py; metric_observe.py) + what each pixel is
+"""Metric scene evidence: MoGe-2 depth (metric_observe.py) + what each pixel is
 (floor, wall, ceiling, person, sky...) from Mask2Former panoptic's name maps (ade_find.py, run once per clip).
 
 observe() caches the depth in metric_observation<shot>.npz in the clip's work folder.  view_frames() are the frames
@@ -88,9 +88,7 @@ def observe(frames, pose, cam, y0, camj, c, labels_at):
     images = np.asarray([cv2.cvtColor(cv2.resize(frames[f][y0:y0+cam.H], (width, height)), cv2.COLOR_BGR2RGB) for f in fs])
     zoom = camj.get("zoom", [1.] * len(frames))
     fovs = [math.degrees(2 * math.atan(cam.W / (2 * cam.f * zoom[f]))) for f in fs]
-    mv = moge_model.version(c); refine = int(c.get("moge_refine_steps", 3))
-    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs).tobytes() + str(VERSION).encode() +
-                            (b"" if mv == "v2" else ("%s/%d" % (mv, refine)).encode())).hexdigest()
+    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs).tobytes() + str(VERSION).encode()).hexdigest()
     path = os.path.join(c["_work"], "metric_observation%s.npz" % c.get("_shot_tag", ""))
     source = None
     if os.path.isfile(path):
@@ -102,7 +100,7 @@ def observe(frames, pose, cam, y0, camj, c, labels_at):
             inp, out = os.path.join(tmp, "input.npz"), os.path.join(tmp, "result.npz")
             np.savez_compressed(inp, images=images, fov=fovs)
             proc = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "metric_observe.py"),
-                                   "--input", inp, "--output", out, "--moge", mv, "--refine", str(refine)], capture_output=True, text=True,
+                                   "--input", inp, "--output", out], capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=600)
             if proc.returncode:
                 raise RuntimeError("metric observation failed: " + (proc.stderr or proc.stdout)[-600:])
@@ -134,7 +132,7 @@ def observe(frames, pose, cam, y0, camj, c, labels_at):
             if name in ("sky", "water", "sea", "mirror", "windowpane"):
                 source["valid"][len(groups)][label == i] = False
         people.append(mask); groups.append(group)
-    source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source=moge_model.name(c))
+    source.update(K=np.asarray(Ks), person=np.asarray(people), groups=np.asarray(groups), source=moge_model.NAME)
     return source
 
 

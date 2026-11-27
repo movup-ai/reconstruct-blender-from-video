@@ -4,7 +4,7 @@
   clip_lens(frames, y0, Hp, shots, work, c) -> (lens_mm, info) or (None, why)
   python pipeline\\lens_auto.py <video>           print the lens MoGe sees in a video
 
-MoGe (microsoft/MoGe, third_party\\MoGe; MoGe-2 or MoGe-3 by config "moge_version", moge_model.py) gives the horizontal field of view of a
+MoGe (microsoft/MoGe, third_party\\MoGe; MoGe-2, moge_model.py) gives the horizontal field of view of a
 picture.  Three frames of every shot are measured (first quarter, middle, last quarter; picture area only, long side
 720 px) and the clip gets the median as its 35 mm-equivalent lens (36 mm wide sensor, like the rest of the pipeline).
 One lens per clip: the Blender camera and every tool here use one.  Shots that disagree are reported.
@@ -25,7 +25,7 @@ import moge_model
 
 
 def available(c=None):
-    return moge_model.missing(c) is None
+    return moge_model.missing() is None
 
 
 def lens_from_fov(fov_x_deg):
@@ -56,18 +56,17 @@ def summarise(per_shot):
     return lens, info
 
 
-def _worker(src, dst, v="v2", refine=3):
+def _worker(src, dst):
     import cv2, torch
     from common import torch_device
     dev = torch_device()                                      # the NVIDIA card only
-    m = moge_model.load(v, dev)
-    kw = moge_model.infer_kwargs(v, {"moge_refine_steps": refine})
+    m = moge_model.load(dev)
     z = np.load(src); out = []
     for i in range(int(z["n"])):
         rgb = cv2.cvtColor(z["f%d" % i], cv2.COLOR_BGR2RGB)
         x = torch.tensor(rgb, dtype=torch.float32, device=dev).permute(2, 0, 1) / 255.0
         with torch.inference_mode():
-            o = m.infer(x, use_fp16=True, **kw)
+            o = m.infer(x, use_fp16=True)
         K = o["intrinsics"].float().cpu().numpy()                 # normalised: fx in picture widths
         out.append(float(2 * math.degrees(math.atan(0.5 / K[0, 0]))))
     with open(dst, "w") as fh:
@@ -85,8 +84,7 @@ def measure(pictures, c=None):
             arrs["f%d" % i] = cv2.resize(p, None, fx=s, fy=s, interpolation=cv2.INTER_AREA) if s < 1 else p
         src, dst = os.path.join(d, "in.npz"), os.path.join(d, "out.json")
         np.savez(src, **arrs)
-        r = subprocess.run([sys.executable, os.path.abspath(__file__), "--worker", src, dst,
-                            moge_model.version(c), str(int((c or {}).get("moge_refine_steps", 3)))],
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), "--worker", src, dst],
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0 or not os.path.exists(dst):
             raise RuntimeError("lens worker failed: " + (r.stderr or r.stdout).strip()[-400:])
@@ -99,11 +97,11 @@ def measure(pictures, c=None):
 @stage("lens")
 def clip_lens(frames, y0, Hp, shots, work=None, c=None):
     """frames: the clip's BGR frames; y0, Hp: picture area rows; shots: [(first, end), ...]"""
-    why = moge_model.missing(c)
+    why = moge_model.missing()
     if why:
         return None, {"why": why}
     idx = sample_frames(shots)
-    key = {"v": VERSION, "moge": moge_model.version(c), "frames": idx, "size": [int(frames[0].shape[1]), int(Hp)], "y0": int(y0)}
+    key = {"v": VERSION, "moge": "v2", "frames": idx, "size": [int(frames[0].shape[1]), int(Hp)], "y0": int(y0)}
     cp = os.path.join(work, "lens_auto.json") if work else None
     if cp and os.path.exists(cp):
         try:
@@ -118,7 +116,7 @@ def clip_lens(frames, y0, Hp, shots, work=None, c=None):
     it = iter(fov)
     lens, info = summarise([[lens_from_fov(next(it)) for _ in v] for v in idx])
     if lens is not None:
-        info["model"] = moge_model.name(c)
+        info["model"] = moge_model.NAME
     if lens is not None and cp:
         os.makedirs(os.path.dirname(cp), exist_ok=True)
         with open(cp, "w", encoding="utf-8") as fh:

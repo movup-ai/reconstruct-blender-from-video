@@ -205,10 +205,7 @@ def best_views(t, k=3):
 
 def run_depth(images, fovs, out, c):
     """MoGe depth of the chosen frames (metric_observe.py, cached by images + fov + version)"""
-    import moge_model
-    mv = moge_model.version(c)
-    refine = int(c.get("moge_refine_steps", 3))
-    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs, float).tobytes() + ("%s/%d/%d" % (mv, refine, VERSION)).encode()).hexdigest()
+    digest = hashlib.sha256(images.tobytes() + np.asarray(fovs, float).tobytes() + ("v2/3/%d" % VERSION).encode()).hexdigest()
     path = os.path.join(out, "depth.npz")
     if os.path.isfile(path):
         with np.load(path, allow_pickle=False) as got:
@@ -217,8 +214,7 @@ def run_depth(images, fovs, out, c):
     with tempfile.TemporaryDirectory(dir=out, prefix="depth_") as tmp:
         inp, res = os.path.join(tmp, "input.npz"), os.path.join(tmp, "result.npz")
         np.savez_compressed(inp, images=images, fov=np.asarray(fovs, float))
-        p = subprocess.run([sys.executable, os.path.join(HERE, "metric_observe.py"), "--input", inp, "--output", res,
-                            "--moge", mv, "--refine", str(refine)], capture_output=True, text=True, encoding="utf-8",
+        p = subprocess.run([sys.executable, os.path.join(HERE, "metric_observe.py"), "--input", inp, "--output", res], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=1800)
         if p.returncode:
             raise RuntimeError("depth failed: " + (p.stderr or p.stdout)[-600:])

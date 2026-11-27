@@ -52,7 +52,8 @@ DEFAULT_CFG = {
 
 RETIRED_SETTINGS = ("rtmo_model", "detect_stride", "pose3d", "previs_standard", "set_colours", "temporal_refinement",
                     "frame_review", "validation_mode", "camera_backend", "da3_model", "da3_python", "da3_max_views",
-                    "da3_meters_per_unit", "scene_verify", "scene_repair", "scene_repair_limit", "protect_people")
+                    "da3_meters_per_unit", "scene_verify", "scene_repair", "scene_repair_limit", "protect_people",
+                    "moge_version", "moge_refine_steps")
 FIXED_BACKENDS = {"tracker_backend": "sam3", "human_backend": "sam3d_body", "pose_backend": "rtmpose"}
 
 

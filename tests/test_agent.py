@@ -256,10 +256,6 @@ class TestStatus(StatusCase):
                 fh.write('{"people": {}}')
         self.assertEqual(clipsmod.fingerprint(self.c, self.cl), fp, "review files are not inputs any more")
         self.assertNotEqual(clipsmod.fingerprint(dict(self.c, lens_mm=float(self.c["lens_mm"]) + 5), self.cl), fp)
-        self.assertEqual(clipsmod.fingerprint(dict(self.c, moge_version="v2"), self.cl), fp, "MoGe-2 runs stay current")
-        v3 = clipsmod.fingerprint(dict(self.c, moge_version="v3"), self.cl)
-        self.assertNotEqual(v3, fp, "a MoGe-3 run is made from other depth")
-        self.assertNotEqual(clipsmod.fingerprint(dict(self.c, moge_version="v3", moge_refine_steps=1), self.cl), v3)
         with unittest.mock.patch.object(clipsmod.pkg, "package_name", return_value="film-9"):
             self.assertNotEqual(clipsmod.fingerprint(self.c, self.cl), fp, "the delivery name is part of the package")
         os.utime(self.cl.video, (time.time() + 100, time.time() + 100))

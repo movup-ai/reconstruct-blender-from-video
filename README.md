@@ -103,7 +103,7 @@ SAM 3D Body run in an isolated Python 3.12 CUDA environment (default `downloads\
 historical folder name) with `requirements-sam3.txt` / `requirements-sam3d-body.txt`; see
 [SAM 3 tracking](docs/SAM3_TRACKING.md) and [SAM 3D Body](docs/SAM3D_BODY.md). Blender 5.x must be installed (or
 its path set in Settings). Use one concurrent job on a 12 GB card. Model folders no longer used
-(`models\grounding_dino`, `models\clip`, `models\da3`, `models\mask2former_ade`) can be deleted by hand.
+(`models\grounding_dino`, `models\clip`, `models\da3`, `models\mask2former_ade`, `models\moge3`) can be deleted by hand.
 
 ## Folders
 

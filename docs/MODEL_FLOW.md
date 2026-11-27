@@ -15,7 +15,7 @@ fitted floor, a box per object, the model stretched into it) → `scene_data.jso
 | SAM 3 | Persistent person masks and IDs | `models/sam3/sam3.pt` |
 | RTMPose | COCO-17 joints inside each tracked mask (camera, floor and fitting evidence) | rtmlib checkpoint cache; TensorRT engine in `models/trt_cache` |
 | SAM 3D Body / DINOv3 + MHR | Metric body joints and mesh, visible-surface depth scale, neck placement | `models/sam3d_body/model.ckpt`, `model_config.yaml`, `assets/mhr_model.pt` |
-| MoGe-2 | The clip's lens; per-shot metric point maps (MoGe-3 ViT-L is an option: `config.json` `"moge_version": "v3"`, `models/moge3/model.pt`, needs `flex_gemm` + `triton-windows`; on Friends clips it matched MoGe-2 for depth, read a 2–8% longer lens, 2× slower) | `models/moge2/model.pt` |
+| MoGe-2 | The clip's lens; per-shot metric point maps | `models/moge2/model.pt` |
 | Mask2Former panoptic (ADE20K, 150 names; facebook/mask2former-swin-large-ade-panoptic) | Once per clip, a few frames per second: every object outlined and named (the name picks its model, `ade_objects.py`; followed by overlap from frame to frame), and the same pass names every pixel: the floor / wall / ceiling pixels give gravity, world yaw and camera height, and the floor scales the objects' depth (`ade_find.py`) | `models/mask2former_ade_panoptic/` |
 | Depth Anything V2 Small | Depth cues for the optical-flow camera (pitch, far background weighting) | `models/depth_anything_v2_small.onnx` |
 | Blender 5.x | Builds the `.blend` and renders the white model | Blender install |
@@ -49,7 +49,7 @@ The background builders (SAM 3 scene masks, measured relief, prototypes, object 
 hand-built sets, scene checks and repair), held objects (Grounding DINO), human review and edits (review/confirm,
 joint editor, hints, track edits, limb depth, prop timeline), the L3 rig and audit/frame-review exports, the LZHD
 trial package, the Depth Anything 3 camera backend, the separate Background stage (a second zip) with its SAM 3
-object search, and the Mask2Former semantic model (`semseg.py`; the panoptic model names the floor and walls), and the
+object search, the MoGe-3 option (on Friends clips it matched MoGe-2 for depth, 2× slower), and the Mask2Former semantic model (`semseg.py`; the panoptic model names the floor and walls), and the
 old one-off tools. They remain in git history.
 Earlier: MotionBERT, RTMO, YOLOX, appearance-based identities, identity stitching, gap filling and SAM 2.1.
 
