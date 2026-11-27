@@ -260,6 +260,13 @@ class Runner:
         with self.cond:
             self.active = False
 
+    def _stop_when_drained(self):
+        """every job is done (nothing running, nothing waiting): the run is over, the queue goes back to its
+        before-Start state so the page offers Start again (call with self.cond held)"""
+        if self.active and not self.resetting and not self.inflight and not self.store.counts().get("queued", 0):
+            self.active = False
+            log.info("queue finished: every job is done; Start runs again")
+
     def shutdown(self):
         self.stop.set()
         for p in list(self.procs.values()):
@@ -365,6 +372,7 @@ class Runner:
                 if len(self.inflight) < limit:        # an interrupted job still exiting holds its place too
                     job = self.store.take(limit=limit, exclude=self._busy_clips())
                 if job is None:
+                    self._stop_when_drained()
                     self.cond.wait(3)
                     continue
                 self.busy += 1

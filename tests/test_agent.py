@@ -292,6 +292,20 @@ class TestRunner(StatusCase):
         self.assertEqual(cmd[cmd.index("--name") + 1], self.cl.name)
         self.assertNotIn("--require-confirm", cmd)
 
+    def test_queue_goes_back_to_start_when_every_job_is_done(self):
+        self.runner.resume()
+        jid = self.store.enqueue(self.cl.id, "run")
+        self.runner._stop_when_drained()
+        self.assertFalse(self.runner.paused, "a job is waiting: keep running")
+        job = self.store.take()
+        self.runner.inflight[job["id"]] = job
+        self.runner._stop_when_drained()
+        self.assertFalse(self.runner.paused, "a job is running: keep running")
+        self.store.finish(jid, True); self.runner.inflight.clear()
+        self.runner._stop_when_drained()
+        self.assertTrue(self.runner.paused, "all done: the page offers Start again")
+        self.assertEqual(self.runner.autopilot_pass(), 0, "nothing is queued again until Start")
+
     def test_autopilot_queues_movement_for_a_new_clip_after_start(self):
         self.assertEqual(self.runner.autopilot_pass(), 0, "nobody pressed Start")
         self.runner.active = True

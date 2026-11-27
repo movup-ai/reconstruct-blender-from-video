@@ -101,6 +101,7 @@ data/model_inference.lock
 # ---------------------------------------------------------------
 *.tmp
 *.part
+package_names.json.bak_before_friends_startrek
 
 # Stage 2 object models read by Blender (made again from the .blend files)
 assets/objects/_cache/
